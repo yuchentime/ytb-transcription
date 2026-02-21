@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import { createReadStream, createWriteStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type {
@@ -277,6 +277,22 @@ export class TaskEngine {
     return () => {
       this.emitter.off(event, listener as (...args: unknown[]) => void)
     }
+  }
+
+  private buildUniqueName(prefix: string): string {
+    const normalizedPrefix =
+      prefix
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'artifact'
+    const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '')
+    const token = randomUUID().replace(/-/g, '').slice(0, 10)
+    return `${normalizedPrefix}-${timestamp}-${token}`
+  }
+
+  private buildUniqueFilePath(taskDir: string, prefix: string, extension: string): string {
+    const normalizedExtension = extension.startsWith('.') ? extension : `.${extension}`
+    return path.join(taskDir, `${this.buildUniqueName(prefix)}${normalizedExtension}`)
   }
 
   start(taskId: string): { accepted: boolean; reason?: string } {
@@ -575,7 +591,8 @@ export class TaskEngine {
     const settings = this.deps.settingsDao.getSettings()
     if (!context.toolchain) throw new Error('toolchain is not ready')
     const toolchain = context.toolchain
-    const outputTemplate = path.join(context.taskDir, 'source.%(ext)s')
+    const downloadOutputBase = this.buildUniqueName('source-video')
+    const outputTemplate = path.join(context.taskDir, `${downloadOutputBase}.%(ext)s`)
     const baseArgs = [
       '--newline',
       '--progress',
@@ -674,7 +691,7 @@ export class TaskEngine {
 
     const files = await fs.readdir(context.taskDir)
     const candidates = files
-      .filter((name) => name.startsWith('source.') && !name.endsWith('.part'))
+      .filter((name) => name.startsWith(`${downloadOutputBase}.`) && !name.endsWith('.part'))
       .map((name) => path.join(context.taskDir, name))
 
     if (candidates.length === 0) {
@@ -694,7 +711,7 @@ export class TaskEngine {
     if (!context.videoPath) throw new Error('videoPath is missing')
     if (!context.toolchain) throw new Error('toolchain is not ready')
     const toolchain = context.toolchain
-    const outputPath = path.join(context.taskDir, 'audio.wav')
+    const outputPath = this.buildUniqueFilePath(context.taskDir, 'audio-extract', 'wav')
     context.audioPath = outputPath
 
     await runCommand({
@@ -839,9 +856,12 @@ export class TaskEngine {
     const modelName = task.whisperModel ?? 'base'
     const selectedDevice = selectWhisperDevice(context.toolchain.whisperRuntime, modelName)
     const selectedBackend = selectTranscribeBackend(context.toolchain.whisperRuntime, modelName)
-    const audioBaseName = path.basename(context.audioPath, path.extname(context.audioPath))
-    const transcriptPath = path.join(context.taskDir, `${audioBaseName}.txt`)
-    const jsonPath = path.join(context.taskDir, `${audioBaseName}.json`)
+    const transcriptPath = this.buildUniqueFilePath(context.taskDir, 'transcript-text', 'txt')
+    const jsonPath = this.buildUniqueFilePath(context.taskDir, 'transcript-meta', 'json')
+    const whisperBaseName = path.basename(context.audioPath, path.extname(context.audioPath))
+    const whisperTxtPath = path.join(context.taskDir, `${whisperBaseName}.txt`)
+    const whisperJsonPath = path.join(context.taskDir, `${whisperBaseName}.json`)
+    let usedOpenaiWhisper = false
 
     this.emit('log', {
       taskId: context.taskId,
@@ -985,6 +1005,7 @@ export class TaskEngine {
           })
         },
       })
+      usedOpenaiWhisper = true
     }
 
     try {
@@ -1029,6 +1050,17 @@ export class TaskEngine {
         await runWithDevice('cpu')
       } else {
         throw error
+      }
+    }
+
+    if (usedOpenaiWhisper) {
+      if (whisperTxtPath !== transcriptPath) {
+        await fs.copyFile(whisperTxtPath, transcriptPath)
+        await fs.rm(whisperTxtPath, { force: true })
+      }
+      if (whisperJsonPath !== jsonPath) {
+        await fs.copyFile(whisperJsonPath, jsonPath)
+        await fs.rm(whisperJsonPath, { force: true })
       }
     }
 
@@ -1225,7 +1257,7 @@ export class TaskEngine {
     }
 
     const translated = ordered.map((segment) => segment.targetText ?? '').join('\n')
-    const translationPath = path.join(context.taskDir, 'translation.txt')
+    const translationPath = this.buildUniqueFilePath(context.taskDir, 'translation-text', 'txt')
     await fs.writeFile(translationPath, translated, 'utf-8')
     context.translationPath = translationPath
     context.translationSegments = ordered.map((segment) => ({
@@ -1261,7 +1293,7 @@ export class TaskEngine {
     const total = stageSegments.length
     let completed = stageSegments.filter((segment) => segment.status === 'success').length
     const maxAttempts = Math.max(1, settings.retryPolicy.tts + 1)
-    const segmentDir = path.join(context.taskDir, 'tts-segments')
+    const segmentDir = path.join(context.taskDir, this.buildUniqueName('tts-segments'))
     await fs.mkdir(segmentDir, { recursive: true })
 
     const mutableErrors: string[] = []
@@ -1286,7 +1318,11 @@ export class TaskEngine {
               settings,
               text: segment.sourceText ?? '',
             })
-            const targetPath = path.join(segmentDir, `${segment.segmentIndex.toString().padStart(4, '0')}.mp3`)
+            const targetPath = this.buildUniqueFilePath(
+              segmentDir,
+              `tts-segment-${segment.segmentIndex.toString().padStart(4, '0')}`,
+              'mp3',
+            )
             await downloadToFile(synth.downloadUrl, targetPath)
             outputPath = targetPath
             break
@@ -1360,13 +1396,13 @@ export class TaskEngine {
       throw new Error(`Segment missing synthesized file: ${missing.id}`)
     }
 
-    const concatListPath = path.join(segmentDir, 'concat.txt')
+    const concatListPath = this.buildUniqueFilePath(segmentDir, 'tts-concat-list', 'txt')
     const concatBody = ordered
       .map((segment) => `file '${(segment.targetText ?? '').replace(/'/g, `'\\''`)}'`)
       .join('\n')
     await fs.writeFile(concatListPath, concatBody, 'utf-8')
 
-    const ttsRawPath = path.join(context.taskDir, 'tts.raw.mp3')
+    const ttsRawPath = this.buildUniqueFilePath(context.taskDir, 'tts-raw-audio', 'mp3')
     try {
       await runCommand({
         command: context.toolchain.ffmpegPath,
@@ -1394,7 +1430,7 @@ export class TaskEngine {
 
   private async executeMerging(context: TaskExecutionContext): Promise<void> {
     if (!context.ttsRawPath) throw new Error('ttsRawPath is missing')
-    const finalPath = path.join(context.taskDir, 'tts.final.mp3')
+    const finalPath = this.buildUniqueFilePath(context.taskDir, 'tts-final-audio', 'mp3')
     await fs.copyFile(context.ttsRawPath, finalPath)
     context.finalTtsPath = finalPath
   }

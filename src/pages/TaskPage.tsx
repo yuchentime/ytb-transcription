@@ -184,8 +184,8 @@ export function TaskPage(props: TaskPageProps) {
       <section className="panel main-panel">
         <h1>{props.t('task.title')}</h1>
 
-        <div className="grid">
-          <label className="full">
+        <div className="grid two-col">
+          <label>
             {props.t('task.youtubeUrl')}
             <input
               type="text"
@@ -352,24 +352,6 @@ export function TaskPage(props: TaskPageProps) {
           ))}
         </div>
 
-        <div className="task-m2-section">
-          <h3>段级进度</h3>
-          <SegmentProgressList
-            segments={props.model.segments}
-            onRetrySingle={props.actions.onRetrySingleSegment}
-          />
-        </div>
-
-        <div className="task-m2-section">
-          <h3>恢复操作</h3>
-          <RecoveryActions
-            actions={props.model.recoveryActions}
-            disabled={props.model.taskRunning}
-            onRetryFailedSegments={props.actions.onRetryFailedSegments}
-            onResumeFromCheckpoint={props.actions.onResumeFromCheckpoint}
-            onRefreshPlan={props.actions.onRefreshRecoveryPlan}
-          />
-        </div>
       </section>
     </>
   )
