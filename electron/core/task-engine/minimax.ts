@@ -97,14 +97,92 @@ function ensureApiSettings(settings: AppSettings & { minimaxApiBaseUrl: string }
   }
 }
 
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs?: number,
+): Promise<Response> {
+  const timeout =
+    typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : undefined
+  if (!timeout) {
+    return await fetch(input, init)
+  }
+
+  const controller = new AbortController()
+  const fetchPromise = fetch(input, {
+    ...init,
+    signal: controller.signal,
+  })
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      controller.abort()
+      reject(new Error(`MiniMax text request timeout after ${timeout}ms`))
+    }, timeout)
+  })
+
+  try {
+    return await Promise.race([fetchPromise, timeoutPromise])
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`MiniMax text request timeout after ${timeout}ms`)
+    }
+    throw error
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle)
+    }
+  }
+}
+
+async function readJsonWithTimeout<T>(
+  response: Response,
+  timeoutMs?: number,
+): Promise<T> {
+  const timeout =
+    typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : undefined
+  if (!timeout) {
+    return (await response.json()) as T
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`MiniMax text response timeout after ${timeout}ms`))
+    }, timeout)
+
+    response
+      .json()
+      .then((data) => resolve(data as T))
+      .catch((error) => reject(error))
+      .finally(() => clearTimeout(timer))
+  })
+}
+
 export async function minimaxTranslate(params: {
   settings: AppSettings & { minimaxApiBaseUrl: string }
   sourceText: string
   targetLanguage: string
+  timeoutMs?: number
+  context?: {
+    previousText?: string
+    nextText?: string
+    segmentIndex?: number
+    totalSegments?: number
+  }
 }): Promise<string> {
   ensureApiSettings(params.settings)
+  const previousText = params.context?.previousText?.trim() ?? ''
+  const nextText = params.context?.nextText?.trim() ?? ''
+  const segmentIndex = params.context?.segmentIndex
+  const totalSegments = params.context?.totalSegments
 
-  const response = await fetch(getTextEndpoint(params.settings.minimaxApiBaseUrl), {
+  const response = await fetchWithTimeout(
+    getTextEndpoint(params.settings.minimaxApiBaseUrl),
+    {
     method: 'POST',
     headers: buildHeaders(params.settings.minimaxApiKey),
     body: JSON.stringify({
@@ -114,25 +192,106 @@ export async function minimaxTranslate(params: {
         {
           role: 'system',
           content:
-            'You are a professional translator. Keep meaning faithful, concise, and natural.',
+            [
+              'You are a professional translator.',
+              'Keep meaning faithful, concise, and natural.',
+              'If context is provided, use it only for continuity.',
+              'Output only the translation for CURRENT_SEGMENT.',
+              'Do not include explanations, labels, or extra lines.',
+            ].join(' '),
         },
         {
           role: 'user',
-          content: `Translate the following transcript to ${params.targetLanguage}:\n\n${params.sourceText}`,
+          content: [
+            `Target language: ${params.targetLanguage}`,
+            typeof segmentIndex === 'number' && typeof totalSegments === 'number'
+              ? `Segment position: ${segmentIndex + 1}/${totalSegments}`
+              : '',
+            previousText ? `PREVIOUS_CONTEXT:\n${previousText}` : '',
+            `CURRENT_SEGMENT:\n${params.sourceText}`,
+            nextText ? `NEXT_CONTEXT:\n${nextText}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
         },
       ],
     }),
-  })
+    },
+    params.timeoutMs,
+  )
 
   if (!response.ok) {
     throw new Error(`MiniMax text request failed: HTTP ${response.status}`)
   }
 
-  const data = (await response.json()) as MiniMaxTextResponse
+  const data = await readJsonWithTimeout<MiniMaxTextResponse>(response, params.timeoutMs)
   const content = data.choices?.[0]?.message?.content?.trim()
   if (!content) {
     throw new Error(
       `MiniMax text response missing content (${data.base_resp?.status_code ?? 'unknown'})`,
+    )
+  }
+  return content
+}
+
+export async function minimaxPolish(params: {
+  settings: AppSettings & { minimaxApiBaseUrl: string }
+  sourceText: string
+  targetLanguage: string
+  timeoutMs?: number
+  context?: {
+    previousText?: string
+    nextText?: string
+  }
+}): Promise<string> {
+  ensureApiSettings(params.settings)
+  const previousText = params.context?.previousText?.trim() ?? ''
+  const nextText = params.context?.nextText?.trim() ?? ''
+  const response = await fetchWithTimeout(
+    getTextEndpoint(params.settings.minimaxApiBaseUrl),
+    {
+    method: 'POST',
+    headers: buildHeaders(params.settings.minimaxApiKey),
+    body: JSON.stringify({
+      model: params.settings.translateModelId,
+      temperature: Math.min(0.4, params.settings.translateTemperature ?? 0.3),
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are a translation editor.',
+            'Polish the CURRENT_SEGMENT in the same target language for coherence and readability.',
+            'Keep original meaning, names, numbers, and terminology.',
+            'Use context only for continuity.',
+            'Output only polished CURRENT_SEGMENT text.',
+          ].join(' '),
+        },
+        {
+          role: 'user',
+          content: [
+            `Target language: ${params.targetLanguage}`,
+            previousText ? `PREVIOUS_CONTEXT:\n${previousText}` : '',
+            `CURRENT_SEGMENT:\n${params.sourceText}`,
+            nextText ? `NEXT_CONTEXT:\n${nextText}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+        },
+      ],
+    }),
+    },
+    params.timeoutMs,
+  )
+
+  if (!response.ok) {
+    throw new Error(`MiniMax polish request failed: HTTP ${response.status}`)
+  }
+
+  const data = await readJsonWithTimeout<MiniMaxTextResponse>(response, params.timeoutMs)
+  const content = data.choices?.[0]?.message?.content?.trim()
+  if (!content) {
+    throw new Error(
+      `MiniMax polish response missing content (${data.base_resp?.status_code ?? 'unknown'})`,
     )
   }
   return content

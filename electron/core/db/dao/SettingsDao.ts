@@ -7,21 +7,52 @@ interface SettingRow {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  provider: 'minimax',
-  ytDlpAuthMode: 'none',
-  ytDlpCookiesBrowser: 'chrome',
-  ytDlpCookiesFilePath: '',
-  defaultWhisperModel: 'base',
-  minimaxApiKey: '',
-  minimaxApiBaseUrl: 'https://api.minimaxi.com',
-  translateModelId: '',
+  // Translation provider settings
+  translateProvider: 'minimax',
+  translateModelId: 'MiniMax-M2.5',
   translateTemperature: 0.3,
+
+  // TTS provider settings
+  ttsProvider: 'minimax',
   ttsModelId: '',
   ttsVoiceId: '',
   ttsSpeed: 1,
   ttsPitch: 0,
   ttsVolume: 1,
+
+  // Provider-specific API configurations
+  // MiniMax
+  minimaxApiKey: '',
+  minimaxApiBaseUrl: 'https://api.minimaxi.com',
+
+  // DeepSeek
+  deepseekApiKey: '',
+  deepseekApiBaseUrl: 'https://api.deepseek.com',
+
+  // GLM
+  glmApiKey: '',
+  glmApiBaseUrl: 'https://open.bigmodel.cn/api/paas',
+
+  // Kimi
+  kimiApiKey: '',
+  kimiApiBaseUrl: 'https://api.moonshot.cn',
+
+  // Custom/Local provider (e.g., LM Studio with OpenAI-compatible API)
+  customApiKey: '',
+  customApiBaseUrl: 'http://localhost:1234/v1', // LM Studio OpenAI-compatible API endpoint
+
+  // YouTube download settings
+  ytDlpAuthMode: 'none',
+  ytDlpCookiesBrowser: 'chrome',
+  ytDlpCookiesFilePath: '',
+
+  // Transcription settings
+  defaultWhisperModel: 'base',
+
+  // Default target language
   defaultTargetLanguage: 'zh',
+
+  // Timeout and retry settings
   stageTimeoutMs: 10 * 60 * 1000,
   retryPolicy: {
     download: 2,
@@ -29,6 +60,9 @@ const DEFAULT_SETTINGS: AppSettings = {
     tts: 2,
     transcribe: 0,
   },
+
+  // Deprecated: kept for backward compatibility
+  provider: 'minimax',
 }
 
 function decodeSettingValue(value: string): unknown {
@@ -88,6 +122,30 @@ function assertValidWhisperModel(
   throw new Error('Invalid defaultWhisperModel')
 }
 
+function assertValidTranslateProvider(
+  provider: unknown,
+): asserts provider is AppSettings['translateProvider'] {
+  if (
+    provider === 'minimax' ||
+    provider === 'deepseek' ||
+    provider === 'glm' ||
+    provider === 'kimi' ||
+    provider === 'custom'
+  ) {
+    return
+  }
+  throw new Error('Invalid translateProvider')
+}
+
+function assertValidTtsProvider(
+  provider: unknown,
+): asserts provider is AppSettings['ttsProvider'] {
+  if (provider === 'minimax' || provider === 'glm' || provider === 'custom') {
+    return
+  }
+  throw new Error('Invalid ttsProvider')
+}
+
 export class SettingsDao {
   constructor(private readonly db: Database.Database) {}
 
@@ -108,8 +166,6 @@ export class SettingsDao {
       statement.run(key, encodeSettingValue(value), now)
     }
 
-    // Provider is fixed to minimax in MVP.
-    this.setValue('provider', 'minimax')
     return this.getSettings()
   }
 
@@ -126,16 +182,17 @@ export class SettingsDao {
       },
     }
 
-    // Provider is intentionally fixed in MVP.
-    merged.provider = 'minimax'
+    // Migrate old provider field to new translateProvider if needed
+    if (!persisted.translateProvider && merged.provider) {
+      merged.translateProvider = merged.provider as AppSettings['translateProvider']
+    }
+    if (!persisted.ttsProvider && merged.provider) {
+      merged.ttsProvider = merged.provider as AppSettings['ttsProvider']
+    }
     return merged
   }
 
   upsertSettings(patch: Partial<AppSettings>): AppSettings {
-    if (patch.provider && patch.provider !== 'minimax') {
-      throw new Error('Only MiniMax provider is supported in MVP')
-    }
-
     if (patch.ytDlpAuthMode !== undefined) {
       assertValidYtDlpAuthMode(patch.ytDlpAuthMode)
     }
@@ -151,14 +208,31 @@ export class SettingsDao {
     if (patch.defaultWhisperModel !== undefined) {
       assertValidWhisperModel(patch.defaultWhisperModel)
     }
-
-    const normalizedPatch: Partial<AppSettings> = {
-      ...patch,
-      provider: 'minimax',
+    if (patch.translateProvider !== undefined) {
+      assertValidTranslateProvider(patch.translateProvider)
     }
+    if (patch.ttsProvider !== undefined) {
+      assertValidTtsProvider(patch.ttsProvider)
+    }
+
+    const normalizedPatch: Partial<AppSettings> = { ...patch }
 
     if (normalizedPatch.ytDlpCookiesFilePath !== undefined) {
       normalizedPatch.ytDlpCookiesFilePath = normalizedPatch.ytDlpCookiesFilePath.trim()
+    }
+
+    // Trim all base URL fields
+    const baseUrlFields: (keyof AppSettings)[] = [
+      'minimaxApiBaseUrl',
+      'deepseekApiBaseUrl',
+      'glmApiBaseUrl',
+      'kimiApiBaseUrl',
+      'customApiBaseUrl',
+    ]
+    for (const field of baseUrlFields) {
+      if (field in normalizedPatch && typeof normalizedPatch[field] === 'string') {
+        (normalizedPatch as Record<string, string>)[field] = (normalizedPatch[field] as string).trim()
+      }
     }
 
     const current = this.getSettings()
@@ -216,10 +290,19 @@ export class SettingsDao {
 
   validateModelSettings(settings: Partial<AppSettings> = this.getSettings()): string[] {
     const errors: string[] = []
-    const provider = settings.provider ?? 'minimax'
+    const translateProvider = settings.translateProvider ?? 'minimax'
+    const ttsProvider = settings.ttsProvider ?? 'minimax'
 
-    if (provider !== 'minimax') {
-      errors.push('Provider must be minimax in MVP')
+    // Validate translate provider API key is set
+    const translateApiKeyField = this.getApiKeyField(translateProvider)
+    if (!settings[translateApiKeyField]) {
+      errors.push(`${translateProvider} API key is required for translation`)
+    }
+
+    // Validate TTS provider API key is set
+    const ttsApiKeyField = this.getApiKeyField(ttsProvider)
+    if (!settings[ttsApiKeyField]) {
+      errors.push(`${ttsProvider} API key is required for TTS`)
     }
 
     if (!settings.translateModelId) {
@@ -231,6 +314,21 @@ export class SettingsDao {
     }
 
     return errors
+  }
+
+  private getApiKeyField(provider: AppSettings['translateProvider'] | AppSettings['ttsProvider']): keyof AppSettings {
+    switch (provider) {
+      case 'minimax':
+        return 'minimaxApiKey'
+      case 'deepseek':
+        return 'deepseekApiKey'
+      case 'glm':
+        return 'glmApiKey'
+      case 'kimi':
+        return 'kimiApiKey'
+      case 'custom':
+        return 'customApiKey'
+    }
   }
 }
 

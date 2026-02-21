@@ -301,7 +301,7 @@ export function TaskPage(props: TaskPageProps) {
           )}
         </div>
 
-        {runtimeEntries.length > 0 && (
+        {/* {runtimeEntries.length > 0 && (
           <div className="runtime">
             <div className="runtime-header">{props.t('task.runtime')}</div>
             {runtimeEntries.map((item) => (
@@ -310,7 +310,7 @@ export function TaskPage(props: TaskPageProps) {
               </p>
             ))}
           </div>
-        )}
+        )} */}
 
         <div className="task-m2-section">
           <h3>段级进度</h3>

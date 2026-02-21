@@ -20,6 +20,10 @@ function normalizeWhitespace(input: string): string {
   return input.replace(/\s+/g, ' ').trim()
 }
 
+function stripWhitespace(input: string): string {
+  return input.replace(/\s+/g, '')
+}
+
 function estimateDurationSec(text: string): number {
   // Rough estimate for speech pace. Keeps strategy independent from TTS provider.
   const charsPerSecond = 4
@@ -64,7 +68,12 @@ export function segmentText(text: string, config: SegmenterOptions): TextSegment
 export function assertSegmentIntegrity(originalText: string, segments: TextSegment[]): void {
   const original = normalizeWhitespace(originalText)
   const merged = normalizeWhitespace(segments.map((segment) => segment.text).join(' '))
-  if (original !== merged) {
-    throw new Error('Segment integrity check failed: merged text differs from source text')
-  }
+  if (original === merged) return
+
+  // Allow hard-split chunks for scripts without whitespace boundaries.
+  const originalNoWhitespace = stripWhitespace(originalText)
+  const mergedNoWhitespace = stripWhitespace(segments.map((segment) => segment.text).join(''))
+  if (originalNoWhitespace === mergedNoWhitespace) return
+
+  throw new Error('Segment integrity check failed: merged text differs from source text')
 }

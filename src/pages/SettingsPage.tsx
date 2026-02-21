@@ -1,8 +1,33 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { AppSettings } from '../../electron/core/db/types'
+import type { AppSettings, TranslateProvider, TtsProvider } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
 import { translateLanguageLabel } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
+import { TRANSLATE_MODEL_OPTIONS, TTS_MODEL_OPTIONS } from '../app/utils'
+
+// Translation provider options
+const TRANSLATE_PROVIDERS: { value: TranslateProvider; label: string }[] = [
+  { value: 'minimax', label: 'MiniMax' },
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'glm', label: 'GLM (智谱AI)' },
+  { value: 'kimi', label: 'Kimi (Moonshot)' },
+  { value: 'custom', label: '自定义 / Local (LM Studio等)' },
+]
+
+// TTS provider options
+const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
+  { value: 'minimax', label: 'MiniMax' },
+  { value: 'glm', label: 'GLM (智谱AI)' },
+  { value: 'custom', label: '自定义 / Local' },
+]
+
+// Default base URLs for providers
+const DEFAULT_BASE_URLS: Record<Exclude<TranslateProvider | TtsProvider, 'custom'>, string> = {
+  minimax: 'https://api.minimaxi.com',
+  deepseek: 'https://api.deepseek.com',
+  glm: 'https://open.bigmodel.cn/api/paas',
+  kimi: 'https://api.moonshot.cn',
+}
 
 interface SettingsPageModel {
   settings: AppSettings
@@ -37,97 +62,273 @@ export function SettingsPage(props: SettingsPageProps) {
   const { settings } = props.model
   const { setSettings } = props.actions
 
+  // Helper to get available models for a provider
+  const getTranslateModels = (provider: TranslateProvider): string[] => {
+    if (provider === 'custom') return []
+    return TRANSLATE_MODEL_OPTIONS[provider] ?? []
+  }
+
+  const getTtsModels = (provider: TtsProvider): string[] => {
+    if (provider === 'custom') return []
+    return TTS_MODEL_OPTIONS[provider] ?? []
+  }
+
+  // Helper to get API key field name for a provider
+  const getApiKeyField = (provider: TranslateProvider | TtsProvider): keyof AppSettings => {
+    switch (provider) {
+      case 'minimax':
+        return 'minimaxApiKey'
+      case 'deepseek':
+        return 'deepseekApiKey'
+      case 'glm':
+        return 'glmApiKey'
+      case 'kimi':
+        return 'kimiApiKey'
+      case 'custom':
+        // For custom/local providers, use a generic custom API key field
+        return 'customApiKey' as keyof AppSettings
+    }
+  }
+
+  // Helper to get base URL field name for a provider
+  const getBaseUrlField = (provider: TranslateProvider | TtsProvider): keyof AppSettings => {
+    switch (provider) {
+      case 'minimax':
+        return 'minimaxApiBaseUrl'
+      case 'deepseek':
+        return 'deepseekApiBaseUrl'
+      case 'glm':
+        return 'glmApiBaseUrl'
+      case 'kimi':
+        return 'kimiApiBaseUrl'
+      case 'custom':
+        // For custom/local providers, use a generic custom base URL field
+        return 'customApiBaseUrl' as keyof AppSettings
+    }
+  }
+
   return (
     <section className="panel main-panel settings-panel">
       <h1>{props.t('settings.title')}</h1>
       {props.model.settingsLoading && <p className="hint">{props.t('settings.loading')}</p>}
 
-
-      {/* Group 3: MiniMax Settings */}
+      {/* Group 1: Translation Provider Settings */}
       <div className="settings-group">
-        <h3 className="settings-group-title">{props.t('settings.group.minimax')}</h3>
+        <h3 className="settings-group-title">{props.t('settings.group.translation')}</h3>
         <div className="settings-group-content grid two-col">
+          {/* Translation Provider Selection */}
           <label>
-            {props.t('settings.providerReadonly')}
-            <input type="text" value={settings.provider} readOnly />
+            {props.t('settings.translateProvider')}
+            <select
+              value={settings.translateProvider}
+              onChange={(event) => {
+                const newProvider = event.target.value as TranslateProvider
+                const availableModels = getTranslateModels(newProvider)
+                const currentModelValid = availableModels.includes(settings.translateModelId)
+                setSettings((prev) => {
+                  const baseUrlField = getBaseUrlField(newProvider)
+                  const defaultBaseUrl = newProvider !== 'custom' ? DEFAULT_BASE_URLS[newProvider] : ''
+                  return {
+                    ...prev,
+                    translateProvider: newProvider,
+                    // Auto-select first available model if current model is not valid for new provider
+                    translateModelId: currentModelValid ? prev.translateModelId : (availableModels[0] ?? ''),
+                    // Auto-set default base URL if empty
+                    [baseUrlField]: (prev[baseUrlField] as string) || defaultBaseUrl,
+                  }
+                })
+              }}
+            >
+              {TRANSLATE_PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
           </label>
 
+          {/* Translation Provider API Key */}
           <label>
-            {props.t('settings.minimaxApiKey')}
+            {props.t('settings.translateApiKey', { provider: settings.translateProvider.toUpperCase() })}
             <input
               type="password"
-              value={settings.minimaxApiKey}
+              value={settings[getApiKeyField(settings.translateProvider)] as string}
               onChange={(event) =>
                 setSettings((prev) => ({
                   ...prev,
-                  minimaxApiKey: event.target.value,
+                  [getApiKeyField(prev.translateProvider)]: event.target.value,
                 }))
               }
               placeholder="sk-..."
             />
           </label>
 
+          {/* Translation Provider Base URL */}
           <label>
-            {props.t('settings.minimaxBaseUrl')}
+            {props.t('settings.translateBaseUrl', { provider: settings.translateProvider.toUpperCase() })}
             <input
               type="text"
-              value={settings.minimaxApiBaseUrl}
+              value={settings[getBaseUrlField(settings.translateProvider)] as string}
               onChange={(event) =>
                 setSettings((prev) => ({
                   ...prev,
-                  minimaxApiBaseUrl: event.target.value.trim(),
+                  [getBaseUrlField(prev.translateProvider)]: event.target.value.trim(),
                 }))
               }
-              placeholder="https://api.minimaxi.com"
+              placeholder={
+                settings.translateProvider !== 'custom'
+                  ? DEFAULT_BASE_URLS[settings.translateProvider]
+                  : 'http://localhost:1234/v1 (OpenAI-compatible)'
+              }
             />
           </label>
 
+          {/* Translation Model ID */}
           <label>
             {props.t('settings.translateModelId')}
-            <select
-              value={settings.translateModelId}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  translateModelId: event.target.value,
-                }))
-              }
-            >
-              <option value="MiniMax-M2.5">MiniMax-M2.5</option>
-              <option value="MiniMax-M2.5-highspeed">MiniMax-M2.5-highspeed</option>
-              <option value="MiniMax-M2.1">MiniMax-M2.1</option>
-              <option value="MiniMax-M2.1-highspeed">MiniMax-M2.1-highspeed</option>
-              <option value="MiniMax-M2">MiniMax-M2</option>
-            </select>
+            {settings.translateProvider === 'custom' ? (
+              <input
+                type="text"
+                value={settings.translateModelId}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    translateModelId: event.target.value,
+                  }))
+                }
+                placeholder="如：llama-3.2-3b-instruct"
+              />
+            ) : (
+              <select
+                value={settings.translateModelId}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    translateModelId: event.target.value,
+                  }))
+                }
+              >
+                {getTranslateModels(settings.translateProvider).length === 0 && (
+                  <option value="">{props.t('settings.selectModel')}</option>
+                )}
+                {getTranslateModels(settings.translateProvider).map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+            )}
           </label>
         </div>
       </div>
 
-      {/* Group 4: TTS Settings */}
+      {/* Group 2: TTS Provider Settings */}
       <div className="settings-group">
         <h3 className="settings-group-title">{props.t('settings.group.tts')}</h3>
         <div className="settings-group-content grid two-col">
+          {/* TTS Provider Selection */}
           <label>
-            {props.t('settings.ttsModelId')}
+            {props.t('settings.ttsProvider')}
             <select
-              value={settings.ttsModelId}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  ttsModelId: event.target.value,
-                }))
-              }
+              value={settings.ttsProvider}
+              onChange={(event) => {
+                const newProvider = event.target.value as TtsProvider
+                const availableModels = getTtsModels(newProvider)
+                const currentModelValid = availableModels.includes(settings.ttsModelId)
+                setSettings((prev) => {
+                  const baseUrlField = getBaseUrlField(newProvider)
+                  const defaultBaseUrl = newProvider !== 'custom' ? DEFAULT_BASE_URLS[newProvider] : ''
+                  return {
+                    ...prev,
+                    ttsProvider: newProvider,
+                    // Auto-select first available model if current model is not valid for new provider
+                    ttsModelId: currentModelValid ? prev.ttsModelId : '',
+                    // Auto-set default base URL if empty
+                    [baseUrlField]: (prev[baseUrlField] as string) || defaultBaseUrl,
+                  }
+                })
+              }}
             >
-              <option value="">{props.t('settings.selectModel')}</option>
-              <option value="speech-2.8-hd">speech-2.8-hd</option>
-              <option value="speech-2.6-hd">speech-2.6-hd</option>
-              <option value="speech-2.8-turbo">speech-2.8-turbo</option>
-              <option value="speech-2.6-turbo">speech-2.6-turbo</option>
-              <option value="speech-02-hd">speech-02-hd</option>
-              <option value="speech-02-turbo">speech-02-turbo</option>
+              {TTS_PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
             </select>
           </label>
 
+          {/* TTS Provider API Key */}
+          <label>
+            {props.t('settings.ttsApiKey', { provider: settings.ttsProvider.toUpperCase() })}
+            <input
+              type="password"
+              value={settings[getApiKeyField(settings.ttsProvider)] as string}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  [getApiKeyField(prev.ttsProvider)]: event.target.value,
+                }))
+              }
+              placeholder="sk-..."
+            />
+          </label>
+
+          {/* TTS Provider Base URL */}
+          <label>
+            {props.t('settings.ttsBaseUrl', { provider: settings.ttsProvider.toUpperCase() })}
+            <input
+              type="text"
+              value={settings[getBaseUrlField(settings.ttsProvider)] as string}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  [getBaseUrlField(prev.ttsProvider)]: event.target.value.trim(),
+                }))
+              }
+              placeholder={
+                settings.ttsProvider !== 'custom'
+                  ? DEFAULT_BASE_URLS[settings.ttsProvider]
+                  : 'http://localhost:1234/v1 (OpenAI-compatible)'
+              }
+            />
+          </label>
+
+          {/* TTS Model ID */}
+          <label>
+            {props.t('settings.ttsModelId')}
+            {settings.ttsProvider === 'custom' ? (
+              <input
+                type="text"
+                value={settings.ttsModelId}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    ttsModelId: event.target.value,
+                  }))
+                }
+                placeholder="如：local-tts-model"
+              />
+            ) : (
+              <select
+                value={settings.ttsModelId}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    ttsModelId: event.target.value,
+                  }))
+                }
+              >
+                <option value="">{props.t('settings.selectModel')}</option>
+                {getTtsModels(settings.ttsProvider).map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+            )}
+          </label>
+
+          {/* Default Target Language */}
           <label>
             {props.t('settings.defaultTargetLanguage')}
             <select
@@ -145,6 +346,7 @@ export function SettingsPage(props: SettingsPageProps) {
             </select>
           </label>
 
+          {/* Voice Preset Panel */}
           <div className="full">
             <VoicePresetPanel
               voiceId={settings.ttsVoiceId}
@@ -264,6 +466,93 @@ export function SettingsPage(props: SettingsPageProps) {
         </div>
       </div>
 
+      {/* Group 3: YouTube Download Settings */}
+      <div className="settings-group">
+        <h3 className="settings-group-title">{props.t('settings.group.youtube')}</h3>
+        <div className="settings-group-content grid two-col">
+          <label>
+            {props.t('settings.youtubeDownloadAuth')}
+            <select
+              value={settings.ytDlpAuthMode}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  ytDlpAuthMode: event.target.value as AppSettings['ytDlpAuthMode'],
+                }))
+              }
+            >
+              <option value="none">{props.t('settings.auth.none')}</option>
+              <option value="browser_cookies">{props.t('settings.auth.browserCookies')}</option>
+              <option value="cookies_file">{props.t('settings.auth.cookiesFile')}</option>
+            </select>
+          </label>
+
+          {settings.ytDlpAuthMode === 'browser_cookies' && (
+            <label>
+              {props.t('settings.cookiesBrowser')}
+              <select
+                value={settings.ytDlpCookiesBrowser}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    ytDlpCookiesBrowser: event.target.value as AppSettings['ytDlpCookiesBrowser'],
+                  }))
+                }
+              >
+                <option value="chrome">chrome</option>
+                <option value="chromium">chromium</option>
+                <option value="edge">edge</option>
+                <option value="firefox">firefox</option>
+                <option value="safari">safari</option>
+                <option value="brave">brave</option>
+              </select>
+            </label>
+          )}
+
+          {settings.ytDlpAuthMode === 'cookies_file' && (
+            <label className="full">
+              {props.t('settings.cookiesFilePath')}
+              <input
+                type="text"
+                value={settings.ytDlpCookiesFilePath}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    ytDlpCookiesFilePath: event.target.value,
+                  }))
+                }
+                placeholder="/path/to/youtube-cookies.txt"
+              />
+            </label>
+          )}
+        </div>
+      </div>
+
+      {/* Group 4: Transcription Settings */}
+      <div className="settings-group">
+        <h3 className="settings-group-title">{props.t('settings.group.transcription')}</h3>
+        <div className="settings-group-content grid two-col">
+          <label>
+            {props.t('settings.whisperModel')}
+            <select
+              value={settings.defaultWhisperModel}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  defaultWhisperModel: event.target.value as AppSettings['defaultWhisperModel'],
+                }))
+              }
+            >
+              <option value="tiny">tiny</option>
+              <option value="base">base</option>
+              <option value="small">small</option>
+              <option value="medium">medium</option>
+              <option value="large">large</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
       {/* Group 5: Advanced Options */}
       <details className="settings-advanced">
         <summary>{props.t('settings.advanced')}</summary>
@@ -280,57 +569,6 @@ export function SettingsPage(props: SettingsPageProps) {
                 setSettings((prev) => ({
                   ...prev,
                   translateTemperature: Number(event.target.value) || 0,
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            {props.t('settings.ttsSpeed')}
-            <input
-              type="number"
-              step="0.1"
-              min="0.5"
-              max="2"
-              value={settings.ttsSpeed}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  ttsSpeed: Number(event.target.value) || 1,
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            {props.t('settings.ttsPitch')}
-            <input
-              type="number"
-              step="0.1"
-              min="-10"
-              max="10"
-              value={settings.ttsPitch}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  ttsPitch: Number(event.target.value) || 0,
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            {props.t('settings.ttsVolume')}
-            <input
-              type="number"
-              step="0.1"
-              min="0"
-              max="10"
-              value={settings.ttsVolume}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  ttsVolume: Number(event.target.value) || 1,
                 }))
               }
             />
@@ -431,7 +669,7 @@ export function SettingsPage(props: SettingsPageProps) {
       </details>
 
       <p className="hint">{props.t('settings.securityNote')}</p>
-      <p className="hint">参数范围：语速 0.5-2.0，音调 -10~10，音量 0~10。</p>
+      <p className="hint">{props.t('settings.paramRanges')}</p>
 
       <div className="actions">
         <button

@@ -5,6 +5,7 @@ export interface RunCommandOptions {
   args: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
+  timeoutMs?: number
   onStdoutLine?: (line: string) => void
   onStderrLine?: (line: string) => void
   isCanceled?: () => boolean
@@ -45,22 +46,36 @@ export async function runCommand(options: RunCommandOptions): Promise<{ code: nu
 
   return await new Promise<{ code: number }>((resolve, reject) => {
     let canceled = false
+    let timedOut = false
     const cancelInterval = setInterval(() => {
       if (options.isCanceled?.() && !canceled) {
         canceled = true
         child.kill('SIGTERM')
       }
     }, 120)
+    const timeoutTimer =
+      typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+        ? setTimeout(() => {
+          timedOut = true
+          child.kill('SIGTERM')
+        }, options.timeoutMs)
+        : null
 
     child.on('error', (error) => {
       clearInterval(cancelInterval)
+      if (timeoutTimer) clearTimeout(timeoutTimer)
       reject(error)
     })
 
     child.on('close', (code) => {
       clearInterval(cancelInterval)
+      if (timeoutTimer) clearTimeout(timeoutTimer)
       if (options.isCanceled?.()) {
         reject(new Error('Command canceled'))
+        return
+      }
+      if (timedOut) {
+        reject(new Error(`Command timeout after ${options.timeoutMs}ms: ${options.command} ${options.args.join(' ')}`))
         return
       }
       if (code !== 0) {
@@ -71,4 +86,3 @@ export async function runCommand(options: RunCommandOptions): Promise<{ code: nu
     })
   })
 }
-

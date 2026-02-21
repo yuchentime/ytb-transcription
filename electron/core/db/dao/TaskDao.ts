@@ -11,6 +11,8 @@ interface TaskRow {
   targetLanguage: string
   whisperModel: string | null
   provider: 'minimax'
+  translateProvider: 'minimax' | 'deepseek' | 'glm' | 'kimi' | 'custom'
+  ttsProvider: 'minimax' | 'glm' | 'custom'
   translateModelId: string | null
   ttsModelId: string | null
   ttsVoice: string | null
@@ -49,6 +51,9 @@ function mapTask(row: TaskRow): TaskRecord {
     targetLanguage: row.targetLanguage,
     whisperModel: row.whisperModel,
     provider: row.provider,
+    // Fallback to legacy provider field if new fields are not set
+    translateProvider: row.translateProvider ?? row.provider ?? 'minimax',
+    ttsProvider: row.ttsProvider ?? row.provider ?? 'minimax',
     translateModelId: row.translateModelId,
     ttsModelId: row.ttsModelId,
     ttsVoice: row.ttsVoice,
@@ -71,15 +76,19 @@ export class TaskDao {
       ? JSON.stringify(input.modelConfigSnapshot)
       : null
 
+    // Determine providers - use new fields if provided, fall back to legacy provider field
+    const translateProvider = input.translateProvider ?? input.provider ?? 'minimax'
+    const ttsProvider = input.ttsProvider ?? input.provider ?? 'minimax'
+
     this.db
       .prepare(
         `
         INSERT INTO tasks(
           id, youtube_url, youtube_title, status, source_language, target_language, whisper_model,
-          provider, translate_model_id, tts_model_id, tts_voice, model_config_snapshot,
+          provider, translate_provider, tts_provider, translate_model_id, tts_model_id, tts_voice, model_config_snapshot,
           error_code, error_message, created_at, updated_at, completed_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
@@ -91,6 +100,8 @@ export class TaskDao {
         input.targetLanguage ?? 'zh',
         input.whisperModel ?? null,
         input.provider ?? 'minimax',
+        translateProvider,
+        ttsProvider,
         input.translateModelId ?? null,
         input.ttsModelId ?? null,
         input.ttsVoice ?? null,
@@ -188,6 +199,8 @@ export class TaskDao {
           target_language AS targetLanguage,
           whisper_model AS whisperModel,
           provider,
+          translate_provider AS translateProvider,
+          tts_provider AS ttsProvider,
           translate_model_id AS translateModelId,
           tts_model_id AS ttsModelId,
           tts_voice AS ttsVoice,
@@ -249,6 +262,8 @@ export class TaskDao {
           target_language AS targetLanguage,
           whisper_model AS whisperModel,
           provider,
+          translate_provider AS translateProvider,
+          tts_provider AS ttsProvider,
           translate_model_id AS translateModelId,
           tts_model_id AS ttsModelId,
           tts_voice AS ttsVoice,
@@ -287,6 +302,8 @@ export class TaskDao {
           target_language AS targetLanguage,
           whisper_model AS whisperModel,
           provider,
+          translate_provider AS translateProvider,
+          tts_provider AS ttsProvider,
           translate_model_id AS translateModelId,
           tts_model_id AS ttsModelId,
           tts_voice AS ttsVoice,

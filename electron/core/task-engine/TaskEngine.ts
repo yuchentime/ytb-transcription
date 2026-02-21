@@ -24,7 +24,7 @@ import type {
   TaskStatus,
 } from '../db/types'
 import { runCommand } from './command'
-import { minimaxSynthesize, minimaxTranslate } from './minimax'
+import { minimaxPolish, minimaxSynthesize, minimaxTranslate } from './minimax'
 import { CheckpointStore } from './recovery/CheckpointStore'
 import { RecoveryPlanner, classifyError } from './recovery/RecoveryPlanner'
 import { assertSegmentIntegrity, segment, type TextSegment } from './segmentation'
@@ -58,6 +58,22 @@ const MLX_MODEL_REPOS: Record<string, string[]> = {
   medium: ['mlx-community/whisper-medium-mlx', 'mlx-community/whisper-medium'],
   large: ['mlx-community/whisper-large-v3-turbo'],
 }
+
+const DEFAULT_TRANSLATION_CONTEXT_CHARS = 160
+const DEFAULT_TRANSLATE_REQUEST_TIMEOUT_MS = 120 * 1000
+const DEFAULT_TRANSLATE_TIMEOUT_SPLIT_THRESHOLD_CHARS = 240
+const DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MAX_CHARS = 450
+const DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_CONTEXT_CHARS = 120
+const DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MIN_CHARS = 80
+const DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MAX_DEPTH = 2
+const DEFAULT_POLISH_CONTEXT_CHARS = 180
+const DEFAULT_POLISH_TARGET_SEGMENT_LENGTH = 900
+const DEFAULT_POLISH_MIN_DURATION_SEC = 10 * 60
+const DEFAULT_TRANSCRIBE_CHUNK_ENABLED = true
+const DEFAULT_TRANSCRIBE_CHUNK_MIN_DURATION_SEC = 10 * 60
+const DEFAULT_TRANSCRIBE_CHUNK_DURATION_SEC = 4 * 60
+const DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_SEC = 1.2
+const DEFAULT_TRANSCRIBE_CONCURRENCY = 2
 
 interface TaskEngineEvents {
   status: {
@@ -133,6 +149,7 @@ interface TaskExecutionContext {
   ttsRawPath?: string
   finalTtsPath?: string
   translationSegments?: TextSegment[]
+  audioDurationSec?: number
 }
 
 type EventName = keyof TaskEngineEvents
@@ -238,7 +255,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-type CheckpointComparableValue = string | number | null
+type CheckpointComparableValue = string | number | boolean | null
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -252,6 +269,10 @@ function toComparableString(value: unknown): string | null | undefined {
   if (typeof value === 'string') return value
   if (value === null) return null
   return undefined
+}
+
+function toComparableBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
 }
 
 function formatComparableValue(value: CheckpointComparableValue | undefined): string {
@@ -284,6 +305,98 @@ function parseFailedSegmentIds(value: unknown): string[] {
   return value.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean)
 }
 
+function toSafeNumber(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.max(min, Math.min(max, value))
+}
+
+function parseDurationFromLine(line: string): number | null {
+  const matched = line.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i)
+  if (!matched) return null
+  const hours = Number(matched[1])
+  const minutes = Number(matched[2])
+  const seconds = Number(matched[3])
+  if ([hours, minutes, seconds].some((value) => Number.isNaN(value))) return null
+  return hours * 3600 + minutes * 60 + seconds
+}
+
+function trimContextWindow(text: string, limit: number, fromEnd: boolean): string {
+  const normalized = text.trim()
+  if (!normalized || limit <= 0) return ''
+  if (normalized.length <= limit) return normalized
+  return fromEnd ? normalized.slice(-limit) : normalized.slice(0, limit)
+}
+
+function splitTextByHardLimit(text: string, maxChars: number): string[] {
+  const normalized = text.trim()
+  if (!normalized) return []
+  if (maxChars <= 0 || normalized.length <= maxChars) return [normalized]
+
+  const chunks: string[] = []
+  let cursor = 0
+  const boundaryPattern = /[\s,.!?;:，。！？；：、)\]】）}]/u
+  while (cursor < normalized.length) {
+    const remaining = normalized.length - cursor
+    if (remaining <= maxChars) {
+      chunks.push(normalized.slice(cursor))
+      break
+    }
+
+    const hardEnd = Math.min(normalized.length, cursor + maxChars)
+    const searchStart = Math.max(cursor + Math.floor(maxChars * 0.6), cursor + 1)
+    let splitAt = hardEnd
+    for (let pointer = hardEnd; pointer > searchStart; pointer -= 1) {
+      if (boundaryPattern.test(normalized[pointer - 1] ?? '')) {
+        splitAt = pointer
+        break
+      }
+    }
+
+    if (splitAt <= cursor) {
+      splitAt = hardEnd
+    }
+    chunks.push(normalized.slice(cursor, splitAt))
+    cursor = splitAt
+  }
+
+  return chunks.map((item) => item.trim()).filter(Boolean)
+}
+
+function mergeChunkTranscript(previousText: string, currentText: string): string {
+  const previous = previousText.trim()
+  const current = currentText.trim()
+  if (!previous) return current
+  if (!current) return previous
+
+  const maxOverlap = Math.min(200, previous.length, current.length)
+  for (let overlap = maxOverlap; overlap >= 16; overlap -= 1) {
+    const prevTail = previous.slice(-overlap).toLowerCase()
+    const currentHead = current.slice(0, overlap).toLowerCase()
+    if (prevTail === currentHead) {
+      return `${previous}${current.slice(overlap)}`
+    }
+  }
+  return `${previous}\n${current}`
+}
+
+function resolveDominantLanguage(candidates: string[]): string | null {
+  if (candidates.length === 0) return null
+  const counts = new Map<string, number>()
+  for (const language of candidates) {
+    const normalized = language.trim().toLowerCase()
+    if (!normalized) continue
+    counts.set(normalized, (counts.get(normalized) ?? 0) + 1)
+  }
+  if (counts.size === 0) return null
+  const [best] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
+  return best
+}
+
 function buildComparableCheckpointConfig(config: Record<string, unknown>): Record<string, CheckpointComparableValue> {
   const comparable: Record<string, CheckpointComparableValue> = {}
 
@@ -303,6 +416,29 @@ function buildComparableCheckpointConfig(config: Record<string, unknown>): Recor
 
   const directNumberKeys = ['ttsSpeed', 'ttsPitch', 'ttsVolume', 'ttsPollingConcurrency'] as const
   for (const key of directNumberKeys) {
+    const value = toComparableNumber(config[key])
+    if (value !== undefined) {
+      comparable[key] = value
+    }
+  }
+  const directBooleanKeys = ['autoPolishLongText', 'transcribeChunkEnabled'] as const
+  for (const key of directBooleanKeys) {
+    const value = toComparableBoolean(config[key])
+    if (value !== undefined) {
+      comparable[key] = value
+    }
+  }
+  const extraNumberKeys = [
+    'translationContextChars',
+    'translateRequestTimeoutMs',
+    'polishMinDurationSec',
+    'polishContextChars',
+    'polishTargetSegmentLength',
+    'transcribeChunkMinDurationSec',
+    'transcribeChunkDurationSec',
+    'transcribeChunkOverlapSec',
+  ] as const
+  for (const key of extraNumberKeys) {
     const value = toComparableNumber(config[key])
     if (value !== undefined) {
       comparable[key] = value
@@ -949,20 +1085,364 @@ export class TaskEngine {
     )
   }
 
+  private resolveTranslationContextChars(taskId: string): number {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    return Math.floor(
+      toSafeNumber(snapshot.translationContextChars, DEFAULT_TRANSLATION_CONTEXT_CHARS, 0, 500),
+    )
+  }
+
+  private resolveTranslateRequestTimeoutMs(taskId: string): number {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    return Math.floor(
+      toSafeNumber(snapshot.translateRequestTimeoutMs, DEFAULT_TRANSLATE_REQUEST_TIMEOUT_MS, 15_000, 10 * 60 * 1000),
+    )
+  }
+
+  private isTranslateTimeoutError(errorMessage: string): boolean {
+    const normalized = errorMessage.toLowerCase()
+    return normalized.includes('timeout') || normalized.includes('abort')
+  }
+
+  private isMiniMaxMissingContentError(errorMessage: string): boolean {
+    const normalized = errorMessage.toLowerCase()
+    return normalized.includes('missing content') && normalized.includes('1008')
+  }
+
+  private shouldUseTranslateSplitFallback(errorMessage: string, sourceText: string): boolean {
+    if (!this.isTranslateTimeoutError(errorMessage)) return false
+    return sourceText.trim().length >= DEFAULT_TRANSLATE_TIMEOUT_SPLIT_THRESHOLD_CHARS
+  }
+
+  private async translateWithSplitFallback(params: {
+    settings: AppSettings
+    sourceText: string
+    targetLanguage: string
+    timeoutMs: number
+    contextChars: number
+    previousContextText: string
+    nextContextText: string
+  }): Promise<{ text: string; pieceCount: number }> {
+    const safeMaxChars = Math.max(
+      240,
+      Math.min(
+        DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MAX_CHARS,
+        Math.floor(params.sourceText.trim().length / 2),
+      ),
+    )
+    const pieces = splitTextByHardLimit(params.sourceText, safeMaxChars)
+    if (pieces.length <= 1) {
+      throw new Error('Translate split fallback skipped: source cannot be split further')
+    }
+
+    const safeContextChars = Math.max(
+      0,
+      Math.min(params.contextChars, DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_CONTEXT_CHARS),
+    )
+    const fallbackTimeoutMs = Math.max(15_000, Math.min(params.timeoutMs, 45_000))
+    let translatedPieceCount = 0
+    const translateRecursively = async (
+      pieceText: string,
+      depth: number,
+      previousContextText: string,
+      nextContextText: string,
+    ): Promise<string> => {
+      try {
+        const translated = await minimaxTranslate({
+          settings: params.settings,
+          sourceText: pieceText,
+          targetLanguage: params.targetLanguage,
+          timeoutMs: fallbackTimeoutMs,
+          context: {
+            previousText: trimContextWindow(previousContextText, safeContextChars, true),
+            nextText: trimContextWindow(nextContextText, safeContextChars, false),
+          },
+        })
+        translatedPieceCount += 1
+        return translated
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const canSplitDeeper =
+          this.isTranslateTimeoutError(message) &&
+          depth < DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MAX_DEPTH &&
+          pieceText.trim().length >= DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MIN_CHARS * 2
+        if (!canSplitDeeper) {
+          throw error
+        }
+
+        const nextMaxChars = Math.max(
+          DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MIN_CHARS,
+          Math.floor(pieceText.trim().length / 2),
+        )
+        const nestedPieces = splitTextByHardLimit(pieceText, nextMaxChars)
+        if (nestedPieces.length <= 1) {
+          throw error
+        }
+        const nestedTranslated: string[] = []
+        for (let index = 0; index < nestedPieces.length; index += 1) {
+          const nestedPrevious =
+            index > 0 ? nestedPieces[index - 1] ?? '' : previousContextText
+          const nestedNext =
+            index < nestedPieces.length - 1 ? nestedPieces[index + 1] ?? '' : nextContextText
+          nestedTranslated.push(
+            await translateRecursively(
+              nestedPieces[index] ?? '',
+              depth + 1,
+              nestedPrevious,
+              nestedNext,
+            ),
+          )
+        }
+        return nestedTranslated.join('\n')
+      }
+    }
+
+    const translatedPieces: string[] = []
+    for (let index = 0; index < pieces.length; index += 1) {
+      const previousText = index > 0 ? pieces[index - 1] ?? '' : params.previousContextText
+      const nextText = index < pieces.length - 1 ? pieces[index + 1] ?? '' : params.nextContextText
+      translatedPieces.push(await translateRecursively(pieces[index] ?? '', 0, previousText, nextText))
+    }
+
+    return {
+      text: translatedPieces.join('\n'),
+      pieceCount: Math.max(translatedPieceCount, translatedPieces.length),
+    }
+  }
+
+  private resolvePolishConfig(taskId: string): {
+    autoPolishLongText: boolean
+    minDurationSec: number
+    contextChars: number
+    targetSegmentLength: number
+  } {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    return {
+      autoPolishLongText:
+        typeof snapshot.autoPolishLongText === 'boolean'
+          ? snapshot.autoPolishLongText
+          : true,
+      minDurationSec: Math.floor(
+        toSafeNumber(snapshot.polishMinDurationSec, DEFAULT_POLISH_MIN_DURATION_SEC, 60, 24 * 3600),
+      ),
+      contextChars: Math.floor(
+        toSafeNumber(snapshot.polishContextChars, DEFAULT_POLISH_CONTEXT_CHARS, 0, 500),
+      ),
+      targetSegmentLength: Math.floor(
+        toSafeNumber(
+          snapshot.polishTargetSegmentLength,
+          DEFAULT_POLISH_TARGET_SEGMENT_LENGTH,
+          200,
+          2000,
+        ),
+      ),
+    }
+  }
+
+  private resolveTranscribeChunkConfig(taskId: string): {
+    enabled: boolean
+    minDurationSec: number
+    chunkDurationSec: number
+    overlapSec: number
+  } {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    return {
+      enabled:
+        typeof snapshot.transcribeChunkEnabled === 'boolean'
+          ? snapshot.transcribeChunkEnabled
+          : DEFAULT_TRANSCRIBE_CHUNK_ENABLED,
+      minDurationSec: Math.floor(
+        toSafeNumber(
+          snapshot.transcribeChunkMinDurationSec,
+          DEFAULT_TRANSCRIBE_CHUNK_MIN_DURATION_SEC,
+          60,
+          24 * 3600,
+        ),
+      ),
+      chunkDurationSec: Math.floor(
+        toSafeNumber(
+          snapshot.transcribeChunkDurationSec,
+          DEFAULT_TRANSCRIBE_CHUNK_DURATION_SEC,
+          60,
+          20 * 60,
+        ),
+      ),
+      overlapSec: toSafeNumber(snapshot.transcribeChunkOverlapSec, DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_SEC, 0, 8),
+    }
+  }
+
+  private resolveTranscribeConcurrency(
+    taskId: string,
+    backend: 'mlx' | 'openai-whisper',
+    device: 'cpu' | 'cuda' | 'mps',
+    totalChunks: number,
+  ): number {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    const requested = Math.floor(
+      toSafeNumber(snapshot.transcribeConcurrency, DEFAULT_TRANSCRIBE_CONCURRENCY, 1, 2),
+    )
+    const backendSafeDefault = backend === 'openai-whisper' && device === 'cpu' ? requested : 1
+    return Math.max(1, Math.min(backendSafeDefault, Math.max(1, totalChunks)))
+  }
+
+  private buildAudioChunkPlan(
+    durationSec: number,
+    chunkDurationSec: number,
+    overlapSec: number,
+  ): Array<{ index: number; startSec: number; durationSec: number }> {
+    if (durationSec <= 0) return []
+    const safeChunkSec = Math.max(60, chunkDurationSec)
+    const safeOverlapSec = Math.max(0, Math.min(8, overlapSec))
+    const plan: Array<{ index: number; startSec: number; durationSec: number }> = []
+    let cursor = 0
+    let index = 0
+    while (cursor < durationSec - 0.01) {
+      const startSec = index === 0 ? 0 : Math.max(0, cursor - safeOverlapSec)
+      const nextCursor = Math.min(durationSec, cursor + safeChunkSec)
+      const sectionDuration = Math.max(1, nextCursor - startSec)
+      plan.push({ index, startSec, durationSec: sectionDuration })
+      cursor = nextCursor
+      index += 1
+    }
+    return plan
+  }
+
+  private async probeAudioDurationSec(audioPath: string, ffmpegPath: string): Promise<number | null> {
+    const stderrLines: string[] = []
+    await runCommand({
+      command: ffmpegPath,
+      args: ['-i', audioPath],
+      onStderrLine: (line) => {
+        stderrLines.push(line)
+      },
+    }).catch(() => undefined)
+
+    for (const line of stderrLines) {
+      const seconds = parseDurationFromLine(line)
+      if (seconds !== null) return seconds
+    }
+    return null
+  }
+
+  private async polishTranslationText(params: {
+    taskId: string
+    targetLanguage: string
+    settings: AppSettings
+    text: string
+    contextChars: number
+    targetSegmentLength: number
+    requestTimeoutMs: number
+  }): Promise<string> {
+    const polishSegments = segment(params.text, 'sentence', {
+      targetSegmentLength: params.targetSegmentLength,
+      maxCharsPerSegment: params.targetSegmentLength,
+    })
+    if (polishSegments.length === 0) return params.text
+
+    const polishedChunks: string[] = []
+    const maxAttempts = Math.max(1, Math.min(2, params.settings.retryPolicy.translate + 1))
+    const polishTimeoutMs = Math.max(15_000, Math.min(params.requestTimeoutMs, 45_000))
+    for (let index = 0; index < polishSegments.length; index += 1) {
+      const item = polishSegments[index]
+      const previousText =
+        index > 0
+          ? trimContextWindow(polishSegments[index - 1].text, params.contextChars, true)
+          : ''
+      const nextText =
+        index < polishSegments.length - 1
+          ? trimContextWindow(polishSegments[index + 1].text, params.contextChars, false)
+          : ''
+
+      let polished = ''
+      let lastError: unknown = null
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const attemptStartedAt = Date.now()
+        this.emit('log', {
+          taskId: params.taskId,
+          stage: 'translating',
+          level: 'info',
+          text: `Polish segment #${index + 1}/${polishSegments.length} attempt ${attempt}/${maxAttempts} (chars=${item.text.length}, timeoutMs=${polishTimeoutMs})`,
+          timestamp: new Date().toISOString(),
+        })
+        try {
+          polished = await minimaxPolish({
+            settings: params.settings,
+            sourceText: item.text,
+            targetLanguage: params.targetLanguage,
+            timeoutMs: polishTimeoutMs,
+            context: {
+              previousText,
+              nextText,
+            },
+          })
+          this.emit('log', {
+            taskId: params.taskId,
+            stage: 'translating',
+            level: 'info',
+            text: `Polish segment #${index + 1}/${polishSegments.length} attempt ${attempt} succeeded in ${
+              Date.now() - attemptStartedAt
+            }ms`,
+            timestamp: new Date().toISOString(),
+          })
+          break
+        } catch (error) {
+          lastError = error
+          const message = error instanceof Error ? error.message : String(error)
+          this.emit('log', {
+            taskId: params.taskId,
+            stage: 'translating',
+            level: 'warn',
+            text: `Polish segment #${index + 1}/${polishSegments.length} attempt ${attempt} failed in ${
+              Date.now() - attemptStartedAt
+            }ms: ${message}`,
+            timestamp: new Date().toISOString(),
+          })
+          const kind = classifyError('E_POLISH_SEGMENT', message)
+          if (kind !== 'retryable' || attempt >= maxAttempts) {
+            break
+          }
+          await sleep(Math.min(2_000, 1000 * (2 ** (attempt - 1))))
+        }
+      }
+      if (!polished.trim()) {
+        this.emit('log', {
+          taskId: params.taskId,
+          stage: 'translating',
+          level: 'warn',
+          text: `Polish segment fallback to original (#${index + 1}): ${
+            lastError instanceof Error ? lastError.message : 'unknown error'
+          }`,
+          timestamp: new Date().toISOString(),
+        })
+        polishedChunks.push(item.text)
+      } else {
+        polishedChunks.push(polished)
+      }
+    }
+    return polishedChunks.join('\n')
+  }
+
   private async executeTranscribing(context: TaskExecutionContext): Promise<void> {
     if (!context.audioPath) throw new Error('audioPath is missing')
     if (!context.toolchain) throw new Error('toolchain is not ready')
     const toolchain = context.toolchain
     const task = this.deps.taskDao.getTaskById(context.taskId)
+    const settings = this.resolveExecutionSettings(context.taskId)
     const modelName = task.whisperModel ?? 'base'
     const selectedDevice = selectWhisperDevice(context.toolchain.whisperRuntime, modelName)
     const selectedBackend = selectTranscribeBackend(context.toolchain.whisperRuntime, modelName)
     const transcriptPath = this.buildUniqueFilePath(context.taskDir, 'transcript-text', 'txt')
     const jsonPath = this.buildUniqueFilePath(context.taskDir, 'transcript-meta', 'json')
-    const whisperBaseName = path.basename(context.audioPath, path.extname(context.audioPath))
-    const whisperTxtPath = path.join(context.taskDir, `${whisperBaseName}.txt`)
-    const whisperJsonPath = path.join(context.taskDir, `${whisperBaseName}.json`)
-    let usedOpenaiWhisper = false
+    const chunkConfig = this.resolveTranscribeChunkConfig(context.taskId)
+    const audioDurationSec = await this.probeAudioDurationSec(context.audioPath, toolchain.ffmpegPath)
+    if (audioDurationSec !== null) {
+      context.audioDurationSec = audioDurationSec
+    }
 
     this.emit('log', {
       taskId: context.taskId,
@@ -970,26 +1450,29 @@ export class TaskEngine {
       level: 'info',
       text: `Transcribe backend=${selectedBackend}, device=${
         selectedBackend === 'mlx' ? 'metal(auto)' : selectedDevice
-      }`,
+      }, durationSec=${audioDurationSec ?? 'unknown'}`,
       timestamp: new Date().toISOString(),
     })
 
-    const runWithMlxRepo = async (repo: string): Promise<void> => {
+    const runWithMlxRepo = async (
+      audioPath: string,
+      outputTxtPath: string,
+      outputJsonPath: string,
+      repo: string,
+    ): Promise<void> => {
       const scriptLines = [
         'import json',
         'import pathlib',
         'import mlx_whisper',
-        `audio = ${JSON.stringify(context.audioPath)}`,
+        `audio = ${JSON.stringify(audioPath)}`,
         `repo = ${JSON.stringify(repo)}`,
-        `language = ${
-          task.sourceLanguage ? JSON.stringify(task.sourceLanguage) : 'None'
-        }`,
+        `language = ${task.sourceLanguage ? JSON.stringify(task.sourceLanguage) : 'None'}`,
         'kwargs = {"path_or_hf_repo": repo}',
         'if language:',
         '    kwargs["language"] = language',
         'result = mlx_whisper.transcribe(audio, **kwargs)',
-        `txt_path = pathlib.Path(${JSON.stringify(transcriptPath)})`,
-        `json_path = pathlib.Path(${JSON.stringify(jsonPath)})`,
+        `txt_path = pathlib.Path(${JSON.stringify(outputTxtPath)})`,
+        `json_path = pathlib.Path(${JSON.stringify(outputJsonPath)})`,
         'txt_path.write_text(result.get("text", ""), encoding="utf-8")',
         'json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")',
       ]
@@ -998,6 +1481,7 @@ export class TaskEngine {
         command: toolchain.pythonPath,
         args: ['-c', scriptLines.join('\n')],
         cwd: context.taskDir,
+        timeoutMs: settings.stageTimeoutMs,
         env: {
           XDG_CACHE_HOME: path.join(this.deps.dataRoot, 'cache'),
           HF_HOME: path.join(this.deps.dataRoot, 'cache', 'hf'),
@@ -1019,7 +1503,11 @@ export class TaskEngine {
       })
     }
 
-    const runWithMlx = async (): Promise<void> => {
+    const runWithMlx = async (
+      audioPath: string,
+      outputTxtPath: string,
+      outputJsonPath: string,
+    ): Promise<void> => {
       const repos = MLX_MODEL_REPOS[modelName]
       if (!repos || repos.length === 0) {
         throw new Error(`No MLX model mapping found for whisper model "${modelName}"`)
@@ -1034,7 +1522,7 @@ export class TaskEngine {
           timestamp: new Date().toISOString(),
         })
         try {
-          await runWithMlxRepo(repo)
+          await runWithMlxRepo(audioPath, outputTxtPath, outputJsonPath, repo)
           this.emit('log', {
             taskId: context.taskId,
             stage: 'transcribing',
@@ -1056,18 +1544,20 @@ export class TaskEngine {
         }
       }
       throw new Error(
-        `MLX transcription failed for model "${modelName}" after trying repos (${repos.join(
-          ', ',
-        )}). Details: ${failures.join(' | ')}`,
+        `MLX transcription failed for model "${modelName}" after trying repos (${repos.join(', ')}). Details: ${failures.join(' | ')}`,
       )
     }
 
-    const runWithDevice = async (device: 'cpu' | 'cuda' | 'mps'): Promise<void> => {
+    const runWithDevice = async (
+      audioPath: string,
+      outputDir: string,
+      device: 'cpu' | 'cuda' | 'mps',
+    ): Promise<{ whisperTxtPath: string; whisperJsonPath: string }> => {
       const modelDir = await this.ensureWhisperModelReady(context, modelName)
       const args = [
         '-m',
         'whisper',
-        context.audioPath!,
+        audioPath,
         '--model',
         modelName,
         '--model_dir',
@@ -1075,23 +1565,22 @@ export class TaskEngine {
         '--device',
         device,
         '--output_dir',
-        context.taskDir,
+        outputDir,
         '--output_format',
         'all',
       ]
       if (task.sourceLanguage) {
         args.push('--language', task.sourceLanguage)
       }
-      const deviceArgs = args.map((item, idx) =>
-        idx > 0 && args[idx - 1] === '--device' ? device : item,
-      )
-      if (device === 'cpu' && !deviceArgs.includes('--fp16')) {
-        deviceArgs.push('--fp16', 'False')
+      if (device === 'cpu' && !args.includes('--fp16')) {
+        args.push('--fp16', 'False')
       }
+
       await runCommand({
         command: toolchain.pythonPath,
-        args: deviceArgs,
+        args,
         cwd: context.taskDir,
+        timeoutMs: settings.stageTimeoutMs,
         env: {
           XDG_CACHE_HOME: path.join(this.deps.dataRoot, 'cache'),
         },
@@ -1106,63 +1595,223 @@ export class TaskEngine {
           })
         },
       })
-      usedOpenaiWhisper = true
+
+      const baseName = path.basename(audioPath, path.extname(audioPath))
+      return {
+        whisperTxtPath: path.join(outputDir, `${baseName}.txt`),
+        whisperJsonPath: path.join(outputDir, `${baseName}.json`),
+      }
     }
 
-    try {
-      if (selectedBackend === 'mlx') {
-        await runWithMlx()
-      } else {
-        await runWithDevice(selectedDevice)
-      }
-    } catch (error) {
-      if (selectedBackend === 'mlx') {
-        this.emit('log', {
-          taskId: context.taskId,
-          stage: 'transcribing',
-          level: 'warn',
-          text: 'MLX backend failed, fallback to openai-whisper backend',
-          timestamp: new Date().toISOString(),
-        })
-        if (selectedDevice !== 'cpu') {
-          try {
-            await runWithDevice(selectedDevice)
-          } catch {
-            this.emit('log', {
-              taskId: context.taskId,
-              stage: 'transcribing',
-              level: 'warn',
-              text: `Whisper ${selectedDevice} failed, retrying with CPU`,
-              timestamp: new Date().toISOString(),
-            })
-            await runWithDevice('cpu')
-          }
-        } else {
-          await runWithDevice('cpu')
+    const transcribeSingleAudio = async (
+      audioPath: string,
+      outputTxtPath: string,
+      outputJsonPath: string,
+    ): Promise<void> => {
+      const applyOpenaiOutput = async (
+        generated: { whisperTxtPath: string; whisperJsonPath: string },
+      ): Promise<void> => {
+        if (generated.whisperTxtPath !== outputTxtPath) {
+          await fs.copyFile(generated.whisperTxtPath, outputTxtPath)
+          await fs.rm(generated.whisperTxtPath, { force: true })
         }
-      } else if (selectedDevice !== 'cpu') {
-        this.emit('log', {
-          taskId: context.taskId,
-          stage: 'transcribing',
-          level: 'warn',
-          text: `Whisper ${selectedDevice} failed, retrying with CPU`,
-          timestamp: new Date().toISOString(),
-        })
-        await runWithDevice('cpu')
-      } else {
+        if (generated.whisperJsonPath !== outputJsonPath) {
+          await fs.copyFile(generated.whisperJsonPath, outputJsonPath)
+          await fs.rm(generated.whisperJsonPath, { force: true })
+        }
+      }
+
+      try {
+        if (selectedBackend === 'mlx') {
+          await runWithMlx(audioPath, outputTxtPath, outputJsonPath)
+          return
+        }
+        const generated = await runWithDevice(audioPath, path.dirname(outputTxtPath), selectedDevice)
+        await applyOpenaiOutput(generated)
+      } catch (error) {
+        if (selectedBackend === 'mlx') {
+          this.emit('log', {
+            taskId: context.taskId,
+            stage: 'transcribing',
+            level: 'warn',
+            text: 'MLX backend failed, fallback to openai-whisper backend',
+            timestamp: new Date().toISOString(),
+          })
+          if (selectedDevice !== 'cpu') {
+            try {
+              const generated = await runWithDevice(audioPath, path.dirname(outputTxtPath), selectedDevice)
+              await applyOpenaiOutput(generated)
+            } catch {
+              this.emit('log', {
+                taskId: context.taskId,
+                stage: 'transcribing',
+                level: 'warn',
+                text: `Whisper ${selectedDevice} failed, retrying with CPU`,
+                timestamp: new Date().toISOString(),
+              })
+              const generated = await runWithDevice(audioPath, path.dirname(outputTxtPath), 'cpu')
+              await applyOpenaiOutput(generated)
+            }
+          } else {
+            const generated = await runWithDevice(audioPath, path.dirname(outputTxtPath), 'cpu')
+            await applyOpenaiOutput(generated)
+          }
+          return
+        }
+        if (selectedDevice !== 'cpu') {
+          this.emit('log', {
+            taskId: context.taskId,
+            stage: 'transcribing',
+            level: 'warn',
+            text: `Whisper ${selectedDevice} failed, retrying with CPU`,
+            timestamp: new Date().toISOString(),
+          })
+          const generated = await runWithDevice(audioPath, path.dirname(outputTxtPath), 'cpu')
+          await applyOpenaiOutput(generated)
+          return
+        }
         throw error
       }
     }
 
-    if (usedOpenaiWhisper) {
-      if (whisperTxtPath !== transcriptPath) {
-        await fs.copyFile(whisperTxtPath, transcriptPath)
-        await fs.rm(whisperTxtPath, { force: true })
+    const runTranscribeWithRetry = async (
+      audioPath: string,
+      outputTxtPath: string,
+      outputJsonPath: string,
+    ): Promise<void> => {
+      const maxAttempts = Math.max(1, settings.retryPolicy.transcribe + 1)
+      let lastError: unknown = null
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          await transcribeSingleAudio(audioPath, outputTxtPath, outputJsonPath)
+          return
+        } catch (error) {
+          lastError = error
+          if (attempt >= maxAttempts) break
+          this.emit('log', {
+            taskId: context.taskId,
+            stage: 'transcribing',
+            level: 'warn',
+            text: `Transcribing retry attempt ${attempt + 1}/${maxAttempts}`,
+            timestamp: new Date().toISOString(),
+          })
+          await sleep(Math.min(5_000, 1000 * (2 ** (attempt - 1))))
+        }
       }
-      if (whisperJsonPath !== jsonPath) {
-        await fs.copyFile(whisperJsonPath, jsonPath)
-        await fs.rm(whisperJsonPath, { force: true })
+      throw lastError instanceof Error ? lastError : new Error('Unknown transcribing error')
+    }
+
+    const useChunkMode =
+      chunkConfig.enabled &&
+      typeof audioDurationSec === 'number' &&
+      Number.isFinite(audioDurationSec) &&
+      audioDurationSec >= chunkConfig.minDurationSec
+
+    if (!useChunkMode) {
+      await runTranscribeWithRetry(context.audioPath, transcriptPath, jsonPath)
+    } else {
+      const chunkPlan = this.buildAudioChunkPlan(
+        audioDurationSec,
+        chunkConfig.chunkDurationSec,
+        chunkConfig.overlapSec,
+      )
+      const chunkDir = path.join(context.taskDir, this.buildUniqueName('audio-chunks'))
+      await fs.mkdir(chunkDir, { recursive: true })
+      const chunkEntries: Array<{ index: number; startSec: number; durationSec: number; path: string }> = []
+      for (const plan of chunkPlan) {
+        const chunkPath = path.join(chunkDir, `audio-chunk-${plan.index.toString().padStart(4, '0')}.wav`)
+        await runCommand({
+          command: toolchain.ffmpegPath,
+          args: [
+            '-y',
+            '-ss',
+            plan.startSec.toFixed(3),
+            '-t',
+            plan.durationSec.toFixed(3),
+            '-i',
+            context.audioPath,
+            '-vn',
+            '-ac',
+            '1',
+            '-ar',
+            '16000',
+            chunkPath,
+          ],
+          cwd: context.taskDir,
+          timeoutMs: settings.stageTimeoutMs,
+          isCanceled: () => this.cancelRequested.has(context.taskId),
+        })
+        chunkEntries.push({
+          index: plan.index,
+          startSec: plan.startSec,
+          durationSec: plan.durationSec,
+          path: chunkPath,
+        })
       }
+
+      const chunkConcurrency = this.resolveTranscribeConcurrency(
+        context.taskId,
+        selectedBackend,
+        selectedDevice,
+        chunkEntries.length,
+      )
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'transcribing',
+        level: 'info',
+        text: `Chunked transcribing enabled: chunks=${chunkEntries.length}, concurrency=${chunkConcurrency}, chunkSec=${chunkConfig.chunkDurationSec}, overlapSec=${chunkConfig.overlapSec}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      const tasks = chunkEntries.map((chunk) => async () => {
+        const chunkTxtPath = path.join(chunkDir, `chunk-${chunk.index.toString().padStart(4, '0')}.txt`)
+        const chunkJsonPath = path.join(chunkDir, `chunk-${chunk.index.toString().padStart(4, '0')}.json`)
+        await runTranscribeWithRetry(chunk.path, chunkTxtPath, chunkJsonPath)
+        const text = await fs.readFile(chunkTxtPath, 'utf-8')
+        const jsonText = await fs.readFile(chunkJsonPath, 'utf-8')
+        const language = parseWhisperDetectedLanguage(jsonText)
+        return {
+          index: chunk.index,
+          startSec: chunk.startSec,
+          durationSec: chunk.durationSec,
+          text: text.trim(),
+          language,
+        }
+      })
+
+      const chunkResults = await runWithConcurrency(tasks, chunkConcurrency)
+      const ordered = [...chunkResults].sort((a, b) => a.index - b.index)
+      let mergedText = ''
+      const languages: string[] = []
+      const chunkSummary = ordered.map((item) => {
+        mergedText = mergeChunkTranscript(mergedText, item.text)
+        if (item.language) languages.push(item.language)
+        return {
+          index: item.index,
+          startSec: item.startSec,
+          durationSec: item.durationSec,
+          charLength: item.text.length,
+          language: item.language ?? null,
+        }
+      })
+
+      const dominantLanguage = resolveDominantLanguage(languages)
+      await fs.writeFile(transcriptPath, mergedText, 'utf-8')
+      await fs.writeFile(
+        jsonPath,
+        JSON.stringify(
+          {
+            language: dominantLanguage,
+            chunked: true,
+            chunkCount: chunkSummary.length,
+            chunkOverlapSec: chunkConfig.overlapSec,
+            chunks: chunkSummary,
+          },
+          null,
+          2,
+        ),
+        'utf-8',
+      )
     }
 
     context.transcriptPath = transcriptPath
@@ -1246,6 +1895,10 @@ export class TaskEngine {
     const task = this.deps.taskDao.getTaskById(taskId)
     const settings = this.resolveExecutionSettings(taskId)
     const segmentation = this.resolveSegmentationConfig(taskId)
+    const polish = this.resolvePolishConfig(taskId)
+    const transcribeChunk = this.resolveTranscribeChunkConfig(taskId)
+    const translationContextChars = this.resolveTranslationContextChars(taskId)
+    const translateRequestTimeoutMs = this.resolveTranslateRequestTimeoutMs(taskId)
     const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
     const ttsPollingConcurrency =
       typeof snapshot.ttsPollingConcurrency === 'number' && Number.isFinite(snapshot.ttsPollingConcurrency)
@@ -1263,6 +1916,16 @@ export class TaskEngine {
       ttsPitch: settings.ttsPitch,
       ttsVolume: settings.ttsVolume,
       ttsPollingConcurrency,
+      translationContextChars,
+      translateRequestTimeoutMs,
+      autoPolishLongText: polish.autoPolishLongText,
+      polishMinDurationSec: polish.minDurationSec,
+      polishContextChars: polish.contextChars,
+      polishTargetSegmentLength: polish.targetSegmentLength,
+      transcribeChunkEnabled: transcribeChunk.enabled,
+      transcribeChunkMinDurationSec: transcribeChunk.minDurationSec,
+      transcribeChunkDurationSec: transcribeChunk.chunkDurationSec,
+      transcribeChunkOverlapSec: transcribeChunk.overlapSec,
     }
   }
 
@@ -1414,6 +2077,9 @@ export class TaskEngine {
     if (!context.transcriptPath) throw new Error('transcriptPath is missing')
     const task = this.deps.taskDao.getTaskById(context.taskId)
     const settings = this.resolveExecutionSettings(context.taskId)
+    const translationContextChars = this.resolveTranslationContextChars(context.taskId)
+    const translateRequestTimeoutMs = this.resolveTranslateRequestTimeoutMs(context.taskId)
+    const polishConfig = this.resolvePolishConfig(context.taskId)
     const sourceText = await fs.readFile(context.transcriptPath, 'utf-8')
     const segmentation = this.resolveSegmentationConfig(context.taskId)
     const segments = segment(sourceText, segmentation.strategy, segmentation.options)
@@ -1440,21 +2106,121 @@ export class TaskEngine {
       this.deps.taskSegmentDao.markSegmentRunning(segment.id)
       let translatedText: string | null = null
       let lastError: unknown = null
+      const segmentSourceText = segment.sourceText ?? ''
+      const previousSegmentText =
+        segment.segmentIndex > 0
+          ? stageSegments[segment.segmentIndex - 1]?.sourceText ?? ''
+          : ''
+      const nextSegmentText =
+        segment.segmentIndex < total - 1
+          ? stageSegments[segment.segmentIndex + 1]?.sourceText ?? ''
+          : ''
+      let splitFallbackAttempted = false
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const attemptStartedAt = Date.now()
+        this.emit('log', {
+          taskId: context.taskId,
+          stage: 'translating',
+          level: 'info',
+          text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt}/${maxAttempts} (chars=${segmentSourceText.length}, timeoutMs=${translateRequestTimeoutMs})`,
+          timestamp: new Date().toISOString(),
+        })
         try {
           translatedText = await minimaxTranslate({
             settings,
-            sourceText: segment.sourceText ?? '',
+            sourceText: segmentSourceText,
             targetLanguage: task.targetLanguage,
+            timeoutMs: translateRequestTimeoutMs,
+            context: {
+              previousText: trimContextWindow(previousSegmentText, translationContextChars, true),
+              nextText: trimContextWindow(nextSegmentText, translationContextChars, false),
+              segmentIndex: segment.segmentIndex,
+              totalSegments: total,
+            },
+          })
+          this.emit('log', {
+            taskId: context.taskId,
+            stage: 'translating',
+            level: 'info',
+            text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt} succeeded in ${
+              Date.now() - attemptStartedAt
+            }ms`,
+            timestamp: new Date().toISOString(),
           })
           break
         } catch (error) {
           lastError = error
-          const message = error instanceof Error ? error.message : String(error)
+          let message = error instanceof Error ? error.message : String(error)
+          this.emit('log', {
+            taskId: context.taskId,
+            stage: 'translating',
+            level: 'warn',
+            text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt} failed in ${
+              Date.now() - attemptStartedAt
+            }ms: ${message}`,
+            timestamp: new Date().toISOString(),
+          })
+
+          if (
+            !splitFallbackAttempted &&
+            this.shouldUseTranslateSplitFallback(message, segmentSourceText)
+          ) {
+            splitFallbackAttempted = true
+            const fallbackStartedAt = Date.now()
+            try {
+              this.emit('log', {
+                taskId: context.taskId,
+                stage: 'translating',
+                level: 'info',
+                text: `Translate segment #${segment.segmentIndex + 1}/${total} switching to split fallback`,
+                timestamp: new Date().toISOString(),
+              })
+              const fallbackResult = await this.translateWithSplitFallback({
+                settings,
+                sourceText: segmentSourceText,
+                targetLanguage: task.targetLanguage,
+                timeoutMs: translateRequestTimeoutMs,
+                contextChars: translationContextChars,
+                previousContextText: previousSegmentText,
+                nextContextText: nextSegmentText,
+              })
+              translatedText = fallbackResult.text
+              this.emit('log', {
+                taskId: context.taskId,
+                stage: 'translating',
+                level: 'info',
+                text: `Translate segment #${segment.segmentIndex + 1}/${total} split fallback succeeded in ${
+                  Date.now() - fallbackStartedAt
+                }ms (pieces=${fallbackResult.pieceCount})`,
+                timestamp: new Date().toISOString(),
+              })
+              break
+            } catch (fallbackError) {
+              lastError = fallbackError
+              const fallbackMessage =
+                fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+              message = fallbackMessage
+              this.emit('log', {
+                taskId: context.taskId,
+                stage: 'translating',
+                level: 'warn',
+                text: `Translate segment #${segment.segmentIndex + 1}/${total} split fallback failed in ${
+                  Date.now() - fallbackStartedAt
+                }ms: ${fallbackMessage}`,
+                timestamp: new Date().toISOString(),
+              })
+            }
+          }
+
           const kind = classifyError('E_TRANSLATE_SEGMENT', message)
           if (kind !== 'retryable' || attempt >= maxAttempts) {
             break
+          }
+          const isMissingContent = this.isMiniMaxMissingContentError(message)
+          if (isMissingContent) {
+            await sleep(Math.min(30_000, 10_000 * attempt))
+            continue
           }
           await sleep(Math.min(4_000, 1000 * (2 ** (attempt - 1))))
         }
@@ -1479,6 +2245,11 @@ export class TaskEngine {
         failedSegmentErrors.push(
           `#${segment.segmentIndex + 1}:${message}`,
         )
+        if (this.isMiniMaxMissingContentError(message)) {
+          throw new Error(
+            `MiniMax returned empty content (1008) on segment #${segment.segmentIndex + 1}. Stop early to avoid cascading failures; retry later.`,
+          )
+        }
         continue
       }
 
@@ -1520,16 +2291,39 @@ export class TaskEngine {
       throw new Error(`Segment missing translated text: ${missing.id}`)
     }
 
-    const translated = ordered.map((segment) => segment.targetText ?? '').join('\n')
+    let translated = ordered.map((segment) => segment.targetText ?? '').join('\n')
+    const estimatedLongByDuration =
+      typeof context.audioDurationSec === 'number' &&
+      Number.isFinite(context.audioDurationSec) &&
+      context.audioDurationSec >= polishConfig.minDurationSec
+    const estimatedLongBySegmentCount = ordered.length >= 120
+    if (polishConfig.autoPolishLongText && (estimatedLongByDuration || estimatedLongBySegmentCount)) {
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'translating',
+        level: 'info',
+        text: `Auto polishing enabled for long content (segments=${ordered.length}, durationSec=${
+          context.audioDurationSec ?? 'unknown'
+        })`,
+        timestamp: new Date().toISOString(),
+      })
+      translated = await this.polishTranslationText({
+        taskId: context.taskId,
+        targetLanguage: task.targetLanguage,
+        settings,
+        text: translated,
+        contextChars: polishConfig.contextChars,
+        targetSegmentLength: polishConfig.targetSegmentLength,
+        requestTimeoutMs: translateRequestTimeoutMs,
+      })
+    }
+
     const translationPath = this.buildUniqueFilePath(context.taskDir, 'translation-text', 'txt')
     await fs.writeFile(translationPath, translated, 'utf-8')
     context.translationPath = translationPath
-    context.translationSegments = ordered.map((segment) => ({
-      id: segment.id,
-      index: segment.segmentIndex,
-      text: segment.targetText ?? '',
-      estimatedDurationSec: Math.max(1, Math.ceil((segment.targetText ?? '').length / 4)),
-    }))
+    const translatedSegments = segment(translated, segmentation.strategy, segmentation.options)
+    assertSegmentIntegrity(translated, translatedSegments)
+    context.translationSegments = translatedSegments
 
     this.deps.artifactDao.addArtifact({
       taskId: context.taskId,

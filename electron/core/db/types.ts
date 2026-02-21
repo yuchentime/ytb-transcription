@@ -24,6 +24,12 @@ export type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'skipped
 export type ArtifactType = 'video' | 'audio' | 'transcript' | 'translation' | 'tts'
 export type YtDlpAuthMode = 'none' | 'browser_cookies' | 'cookies_file'
 export type YtDlpCookiesBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox' | 'safari' | 'brave'
+
+// Translation providers: MiniMax, DeepSeek, GLM, Kimi, and Custom (for local models like LM Studio)
+export type TranslateProvider = 'minimax' | 'deepseek' | 'glm' | 'kimi' | 'custom'
+
+// TTS providers: MiniMax, GLM, and Custom (for local TTS models)
+export type TtsProvider = 'minimax' | 'glm' | 'custom'
 export type SegmentStatus = 'pending' | 'running' | 'success' | 'failed'
 export type SegmentStageName = 'translating' | 'synthesizing'
 export type SegmentationStrategy = 'punctuation' | 'sentence' | 'duration'
@@ -41,7 +47,10 @@ export interface CreateTaskInput {
   sourceLanguage?: string | null
   targetLanguage?: string
   whisperModel?: string | null
+  /** @deprecated Use translateProvider instead */
   provider?: 'minimax'
+  translateProvider?: TranslateProvider
+  ttsProvider?: TtsProvider
   translateModelId?: string | null
   ttsModelId?: string | null
   ttsVoice?: string | null
@@ -61,7 +70,10 @@ export interface TaskRecord {
   sourceLanguage: string | null
   targetLanguage: string
   whisperModel: string | null
+  /** @deprecated Use translateProvider instead */
   provider: 'minimax'
+  translateProvider: TranslateProvider
+  ttsProvider: TtsProvider
   translateModelId: string | null
   ttsModelId: string | null
   ttsVoice: string | null
@@ -179,21 +191,52 @@ export interface HistoryListResult {
 }
 
 export interface AppSettings {
-  provider: 'minimax'
-  ytDlpAuthMode: YtDlpAuthMode
-  ytDlpCookiesBrowser: YtDlpCookiesBrowser
-  ytDlpCookiesFilePath: string
-  defaultWhisperModel: 'tiny' | 'base' | 'small' | 'medium' | 'large'
-  minimaxApiKey: string
-  minimaxApiBaseUrl: string
+  // Translation provider settings
+  translateProvider: TranslateProvider
   translateModelId: string
   translateTemperature: number
+
+  // TTS provider settings
+  ttsProvider: TtsProvider
   ttsModelId: string
   ttsVoiceId: string
   ttsSpeed: number
   ttsPitch: number
   ttsVolume: number
+
+  // Provider-specific API configurations
+  // MiniMax
+  minimaxApiKey: string
+  minimaxApiBaseUrl: string
+
+  // DeepSeek
+  deepseekApiKey: string
+  deepseekApiBaseUrl: string
+
+  // GLM (for both translation and TTS)
+  glmApiKey: string
+  glmApiBaseUrl: string
+
+  // Kimi
+  kimiApiKey: string
+  kimiApiBaseUrl: string
+
+  // Custom/Local provider (e.g., LM Studio)
+  customApiKey: string
+  customApiBaseUrl: string
+
+  // YouTube download settings
+  ytDlpAuthMode: YtDlpAuthMode
+  ytDlpCookiesBrowser: YtDlpCookiesBrowser
+  ytDlpCookiesFilePath: string
+
+  // Transcription settings
+  defaultWhisperModel: 'tiny' | 'base' | 'small' | 'medium' | 'large'
+
+  // Default target language
   defaultTargetLanguage: 'zh' | 'en' | 'ja'
+
+  // Timeout and retry settings
   stageTimeoutMs: number
   retryPolicy: {
     download: number
@@ -201,4 +244,8 @@ export interface AppSettings {
     tts: number
     transcribe: number
   }
+
+  // Deprecated: kept for backward compatibility
+  /** @deprecated Use translateProvider instead */
+  provider?: 'minimax'
 }
