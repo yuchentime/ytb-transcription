@@ -41,92 +41,6 @@ export function SettingsPage(props: SettingsPageProps) {
       <h1>{props.t('settings.title')}</h1>
       {props.model.settingsLoading && <p className="hint">{props.t('settings.loading')}</p>}
 
-      {/* Group 1: YouTube Download Settings */}
-      <div className="settings-group">
-        <h3 className="settings-group-title">{props.t('settings.group.youtube')}</h3>
-        <div className="settings-group-content grid two-col">
-          <label>
-            {props.t('settings.youtubeDownloadAuth')}
-            <select
-              value={settings.ytDlpAuthMode}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  ytDlpAuthMode: event.target.value as AppSettings['ytDlpAuthMode'],
-                }))
-              }
-            >
-              <option value="none">{props.t('settings.auth.none')}</option>
-              <option value="browser_cookies">{props.t('settings.auth.browserCookies')}</option>
-              <option value="cookies_file">{props.t('settings.auth.cookiesFile')}</option>
-            </select>
-          </label>
-
-          {settings.ytDlpAuthMode === 'browser_cookies' && (
-            <label>
-              {props.t('settings.cookiesBrowser')}
-              <select
-                value={settings.ytDlpCookiesBrowser}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    ytDlpCookiesBrowser: event.target.value as AppSettings['ytDlpCookiesBrowser'],
-                  }))
-                }
-              >
-                <option value="chrome">chrome</option>
-                <option value="chromium">chromium</option>
-                <option value="edge">edge</option>
-                <option value="firefox">firefox</option>
-                <option value="safari">safari</option>
-                <option value="brave">brave</option>
-              </select>
-            </label>
-          )}
-
-          {settings.ytDlpAuthMode === 'cookies_file' && (
-            <label className="full">
-              {props.t('settings.cookiesFilePath')}
-              <input
-                type="text"
-                value={settings.ytDlpCookiesFilePath}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    ytDlpCookiesFilePath: event.target.value,
-                  }))
-                }
-                placeholder="/path/to/youtube-cookies.txt"
-              />
-            </label>
-          )}
-        </div>
-      </div>
-
-      {/* Group 2: Transcription Settings */}
-      <div className="settings-group">
-        <h3 className="settings-group-title">{props.t('settings.group.transcription')}</h3>
-        <div className="settings-group-content grid two-col">
-          <label>
-            {props.t('settings.whisperModel')}
-            <select
-              value={settings.defaultWhisperModel}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  defaultWhisperModel: event.target.value as AppSettings['defaultWhisperModel'],
-                }))
-              }
-            >
-              <option value="tiny">tiny</option>
-              <option value="base">base</option>
-              <option value="small">small</option>
-              <option value="medium">medium</option>
-              <option value="large">large</option>
-            </select>
-          </label>
-        </div>
-      </div>
 
       {/* Group 3: MiniMax Settings */}
       <div className="settings-group">
@@ -229,13 +143,100 @@ export function SettingsPage(props: SettingsPageProps) {
             </select>
           </label>
 
-          <label className="full">
+          <label>
             <VoicePresetPanel
               settings={settings}
               voiceProfiles={props.model.voiceProfiles}
               validationErrors={props.model.voiceValidationErrors}
               setSettings={setSettings}
             />
+          </label>
+        </div>
+      </div>
+      
+      {/* Group 1: YouTube Download Settings */}
+      <div className="settings-group">
+        <h3 className="settings-group-title">{props.t('settings.group.youtube')}</h3>
+        <div className="settings-group-content grid two-col">
+          <label>
+            {props.t('settings.youtubeDownloadAuth')}
+            <select
+              value={settings.ytDlpAuthMode}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  ytDlpAuthMode: event.target.value as AppSettings['ytDlpAuthMode'],
+                }))
+              }
+            >
+              <option value="none">{props.t('settings.auth.none')}</option>
+              <option value="browser_cookies">{props.t('settings.auth.browserCookies')}</option>
+              <option value="cookies_file">{props.t('settings.auth.cookiesFile')}</option>
+            </select>
+          </label>
+
+          {settings.ytDlpAuthMode === 'browser_cookies' && (
+            <label>
+              {props.t('settings.cookiesBrowser')}
+              <select
+                value={settings.ytDlpCookiesBrowser}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    ytDlpCookiesBrowser: event.target.value as AppSettings['ytDlpCookiesBrowser'],
+                  }))
+                }
+              >
+                <option value="chrome">chrome</option>
+                <option value="chromium">chromium</option>
+                <option value="edge">edge</option>
+                <option value="firefox">firefox</option>
+                <option value="safari">safari</option>
+                <option value="brave">brave</option>
+              </select>
+            </label>
+          )}
+
+          {settings.ytDlpAuthMode === 'cookies_file' && (
+            <label className="full">
+              {props.t('settings.cookiesFilePath')}
+              <input
+                type="text"
+                value={settings.ytDlpCookiesFilePath}
+                onChange={(event) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    ytDlpCookiesFilePath: event.target.value,
+                  }))
+                }
+                placeholder="/path/to/youtube-cookies.txt"
+              />
+            </label>
+          )}
+        </div>
+      </div>
+
+      {/* Group 2: Transcription Settings */}
+      <div className="settings-group">
+        <h3 className="settings-group-title">{props.t('settings.group.transcription')}</h3>
+        <div className="settings-group-content grid two-col">
+          <label>
+            {props.t('settings.whisperModel')}
+            <select
+              value={settings.defaultWhisperModel}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  defaultWhisperModel: event.target.value as AppSettings['defaultWhisperModel'],
+                }))
+              }
+            >
+              <option value="tiny">tiny</option>
+              <option value="base">base</option>
+              <option value="small">small</option>
+              <option value="medium">medium</option>
+              <option value="large">large</option>
+            </select>
           </label>
         </div>
       </div>
