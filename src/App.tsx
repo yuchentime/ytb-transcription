@@ -1,125 +1,135 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TaskStatus } from '../electron/core/db/types'
+import {
+  applyHistoryFiltersAction,
+  cancelTaskAction,
+  handleDeleteHistoryTaskAction,
+  handleDownloadAudioAction,
+  handleExportDiagnosticsAction,
+  handleOpenOutputDirectoryAction,
+  handleRetryHistoryTaskAction,
+  loadHistoryAction,
+  loadSettingsAction,
+  loadTaskDetailAction,
+  saveSettingsAction,
+  startTaskAction,
+} from './app/actions'
+import type { AppRoute } from './app/router'
+import type {
+  HistoryQueryState,
+  HistoryState,
+  LogItem,
+  TaskFormState,
+  TaskState,
+} from './app/state'
+import {
+  createInitialHistoryState,
+  createInitialSettingsState,
+  createInitialTaskState,
+} from './app/state'
+import { DEFAULT_SETTINGS, STAGES, formatDateTime, isRunningStatus } from './app/utils'
+import { SidebarMenu } from './components/SidebarMenu'
+import { HistoryPage } from './pages/HistoryPage'
+import { SettingsPage } from './pages/SettingsPage'
+import { TaskPage } from './pages/TaskPage'
 import { ipcClient } from './services/ipcClient'
 import './App.css'
 
-interface TaskFormState {
-  youtubeUrl: string
-  targetLanguage: 'zh' | 'en' | 'ja'
-}
-
-interface TaskOutput {
-  ttsPath?: string
-  transcriptPath?: string
-  translationPath?: string
-}
-
-interface LogItem {
-  id: number
-  time: string
-  stage: string
-  level: 'info' | 'warn' | 'error'
-  text: string
-}
-
-const STAGES = ['downloading', 'extracting', 'transcribing', 'translating', 'synthesizing', 'merging'] as const
-
-const DEFAULT_SETTINGS: AppSettings = {
-  provider: 'minimax',
-  ytDlpAuthMode: 'none',
-  ytDlpCookiesBrowser: 'chrome',
-  ytDlpCookiesFilePath: '',
-  defaultWhisperModel: 'base',
-  minimaxApiKey: '',
-  minimaxApiBaseUrl: 'https://api.minimaxi.com',
-  translateModelId: '',
-  translateTemperature: 0.3,
-  ttsModelId: '',
-  ttsVoiceId: '',
-  ttsSpeed: 1,
-  ttsPitch: 0,
-  ttsVolume: 1,
-  defaultTargetLanguage: 'zh',
-  stageTimeoutMs: 10 * 60 * 1000,
-  retryPolicy: {
-    download: 2,
-    translate: 2,
-    tts: 2,
-    transcribe: 0,
-  },
-}
-
 function App() {
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [settingsLoading, setSettingsLoading] = useState(true)
-  const [settingsSaving, setSettingsSaving] = useState(false)
-  const [settingsError, setSettingsError] = useState('')
+  const [activeRoute, setActiveRoute] = useState<AppRoute>('task')
+  const [settingsState, setSettingsState] = useState(createInitialSettingsState)
+  const [taskState, setTaskState] = useState<TaskState>(createInitialTaskState)
+  const [historyState, setHistoryState] = useState<HistoryState>(createInitialHistoryState)
 
-  const [taskForm, setTaskForm] = useState<TaskFormState>({
-    youtubeUrl: '',
-    targetLanguage: 'zh',
-  })
-
-  const [activeTaskId, setActiveTaskId] = useState('')
-  const [activeStatus, setActiveStatus] = useState<TaskStatus | ''>('')
-  const [stageProgress, setStageProgress] = useState<Record<string, number>>({})
-  const [logs, setLogs] = useState<LogItem[]>([])
-  const [output, setOutput] = useState<TaskOutput>({})
-  const [taskRunning, setTaskRunning] = useState(false)
-  const [taskError, setTaskError] = useState('')
-  const [ttsAudioUrl, setTtsAudioUrl] = useState<string>('')
+  const historyTotalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(historyState.total / historyState.query.pageSize))
+  }, [historyState.total, historyState.query.pageSize])
 
   const isStartDisabled = useMemo(() => {
-    return taskRunning || !taskForm.youtubeUrl.trim()
-  }, [taskRunning, taskForm.youtubeUrl])
+    return taskState.running || !taskState.form.youtubeUrl.trim()
+  }, [taskState.running, taskState.form.youtubeUrl])
+
+  const setSettingsData: Dispatch<SetStateAction<AppSettings>> = (updater) => {
+    setSettingsState((prev) => ({
+      ...prev,
+      data:
+        typeof updater === 'function'
+          ? (updater as (previous: AppSettings) => AppSettings)(prev.data)
+          : updater,
+    }))
+  }
+
+  const setTaskFormData: Dispatch<SetStateAction<TaskFormState>> = (updater) => {
+    setTaskState((prev) => ({
+      ...prev,
+      form:
+        typeof updater === 'function'
+          ? (updater as (previous: TaskFormState) => TaskFormState)(prev.form)
+          : updater,
+    }))
+  }
 
   function pushLog(item: Omit<LogItem, 'id'>): void {
-    setLogs((prev) => [
-      ...prev.slice(-199),
-      {
-        ...item,
-        id: Date.now() + Math.floor(Math.random() * 1000),
-      },
-    ])
+    setTaskState((prev) => ({
+      ...prev,
+      logs: [
+        ...prev.logs.slice(-199),
+        {
+          ...item,
+          id: Date.now() + Math.floor(Math.random() * 1000),
+        },
+      ],
+    }))
   }
+
+  async function loadHistory(query: HistoryQueryState = historyState.query): Promise<void> {
+    await loadHistoryAction({
+      ipcClient,
+      setHistoryState,
+      query,
+    })
+  }
+
+  async function loadTaskDetail(taskId: string): Promise<void> {
+    await loadTaskDetailAction({
+      ipcClient,
+      setTaskState,
+      setActiveRoute,
+      pushLog,
+      taskId,
+    })
+  }
+
+  useEffect(() => {
+    void loadHistory(historyState.query)
+  }, [
+    historyState.query.page,
+    historyState.query.pageSize,
+    historyState.query.status,
+    historyState.query.targetLanguage,
+    historyState.query.keyword,
+  ])
 
   useEffect(() => {
     let mounted = true
 
-    const loadSettings = async () => {
-      setSettingsLoading(true)
-      setSettingsError('')
-      try {
-        const result = await ipcClient.settings.get()
-        if (!mounted) return
-        setSettings(result)
-        setTaskForm((prev) => ({
-          ...prev,
-          targetLanguage: result.defaultTargetLanguage,
-        }))
-      } catch (error) {
-        if (!mounted) return
-        setSettingsError(error instanceof Error ? error.message : 'Failed to load settings')
-      } finally {
-        if (mounted) setSettingsLoading(false)
-      }
-    }
-
-    void loadSettings()
+    void loadSettingsAction({
+      ipcClient,
+      setSettingsState,
+      setTaskState,
+      isMounted: () => mounted,
+    })
 
     const offStatus = ipcClient.task.onStatus((payload) => {
-      if (payload.taskId !== activeTaskId && activeTaskId) return
-      setActiveTaskId(payload.taskId)
-      setActiveStatus(payload.status)
-      setTaskRunning(
-        payload.status === 'queued' ||
-          payload.status === 'downloading' ||
-          payload.status === 'extracting' ||
-          payload.status === 'transcribing' ||
-          payload.status === 'translating' ||
-          payload.status === 'synthesizing' ||
-          payload.status === 'merging',
-      )
+      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
+      setTaskState((prev) => ({
+        ...prev,
+        activeTaskId: payload.taskId,
+        activeStatus: payload.status,
+        running: isRunningStatus(payload.status),
+      }))
+
       pushLog({
         time: payload.timestamp,
         stage: 'status',
@@ -129,13 +139,35 @@ function App() {
     })
 
     const offProgress = ipcClient.task.onProgress((payload) => {
-      if (payload.taskId !== activeTaskId && activeTaskId) return
-      setActiveTaskId(payload.taskId)
-      setStageProgress((prev) => ({ ...prev, [payload.stage]: payload.percent }))
+      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
+      setTaskState((prev) => ({
+        ...prev,
+        activeTaskId: payload.taskId,
+        stageProgress: {
+          ...prev.stageProgress,
+          [payload.stage]: payload.percent,
+        },
+      }))
+    })
+
+    const offRuntime = ipcClient.task.onRuntime((payload) => {
+      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
+      setTaskState((prev) => ({
+        ...prev,
+        runtimeItems: {
+          ...prev.runtimeItems,
+          [payload.component]: {
+            component: payload.component,
+            status: payload.status,
+            message: payload.message,
+            timestamp: payload.timestamp,
+          },
+        },
+      }))
     })
 
     const offLog = ipcClient.task.onLog((payload) => {
-      if (payload.taskId !== activeTaskId && activeTaskId) return
+      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
       pushLog({
         time: payload.timestamp,
         stage: payload.stage,
@@ -145,110 +177,79 @@ function App() {
     })
 
     const offCompleted = ipcClient.task.onCompleted((payload) => {
-      if (payload.taskId !== activeTaskId && activeTaskId) return
-      setTaskRunning(false)
-      setOutput(payload.output)
+      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
+      setTaskState((prev) => ({
+        ...prev,
+        running: false,
+        error: '',
+        output: payload.output,
+      }))
+
       pushLog({
         time: new Date().toISOString(),
         stage: 'completed',
         level: 'info',
         text: 'Task completed',
       })
+      void loadHistory(historyState.query)
     })
 
     const offFailed = ipcClient.task.onFailed((payload) => {
-      if (payload.taskId !== activeTaskId && activeTaskId) return
-      setTaskRunning(false)
-      setTaskError(payload.errorMessage)
+      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
+      setTaskState((prev) => ({
+        ...prev,
+        running: false,
+        error: payload.errorMessage,
+      }))
+
       pushLog({
         time: new Date().toISOString(),
         stage: payload.stage,
         level: 'error',
         text: `${payload.errorCode}: ${payload.errorMessage}`,
       })
+      void loadHistory(historyState.query)
     })
 
     return () => {
       mounted = false
       offStatus()
       offProgress()
+      offRuntime()
       offLog()
       offCompleted()
       offFailed()
     }
-  }, [activeTaskId])
+  }, [taskState.activeTaskId, historyState.query])
 
-  async function saveSettings(): Promise<void> {
-    setSettingsSaving(true)
-    setSettingsError('')
-    try {
-      const saved = await ipcClient.settings.update(settings)
-      setSettings(saved)
-      pushLog({
-        time: new Date().toISOString(),
-        stage: 'settings',
-        level: 'info',
-        text: 'Settings saved',
-      })
-    } catch (error) {
-      setSettingsError(error instanceof Error ? error.message : 'Failed to save settings')
-    } finally {
-      setSettingsSaving(false)
-    }
-  }
-
-  async function startTask(): Promise<void> {
-    if (!taskForm.youtubeUrl.trim()) return
-
-    setTaskError('')
-    setOutput({})
-    setStageProgress({})
-    setLogs([])
-
-    try {
-      const task = await ipcClient.task.create({
-        youtubeUrl: taskForm.youtubeUrl.trim(),
-        targetLanguage: taskForm.targetLanguage,
-        whisperModel: settings.defaultWhisperModel,
-      })
-      setActiveTaskId(task.id)
-
-      const result = await ipcClient.task.start({ taskId: task.id })
-      if (!result.accepted) {
-        throw new Error(result.reason ?? 'Task was not accepted')
-      }
-    } catch (error) {
-      setTaskError(error instanceof Error ? error.message : 'Failed to start task')
-    }
-  }
-
-  async function cancelTask(): Promise<void> {
-    if (!activeTaskId) return
-    try {
-      await ipcClient.task.cancel({ taskId: activeTaskId })
-    } catch (error) {
-      setTaskError(error instanceof Error ? error.message : 'Failed to cancel task')
-    }
-  }
-
-  // 加载音频文件并创建 Blob URL
   useEffect(() => {
+    let objectUrl: string | null = null
+    let disposed = false
+
     const loadAudio = async () => {
-      if (!output.ttsPath) {
-        setTtsAudioUrl('')
+      if (!taskState.output.ttsPath) {
+        setTaskState((prev) => ({
+          ...prev,
+          ttsAudioUrl: '',
+        }))
         return
       }
 
       try {
-        const { data, mimeType } = await ipcClient.file.readAudio(output.ttsPath)
+        const { data, mimeType } = await ipcClient.file.readAudio(taskState.output.ttsPath)
         const blob = new Blob([data], { type: mimeType })
         const url = URL.createObjectURL(blob)
-        setTtsAudioUrl(url)
 
-        // 清理函数
-        return () => {
+        if (disposed) {
           URL.revokeObjectURL(url)
+          return
         }
+
+        objectUrl = url
+        setTaskState((prev) => ({
+          ...prev,
+          ttsAudioUrl: url,
+        }))
       } catch (error) {
         pushLog({
           time: new Date().toISOString(),
@@ -260,30 +261,203 @@ function App() {
     }
 
     void loadAudio()
-  }, [output.ttsPath])
 
-  // 处理下载
-  async function handleDownloadAudio(): Promise<void> {
-    if (!output.ttsPath) return
-    try {
-      const { data, mimeType, fileName } = await ipcClient.file.readAudio(output.ttsPath)
-      const blob = new Blob([data], { type: mimeType })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch (error) {
-      pushLog({
-        time: new Date().toISOString(),
-        stage: 'tts',
-        level: 'error',
-        text: `Failed to download audio: ${error instanceof Error ? error.message : String(error)}`,
-      })
+    return () => {
+      disposed = true
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
     }
+  }, [taskState.output.ttsPath])
+
+  async function saveSettings(): Promise<void> {
+    await saveSettingsAction({
+      settings: settingsState.data,
+      ipcClient,
+      setSettingsState,
+      setTaskState,
+      pushLog,
+    })
+  }
+
+  async function startTask(): Promise<void> {
+    await startTaskAction({
+      taskForm: taskState.form,
+      settings: settingsState.data,
+      ipcClient,
+      setTaskState,
+      setActiveRoute,
+      refreshHistory: loadHistory,
+      historyQuery: historyState.query,
+    })
+  }
+
+  async function cancelTask(): Promise<void> {
+    await cancelTaskAction({
+      activeTaskId: taskState.activeTaskId,
+      ipcClient,
+      setTaskState,
+    })
+  }
+
+  async function handleDownloadAudio(): Promise<void> {
+    await handleDownloadAudioAction({
+      ttsPath: taskState.output.ttsPath,
+      ipcClient,
+      pushLog,
+    })
+  }
+
+  async function handleOpenOutputDirectory(): Promise<void> {
+    await handleOpenOutputDirectoryAction({
+      output: taskState.output,
+      ipcClient,
+      pushLog,
+    })
+  }
+
+  async function handleExportDiagnostics(taskId?: string): Promise<void> {
+    await handleExportDiagnosticsAction({
+      taskId,
+      ipcClient,
+      pushLog,
+    })
+  }
+
+  function applyHistoryFilters(): void {
+    applyHistoryFiltersAction({
+      setHistoryState,
+    })
+  }
+
+  async function handleDeleteHistoryTask(taskId: string): Promise<void> {
+    await handleDeleteHistoryTaskAction({
+      taskId,
+      activeTaskId: taskState.activeTaskId,
+      historyQuery: historyState.query,
+      confirmDelete: (targetTaskId) =>
+        window.confirm(
+          `Delete task ${targetTaskId}? This will remove DB records and local artifacts.`,
+        ),
+      refreshHistory: loadHistory,
+      ipcClient,
+      setHistoryState,
+      setTaskState,
+      pushLog,
+    })
+  }
+
+  async function handleRetryHistoryTask(taskId: string): Promise<void> {
+    await handleRetryHistoryTaskAction({
+      taskId,
+      historyQuery: historyState.query,
+      refreshHistory: loadHistory,
+      setActiveRoute,
+      ipcClient,
+      setHistoryState,
+      setTaskState,
+      pushLog,
+    })
+  }
+
+  const settingsPageModel = {
+    settings: settingsState.data,
+    settingsLoading: settingsState.loading,
+    settingsSaving: settingsState.saving,
+    settingsError: settingsState.error,
+    defaultStageTimeoutMs: DEFAULT_SETTINGS.stageTimeoutMs,
+  }
+  const settingsPageActions = {
+    setSettings: setSettingsData,
+    onSave: saveSettings,
+  }
+
+  const taskPageModel = {
+    stages: STAGES,
+    taskForm: taskState.form,
+    isStartDisabled,
+    taskRunning: taskState.running,
+    taskError: taskState.error,
+    activeTaskId: taskState.activeTaskId,
+    activeStatus: taskState.activeStatus,
+    stageProgress: taskState.stageProgress,
+    runtimeItems: taskState.runtimeItems,
+    output: taskState.output,
+    ttsAudioUrl: taskState.ttsAudioUrl,
+    logs: taskState.logs,
+  }
+  const taskPageActions = {
+    setTaskForm: setTaskFormData,
+    onStartTask: startTask,
+    onCancelTask: cancelTask,
+    onExportDiagnostics: (taskId: string) => handleExportDiagnostics(taskId),
+    onDownloadAudio: handleDownloadAudio,
+    onOpenOutputDirectory: handleOpenOutputDirectory,
+  }
+
+  const historyPageModel = {
+    historyKeywordDraft: historyState.keywordDraft,
+    historyStatusDraft: historyState.statusDraft,
+    historyLanguageDraft: historyState.languageDraft,
+    historyPageSize: historyState.query.pageSize,
+    historyError: historyState.error,
+    historyLoading: historyState.loading,
+    historyItems: historyState.items,
+    historyBusyTaskId: historyState.busyTaskId,
+    historyPage: historyState.query.page,
+    historyTotalPages,
+    historyTotal: historyState.total,
+    canPrevPage: historyState.query.page > 1 && !historyState.loading,
+    canNextPage: historyState.query.page < historyTotalPages && !historyState.loading,
+  }
+  const historyPageActions = {
+    onHistoryKeywordDraftChange: (value: string) =>
+      setHistoryState((prev) => ({
+        ...prev,
+        keywordDraft: value,
+      })),
+    onHistoryStatusDraftChange: (value: 'all' | TaskStatus) =>
+      setHistoryState((prev) => ({
+        ...prev,
+        statusDraft: value,
+      })),
+    onHistoryLanguageDraftChange: (value: 'all' | 'zh' | 'en' | 'ja') =>
+      setHistoryState((prev) => ({
+        ...prev,
+        languageDraft: value,
+      })),
+    onHistoryPageSizeChange: (pageSize: number) =>
+      setHistoryState((prev) => ({
+        ...prev,
+        query: {
+          ...prev.query,
+          page: 1,
+          pageSize,
+        },
+      })),
+    onApplyFilters: applyHistoryFilters,
+    onRefresh: () => loadHistory(historyState.query),
+    onLoadTaskDetail: loadTaskDetail,
+    onRetryTask: handleRetryHistoryTask,
+    onDeleteTask: handleDeleteHistoryTask,
+    onExportDiagnostics: (taskId: string) => handleExportDiagnostics(taskId),
+    onPrevPage: () =>
+      setHistoryState((prev) => ({
+        ...prev,
+        query: {
+          ...prev.query,
+          page: Math.max(1, prev.query.page - 1),
+        },
+      })),
+    onNextPage: () =>
+      setHistoryState((prev) => ({
+        ...prev,
+        query: {
+          ...prev.query,
+          page: Math.min(historyTotalPages, prev.query.page + 1),
+        },
+      })),
+    formatDateTime,
   }
 
   return (
@@ -293,250 +467,21 @@ function App() {
         <p>Real pipeline: yt-dlp + ffmpeg + whisper + MiniMax</p>
       </header>
 
-      <section className="panel">
-        <h2>Settings</h2>
-        {settingsLoading && <p className="hint">Loading settings...</p>}
+      <div className="workspace">
+        <SidebarMenu activeRoute={activeRoute} onRouteChange={setActiveRoute} />
 
-        <div className="grid">
-          <label>
-            YouTube Download Auth
-            <select
-              value={settings.ytDlpAuthMode}
-              onChange={(e) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  ytDlpAuthMode: e.target.value as AppSettings['ytDlpAuthMode'],
-                }))
-              }
-            >
-              <option value="none">None</option>
-              <option value="browser_cookies">Browser Cookies</option>
-              <option value="cookies_file">Cookies File</option>
-            </select>
-          </label>
-
-          {settings.ytDlpAuthMode === 'browser_cookies' && (
-            <label>
-              Cookies Browser
-              <select
-                value={settings.ytDlpCookiesBrowser}
-                onChange={(e) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    ytDlpCookiesBrowser: e.target.value as AppSettings['ytDlpCookiesBrowser'],
-                  }))
-                }
-              >
-                <option value="chrome">chrome</option>
-                <option value="chromium">chromium</option>
-                <option value="edge">edge</option>
-                <option value="firefox">firefox</option>
-                <option value="safari">safari</option>
-                <option value="brave">brave</option>
-              </select>
-            </label>
+        <div className="main-view">
+          {activeRoute === 'settings' && (
+            <SettingsPage model={settingsPageModel} actions={settingsPageActions} />
           )}
 
-          {settings.ytDlpAuthMode === 'cookies_file' && (
-            <label className="full">
-              Cookies File Path
-              <input
-                type="text"
-                value={settings.ytDlpCookiesFilePath}
-                onChange={(e) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    ytDlpCookiesFilePath: e.target.value,
-                  }))
-                }
-                placeholder="/path/to/youtube-cookies.txt"
-              />
-            </label>
+          {activeRoute === 'task' && <TaskPage model={taskPageModel} actions={taskPageActions} />}
+
+          {activeRoute === 'history' && (
+            <HistoryPage model={historyPageModel} actions={historyPageActions} />
           )}
-
-          <label>
-            Whisper Model
-            <select
-              value={settings.defaultWhisperModel}
-              onChange={(e) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  defaultWhisperModel: e.target.value as AppSettings['defaultWhisperModel'],
-                }))
-              }
-            >
-              <option value="tiny">tiny</option>
-              <option value="base">base</option>
-              <option value="small">small</option>
-              <option value="medium">medium</option>
-              <option value="large">large</option>
-            </select>
-          </label>
-
-          <label>
-            MiniMax API Key
-            <input
-              type="password"
-              value={settings.minimaxApiKey}
-              onChange={(e) => setSettings((prev) => ({ ...prev, minimaxApiKey: e.target.value }))}
-              placeholder="sk-..."
-            />
-          </label>
-
-          <label>
-            MiniMax Base URL
-            <input
-              type="text"
-              value={settings.minimaxApiBaseUrl}
-              onChange={(e) =>
-                setSettings((prev) => ({ ...prev, minimaxApiBaseUrl: e.target.value.trim() }))
-              }
-              placeholder="https://api.minimaxi.com"
-            />
-          </label>
-
-          <label>
-            Translate Model ID
-            <input
-              type="text"
-              value={settings.translateModelId}
-              onChange={(e) => setSettings((prev) => ({ ...prev, translateModelId: e.target.value }))}
-            />
-          </label>
-
-          <label>
-            TTS Model ID
-            <input
-              type="text"
-              value={settings.ttsModelId}
-              onChange={(e) => setSettings((prev) => ({ ...prev, ttsModelId: e.target.value }))}
-            />
-          </label>
-
-          <label>
-            TTS Voice ID
-            <input
-              type="text"
-              value={settings.ttsVoiceId}
-              onChange={(e) => setSettings((prev) => ({ ...prev, ttsVoiceId: e.target.value }))}
-            />
-          </label>
-
-          <label>
-            Default Target Language
-            <select
-              value={settings.defaultTargetLanguage}
-              onChange={(e) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  defaultTargetLanguage: e.target.value as 'zh' | 'en' | 'ja',
-                }))
-              }
-            >
-              <option value="zh">zh</option>
-              <option value="en">en</option>
-              <option value="ja">ja</option>
-            </select>
-          </label>
         </div>
-
-        <div className="actions">
-          <button className="btn primary" onClick={() => void saveSettings()} disabled={settingsSaving}>
-            {settingsSaving ? 'Saving...' : 'Save Settings'}
-          </button>
-          {settingsError && <span className="error">{settingsError}</span>}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Run Task</h2>
-
-        <div className="grid">
-          <label className="full">
-            YouTube URL
-            <input
-              type="text"
-              value={taskForm.youtubeUrl}
-              onChange={(e) => setTaskForm((prev) => ({ ...prev, youtubeUrl: e.target.value }))}
-              placeholder="https://www.youtube.com/watch?v=..."
-            />
-          </label>
-
-          <label>
-            Target Language
-            <select
-              value={taskForm.targetLanguage}
-              onChange={(e) =>
-                setTaskForm((prev) => ({
-                  ...prev,
-                  targetLanguage: e.target.value as 'zh' | 'en' | 'ja',
-                }))
-              }
-            >
-              <option value="zh">zh</option>
-              <option value="en">en</option>
-              <option value="ja">ja</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="actions">
-          <button className="btn primary" disabled={isStartDisabled} onClick={() => void startTask()}>
-            Start Task
-          </button>
-          <button className="btn" disabled={!taskRunning} onClick={() => void cancelTask()}>
-            Cancel Task
-          </button>
-          {taskError && <span className="error">{taskError}</span>}
-        </div>
-
-        <div className="status">
-          <span>Task ID: {activeTaskId || '-'}</span>
-          <span>Status: {activeStatus || '-'}</span>
-        </div>
-
-        <ul className="progress-list">
-          {STAGES.map((stage) => (
-            <li key={stage}>
-              <span>{stage}</span>
-              <div className="bar">
-                <div className="fill" style={{ width: `${stageProgress[stage] ?? 0}%` }} />
-              </div>
-              <span>{stageProgress[stage] ?? 0}%</span>
-            </li>
-          ))}
-        </ul>
-
-        <div className="output">
-          <p>transcript: {output.transcriptPath || '-'}</p>
-          <p>translation: {output.translationPath || '-'}</p>
-          <div className="tts-output">
-            <span>tts:</span>
-            {ttsAudioUrl ? (
-              <div className="tts-player">
-                <audio controls src={ttsAudioUrl} />
-                <button className="btn small" onClick={() => void handleDownloadAudio()}>
-                  下载
-                </button>
-              </div>
-            ) : (
-              '-'
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Logs</h2>
-        <div className="logbox">
-          {logs.length === 0 && <p className="hint">No logs yet.</p>}
-          {logs.map((log) => (
-            <p key={log.id} className={`log ${log.level}`}>
-              [{new Date(log.time).toLocaleTimeString()}] [{log.stage}] {log.text}
-            </p>
-          ))}
-        </div>
-      </section>
+      </div>
     </main>
   )
 }

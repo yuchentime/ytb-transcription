@@ -1,5 +1,5 @@
 .app {
-  max-width: 1000px;
+  max-width: 1120px;
   margin: 0 auto;
   padding: 24px 16px 32px;
 }
@@ -19,6 +19,56 @@
   margin: 8px 0 0;
   color: #4b4b4b;
   font-size: 13px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.sidebar {
+  border: 1px solid #151515;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.sidebar-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar-tab {
+  border: 1px solid #111;
+  background: #fff;
+  color: #111;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-tab.active {
+  background: #111;
+  color: #fff;
+}
+
+.main-view {
+  min-width: 0;
+}
+
+.main-panel {
+  margin-bottom: 14px;
 }
 
 .panel {
@@ -65,6 +115,10 @@ select {
   color: #111;
 }
 
+input:read-only {
+  background: #f5f5f5;
+}
+
 input:focus,
 select:focus {
   outline: 2px solid #111;
@@ -98,6 +152,12 @@ select:focus {
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.btn.small {
+  padding: 6px 10px;
+  font-size: 12px;
+  text-decoration: none;
 }
 
 .error {
@@ -151,6 +211,25 @@ select:focus {
   transition: width 120ms linear;
 }
 
+.runtime {
+  margin: 10px 0 12px;
+  border-top: 1px dashed #bbb;
+  padding-top: 10px;
+}
+
+.runtime h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.runtime-line {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: #252525;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  word-break: break-all;
+}
+
 .output {
   padding-top: 8px;
   border-top: 1px dashed #bbb;
@@ -173,42 +252,18 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
   flex: 1;
 }
 
 .tts-player audio {
   height: 32px;
   flex: 1;
-  max-width: 400px;
-}
-
-.btn.small {
-  padding: 6px 10px;
-  font-size: 12px;
-  text-decoration: none;
-}
-
-.runtime {
-  margin: 10px 0 12px;
-  border-top: 1px dashed #bbb;
-  padding-top: 10px;
-}
-
-.runtime h3 {
-  margin: 0 0 6px;
-  font-size: 13px;
-}
-
-.runtime-line {
-  margin: 0 0 4px;
-  font-size: 12px;
-  color: #252525;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  word-break: break-all;
+  min-width: 280px;
 }
 
 .logbox {
-  max-height: 220px;
+  max-height: 240px;
   overflow: auto;
   border: 1px solid #222;
   border-radius: 10px;
@@ -235,7 +290,109 @@ select:focus {
   color: #9b1a1a;
 }
 
+.history-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.history-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #222;
+  font-weight: 600;
+}
+
+.history-filter-actions {
+  align-self: end;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid #111;
+  border-radius: 10px;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+  font-size: 12px;
+}
+
+.history-table th,
+.history-table td {
+  border-bottom: 1px solid #d8d8d8;
+  text-align: left;
+  vertical-align: top;
+  padding: 9px 10px;
+}
+
+.history-table th {
+  background: #f5f5f5;
+  font-size: 12px;
+}
+
+.history-table tr:last-child td {
+  border-bottom: none;
+}
+
+.hint-cell {
+  color: #5e5e5e;
+}
+
+.url-cell {
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pagination {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .history-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 @media (max-width: 780px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    padding: 10px;
+  }
+
+  .sidebar-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sidebar-tab {
+    text-align: center;
+  }
+
   .grid {
     grid-template-columns: 1fr;
   }
@@ -243,5 +400,13 @@ select:focus {
   .progress-list li {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .history-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .pagination {
+    justify-content: flex-start;
   }
 }

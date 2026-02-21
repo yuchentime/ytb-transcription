@@ -1,6 +1,7 @@
 import { registerFileHandlers } from './file.handlers'
 import { registerHistoryHandlers } from './history.handlers'
 import { registerSettingsHandlers } from './settings.handlers'
+import { registerSystemHandlers } from './system.handlers'
 import { registerTaskHandlers } from './task.handlers'
 
 let registered = false
@@ -10,7 +11,7 @@ export function registerIpcHandlers(): void {
   registerTaskHandlers()
   registerHistoryHandlers()
   registerSettingsHandlers()
+  registerSystemHandlers()
   registerFileHandlers()
   registered = true
 }
-

@@ -19,6 +19,8 @@ export const IPC_CHANNELS = {
   historyDelete: 'history:delete',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
+  systemOpenPath: 'system:openPath',
+  systemExportDiagnostics: 'system:exportDiagnostics',
   fileReadAudio: 'file:readAudio',
   taskStatus: 'task:status',
   taskProgress: 'task:progress',
@@ -43,6 +45,22 @@ export interface TaskCancelResult {
 
 export interface HistoryDeleteResult {
   deleted: boolean
+}
+
+export interface OpenPathPayload {
+  path: string
+}
+
+export interface OpenPathResult {
+  ok: boolean
+}
+
+export interface ExportDiagnosticsPayload {
+  taskId?: string
+}
+
+export interface ExportDiagnosticsResult {
+  filePath: string
 }
 
 export interface TaskDetail {
@@ -123,6 +141,10 @@ export interface RendererAPI {
   settings: {
     get(): Promise<AppSettings>
     update(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  system: {
+    openPath(payload: OpenPathPayload): Promise<OpenPathResult>
+    exportDiagnostics(payload?: ExportDiagnosticsPayload): Promise<ExportDiagnosticsResult>
   }
   file: {
     readAudio(filePath: string): Promise<AudioFileResult>

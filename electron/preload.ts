@@ -29,6 +29,10 @@ const api: RendererAPI = {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
     update: (patch) => ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
   },
+  system: {
+    openPath: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemOpenPath, payload),
+    exportDiagnostics: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemExportDiagnostics, payload),
+  },
   file: {
     readAudio: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.fileReadAudio, filePath),
   },

@@ -38,7 +38,7 @@ export function initDatabase(options?: { dataRoot?: string; dbPath?: string }): 
   const taskStepDao = new TaskStepDao(db)
   const artifactDao = new ArtifactDao(db)
   const settingsDao = new SettingsDao(db)
-  settingsDao.upsertSettings({ provider: 'minimax' })
+  settingsDao.initializeDefaults()
 
   context = {
     dbPath,
@@ -64,4 +64,3 @@ export function closeDatabase(): void {
   context.db.close()
   context = null
 }
-

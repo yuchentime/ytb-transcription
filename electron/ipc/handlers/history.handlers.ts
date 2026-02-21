@@ -18,9 +18,9 @@ async function safeRemoveFile(filePath: string): Promise<void> {
 
 async function safeRemoveEmptyDir(dirPath: string): Promise<void> {
   try {
-    await fs.rmdir(dirPath)
+    await fs.rm(dirPath, { recursive: true, force: true })
   } catch {
-    // Ignore if directory is not empty or inaccessible.
+    // Ignore cleanup failures in MVP.
   }
 }
 
@@ -37,23 +37,18 @@ export function registerHistoryHandlers(): void {
         throw new Error('taskId is required')
       }
 
-      const { taskDao, artifactDao } = getDatabaseContext()
+      const { dbPath, taskDao, artifactDao } = getDatabaseContext()
       const artifacts = artifactDao.listArtifacts(payload.taskId)
-      const parentDirs = new Set<string>()
 
       for (const artifact of artifacts) {
-        parentDirs.add(path.dirname(artifact.filePath))
         await safeRemoveFile(artifact.filePath)
       }
 
-      const deletedCount = taskDao.deleteTask(payload.taskId)
+      const deleted = taskDao.deleteTaskCascade(payload.taskId)
+      const taskDir = path.join(path.dirname(dbPath), 'artifacts', payload.taskId)
+      await safeRemoveEmptyDir(taskDir)
 
-      for (const dirPath of parentDirs) {
-        await safeRemoveEmptyDir(dirPath)
-      }
-
-      return { deleted: deletedCount > 0 }
+      return { deleted: deleted.taskDeleted }
     },
   )
 }
-

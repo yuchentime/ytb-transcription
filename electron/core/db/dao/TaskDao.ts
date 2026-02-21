@@ -311,4 +311,23 @@ export class TaskDao {
     const info = this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId)
     return info.changes
   }
+
+  deleteTaskCascade(taskId: string): {
+    taskDeleted: boolean
+    stepsDeleted: number
+    artifactsDeleted: number
+  } {
+    const transaction = this.db.transaction((id: string) => {
+      const stepsDeleted = this.db.prepare('DELETE FROM task_steps WHERE task_id = ?').run(id).changes
+      const artifactsDeleted = this.db.prepare('DELETE FROM artifacts WHERE task_id = ?').run(id).changes
+      const taskDeleted = this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id).changes
+      return {
+        taskDeleted: taskDeleted > 0,
+        stepsDeleted,
+        artifactsDeleted,
+      }
+    })
+
+    return transaction(taskId)
+  }
 }

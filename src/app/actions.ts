@@ -1,0 +1,509 @@
+import type { Dispatch, SetStateAction } from 'react'
+import type { AppSettings } from '../../electron/core/db/types'
+import type { RendererAPI } from '../../electron/ipc/channels'
+import type {
+  HistoryQueryState,
+  HistoryState,
+  LogItem,
+  SettingsState,
+  TaskFormState,
+  TaskOutput,
+  TaskState,
+} from './state'
+import type { AppRoute } from './router'
+import { createEmptyRuntimeItems } from './state'
+import { findLatestArtifactPath, isRunningStatus } from './utils'
+
+interface CommonTaskActionDeps {
+  ipcClient: RendererAPI
+  setTaskState: Dispatch<SetStateAction<TaskState>>
+}
+
+interface LogDeps {
+  pushLog(item: Omit<LogItem, 'id'>): void
+}
+
+function getErrorMessage(error: unknown, fallbackMessage: string): string {
+  return error instanceof Error ? error.message : fallbackMessage
+}
+
+export async function loadHistoryAction(params: {
+  ipcClient: RendererAPI
+  setHistoryState: Dispatch<SetStateAction<HistoryState>>
+  query: HistoryQueryState
+}): Promise<void> {
+  const { ipcClient, setHistoryState, query } = params
+
+  setHistoryState((prev) => ({
+    ...prev,
+    loading: true,
+    error: '',
+  }))
+
+  try {
+    const result = await ipcClient.history.list(query)
+    setHistoryState((prev) => ({
+      ...prev,
+      items: result.items,
+      total: result.total,
+      loading: false,
+    }))
+  } catch (error) {
+    setHistoryState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, 'Failed to load history'),
+      loading: false,
+    }))
+  }
+}
+
+export async function loadTaskDetailAction(
+  params: CommonTaskActionDeps &
+    LogDeps & {
+      setActiveRoute: Dispatch<SetStateAction<AppRoute>>
+      taskId: string
+    },
+): Promise<void> {
+  const { ipcClient, setTaskState, setActiveRoute, pushLog, taskId } = params
+
+  try {
+    const detail = await ipcClient.task.get({ taskId })
+    const progress: Record<string, number> = {}
+    for (const step of detail.steps) {
+      if (step.status === 'success') {
+        progress[step.stepName] = 100
+      } else if (step.status === 'running') {
+        progress[step.stepName] = 50
+      } else if (step.status === 'failed') {
+        progress[step.stepName] = 100
+      }
+    }
+
+    setTaskState((prev) => ({
+      ...prev,
+      activeTaskId: taskId,
+      activeStatus: detail.task.status,
+      running: isRunningStatus(detail.task.status),
+      error: detail.task.errorMessage ?? '',
+      stageProgress: progress,
+      output: {
+        transcriptPath: findLatestArtifactPath(detail.artifacts, 'transcript'),
+        translationPath: findLatestArtifactPath(detail.artifacts, 'translation'),
+        ttsPath: findLatestArtifactPath(detail.artifacts, 'tts'),
+      },
+    }))
+    setActiveRoute('task')
+
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'history',
+      level: 'info',
+      text: `Loaded task detail: ${taskId}`,
+    })
+  } catch (error) {
+    setTaskState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, 'Failed to load task detail'),
+    }))
+  }
+}
+
+export async function loadSettingsAction(params: {
+  ipcClient: RendererAPI
+  setSettingsState: Dispatch<SetStateAction<SettingsState>>
+  setTaskState: Dispatch<SetStateAction<TaskState>>
+  isMounted(): boolean
+}): Promise<void> {
+  const { ipcClient, setSettingsState, setTaskState, isMounted } = params
+
+  setSettingsState((prev) => ({
+    ...prev,
+    loading: true,
+    error: '',
+  }))
+
+  try {
+    const result = await ipcClient.settings.get()
+    if (!isMounted()) return
+
+    setSettingsState((prev) => ({
+      ...prev,
+      data: result,
+    }))
+    setTaskState((prev) => ({
+      ...prev,
+      form: {
+        ...prev.form,
+        targetLanguage: result.defaultTargetLanguage,
+      },
+    }))
+  } catch (error) {
+    if (!isMounted()) return
+    setSettingsState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, 'Failed to load settings'),
+    }))
+  } finally {
+    if (isMounted()) {
+      setSettingsState((prev) => ({
+        ...prev,
+        loading: false,
+      }))
+    }
+  }
+}
+
+export async function saveSettingsAction(
+  params: {
+    settings: AppSettings
+    ipcClient: RendererAPI
+    setSettingsState: Dispatch<SetStateAction<SettingsState>>
+    setTaskState: Dispatch<SetStateAction<TaskState>>
+  } & LogDeps,
+): Promise<void> {
+  const { settings, ipcClient, setSettingsState, setTaskState, pushLog } = params
+
+  setSettingsState((prev) => ({
+    ...prev,
+    saving: true,
+    error: '',
+  }))
+
+  try {
+    const saved = await ipcClient.settings.update(settings)
+    setSettingsState((prev) => ({
+      ...prev,
+      data: saved,
+    }))
+    setTaskState((prev) => ({
+      ...prev,
+      form: {
+        ...prev.form,
+        targetLanguage: saved.defaultTargetLanguage,
+      },
+    }))
+
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'settings',
+      level: 'info',
+      text: 'Settings saved',
+    })
+  } catch (error) {
+    setSettingsState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, 'Failed to save settings'),
+    }))
+  } finally {
+    setSettingsState((prev) => ({
+      ...prev,
+      saving: false,
+    }))
+  }
+}
+
+export async function startTaskAction(
+  params: CommonTaskActionDeps & {
+    taskForm: TaskFormState
+    settings: AppSettings
+    setActiveRoute: Dispatch<SetStateAction<AppRoute>>
+    refreshHistory(query: HistoryQueryState): Promise<void>
+    historyQuery: HistoryQueryState
+  },
+): Promise<void> {
+  const { taskForm, settings, ipcClient, setTaskState, setActiveRoute, refreshHistory, historyQuery } = params
+
+  if (!taskForm.youtubeUrl.trim()) return
+
+  setTaskState((prev) => ({
+    ...prev,
+    error: '',
+    output: {},
+    stageProgress: {},
+    runtimeItems: createEmptyRuntimeItems(),
+    logs: [],
+  }))
+
+  try {
+    const task = await ipcClient.task.create({
+      youtubeUrl: taskForm.youtubeUrl.trim(),
+      targetLanguage: taskForm.targetLanguage,
+      whisperModel: settings.defaultWhisperModel,
+    })
+
+    setTaskState((prev) => ({
+      ...prev,
+      activeTaskId: task.id,
+      activeStatus: task.status,
+    }))
+
+    const result = await ipcClient.task.start({ taskId: task.id })
+    if (!result.accepted) {
+      throw new Error(result.reason ?? 'Task was not accepted')
+    }
+
+    setTaskState((prev) => ({
+      ...prev,
+      running: true,
+    }))
+    setActiveRoute('task')
+    void refreshHistory(historyQuery)
+  } catch (error) {
+    setTaskState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, 'Failed to start task'),
+    }))
+  }
+}
+
+export async function cancelTaskAction(params: {
+  activeTaskId: string
+  ipcClient: RendererAPI
+  setTaskState: Dispatch<SetStateAction<TaskState>>
+}): Promise<void> {
+  const { activeTaskId, ipcClient, setTaskState } = params
+  if (!activeTaskId) return
+
+  try {
+    await ipcClient.task.cancel({ taskId: activeTaskId })
+  } catch (error) {
+    setTaskState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, 'Failed to cancel task'),
+    }))
+  }
+}
+
+export async function handleDownloadAudioAction(
+  params: {
+    ttsPath?: string
+    ipcClient: RendererAPI
+  } & LogDeps,
+): Promise<void> {
+  const { ttsPath, ipcClient, pushLog } = params
+  if (!ttsPath) return
+
+  try {
+    const { data, mimeType, fileName } = await ipcClient.file.readAudio(ttsPath)
+    const blob = new Blob([data], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = fileName
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'tts',
+      level: 'error',
+      text: `Failed to download audio: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+}
+
+export async function handleOpenOutputDirectoryAction(
+  params: {
+    output: TaskOutput
+    ipcClient: RendererAPI
+  } & LogDeps,
+): Promise<void> {
+  const { output, ipcClient, pushLog } = params
+  const targetPath = output.ttsPath ?? output.transcriptPath ?? output.translationPath
+  if (!targetPath) return
+
+  try {
+    await ipcClient.system.openPath({ path: targetPath })
+  } catch (error) {
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'system',
+      level: 'error',
+      text: `Failed to open path: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+}
+
+export async function handleExportDiagnosticsAction(
+  params: {
+    taskId?: string
+    ipcClient: RendererAPI
+  } & LogDeps,
+): Promise<void> {
+  const { taskId, ipcClient, pushLog } = params
+
+  try {
+    const result = await ipcClient.system.exportDiagnostics(taskId ? { taskId } : undefined)
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'system',
+      level: 'info',
+      text: `Diagnostics exported: ${result.filePath}`,
+    })
+    await ipcClient.system.openPath({ path: result.filePath })
+  } catch (error) {
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'system',
+      level: 'error',
+      text: `Failed to export diagnostics: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+}
+
+export function applyHistoryFiltersAction(params: {
+  setHistoryState: Dispatch<SetStateAction<HistoryState>>
+}): void {
+  const { setHistoryState } = params
+
+  setHistoryState((prev) => ({
+    ...prev,
+    query: {
+      ...prev.query,
+      page: 1,
+      status: prev.statusDraft === 'all' ? undefined : prev.statusDraft,
+      targetLanguage: prev.languageDraft === 'all' ? undefined : prev.languageDraft,
+      keyword: prev.keywordDraft.trim() ? prev.keywordDraft.trim() : undefined,
+    },
+  }))
+}
+
+export async function handleDeleteHistoryTaskAction(
+  params: {
+    taskId: string
+    activeTaskId: string
+    historyQuery: HistoryQueryState
+    confirmDelete(taskId: string): boolean
+    refreshHistory(query: HistoryQueryState): Promise<void>
+    ipcClient: RendererAPI
+    setHistoryState: Dispatch<SetStateAction<HistoryState>>
+    setTaskState: Dispatch<SetStateAction<TaskState>>
+  } & LogDeps,
+): Promise<void> {
+  const {
+    taskId,
+    activeTaskId,
+    historyQuery,
+    confirmDelete,
+    refreshHistory,
+    ipcClient,
+    setHistoryState,
+    setTaskState,
+    pushLog,
+  } = params
+
+  if (!confirmDelete(taskId)) return
+
+  setHistoryState((prev) => ({
+    ...prev,
+    busyTaskId: taskId,
+    error: '',
+  }))
+
+  try {
+    const result = await ipcClient.history.delete({ taskId })
+    if (!result.deleted) {
+      throw new Error('Task was not deleted')
+    }
+
+    if (activeTaskId === taskId) {
+      setTaskState((prev) => ({
+        ...prev,
+        activeTaskId: '',
+        activeStatus: '',
+        running: false,
+        output: {},
+      }))
+    }
+
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'history',
+      level: 'info',
+      text: `Deleted task: ${taskId}`,
+    })
+
+    await refreshHistory(historyQuery)
+  } catch (error) {
+    setHistoryState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, 'Failed to delete task'),
+    }))
+  } finally {
+    setHistoryState((prev) => ({
+      ...prev,
+      busyTaskId: '',
+    }))
+  }
+}
+
+export async function handleRetryHistoryTaskAction(
+  params: {
+    taskId: string
+    historyQuery: HistoryQueryState
+    refreshHistory(query: HistoryQueryState): Promise<void>
+    setActiveRoute: Dispatch<SetStateAction<AppRoute>>
+    ipcClient: RendererAPI
+    setHistoryState: Dispatch<SetStateAction<HistoryState>>
+    setTaskState: Dispatch<SetStateAction<TaskState>>
+  } & LogDeps,
+): Promise<void> {
+  const {
+    taskId,
+    historyQuery,
+    refreshHistory,
+    setActiveRoute,
+    ipcClient,
+    setHistoryState,
+    setTaskState,
+    pushLog,
+  } = params
+
+  setHistoryState((prev) => ({
+    ...prev,
+    busyTaskId: taskId,
+  }))
+  setTaskState((prev) => ({
+    ...prev,
+    error: '',
+  }))
+
+  try {
+    const result = await ipcClient.task.retry({ taskId })
+    if (!result.accepted) {
+      throw new Error(result.reason ?? 'Retry was not accepted')
+    }
+
+    setTaskState((prev) => ({
+      ...prev,
+      activeTaskId: taskId,
+      running: true,
+      error: '',
+      output: {},
+      stageProgress: {},
+      runtimeItems: createEmptyRuntimeItems(),
+      logs: [],
+    }))
+    setActiveRoute('task')
+
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'history',
+      level: 'info',
+      text: `Retry requested: ${taskId}`,
+    })
+  } catch (error) {
+    setHistoryState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, 'Failed to retry task'),
+    }))
+  } finally {
+    setHistoryState((prev) => ({
+      ...prev,
+      busyTaskId: '',
+    }))
+    await refreshHistory(historyQuery)
+  }
+}

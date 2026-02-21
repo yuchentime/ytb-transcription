@@ -90,6 +90,28 @@ function assertValidWhisperModel(
 export class SettingsDao {
   constructor(private readonly db: Database.Database) {}
 
+  initializeDefaults(): AppSettings {
+    const rows = this.db.prepare('SELECT key FROM settings').all() as Array<{ key: string }>
+    const existingKeys = new Set(rows.map((row) => row.key))
+    const now = new Date().toISOString()
+    const statement = this.db.prepare(
+      `
+      INSERT INTO settings(key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO NOTHING
+    `,
+    )
+
+    for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
+      if (existingKeys.has(key)) continue
+      statement.run(key, encodeSettingValue(value), now)
+    }
+
+    // Provider is fixed to minimax in MVP.
+    this.setValue('provider', 'minimax')
+    return this.getSettings()
+  }
+
   getSettings(): AppSettings {
     const rows = this.db.prepare('SELECT key, value FROM settings').all() as SettingRow[]
     const persisted = parseRowsToSettings(rows)
