@@ -1,0 +1,34 @@
+import { ipcRenderer, contextBridge } from 'electron'
+import { IPC_CHANNELS, type RendererAPI } from './ipc/channels'
+
+function subscribe<T>(channel: string, listener: (payload: T) => void): () => void {
+  const wrapped = (_event: Electron.IpcRendererEvent, payload: T) => listener(payload)
+  ipcRenderer.on(channel, wrapped)
+  return () => ipcRenderer.off(channel, wrapped)
+}
+
+const api: RendererAPI = {
+  task: {
+    create: (input) => ipcRenderer.invoke(IPC_CHANNELS.taskCreate, input),
+    start: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskStart, payload),
+    cancel: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskCancel, payload),
+    retry: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskRetry, payload),
+    get: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskGet, payload),
+    onStatus: (listener) => subscribe(IPC_CHANNELS.taskStatus, listener),
+    onProgress: (listener) => subscribe(IPC_CHANNELS.taskProgress, listener),
+    onLog: (listener) => subscribe(IPC_CHANNELS.taskLog, listener),
+    onCompleted: (listener) => subscribe(IPC_CHANNELS.taskCompleted, listener),
+    onFailed: (listener) => subscribe(IPC_CHANNELS.taskFailed, listener),
+    onRuntime: (listener) => subscribe(IPC_CHANNELS.taskRuntime, listener),
+  },
+  history: {
+    list: (query) => ipcRenderer.invoke(IPC_CHANNELS.historyList, query),
+    delete: (payload) => ipcRenderer.invoke(IPC_CHANNELS.historyDelete, payload),
+  },
+  settings: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
+    update: (patch) => ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
+  },
+}
+
+contextBridge.exposeInMainWorld('appApi', api)
