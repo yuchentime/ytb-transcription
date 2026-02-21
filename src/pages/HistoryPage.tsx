@@ -46,7 +46,7 @@ interface HistoryPageProps {
 export function HistoryPage(props: HistoryPageProps) {
   return (
     <section className="panel main-panel">
-      <h2>{props.t('history.title')}</h2>
+      <h1>{props.t('history.title')}</h1>
 
       <div className="history-filters">
         <label>

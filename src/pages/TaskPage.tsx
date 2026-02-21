@@ -182,7 +182,7 @@ export function TaskPage(props: TaskPageProps) {
   return (
     <>
       <section className="panel main-panel">
-        <h2>{props.t('task.title')}</h2>
+        <h1>{props.t('task.title')}</h1>
 
         <div className="grid">
           <label className="full">

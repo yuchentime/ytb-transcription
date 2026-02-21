@@ -169,6 +169,35 @@ label {
   color: #333;
 }
 
+/* Settings Panel - Grouped Layout */
+.settings-panel {
+  padding: 24px;
+}
+
+.settings-group {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.settings-group:last-of-type {
+  border-bottom: none;
+  margin-bottom: 16px;
+  padding-bottom: 0;
+}
+
+.settings-group-title {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #000;
+  letter-spacing: -0.01em;
+}
+
+.settings-group-content {
+  padding: 0;
+}
+
 .settings-advanced {
   margin-top: 16px;
   border: 1px solid #e0e0e0;

@@ -33,12 +33,6 @@ export function VoicePresetPanel(props: VoicePresetPanelProps) {
         </select>
       </label>
 
-      {settings.ttsVoiceId && (
-        <p className="hint">
-          {voiceProfiles.find((voice) => voice.id === settings.ttsVoiceId)?.description ?? '当前音色未在库中登记'}
-        </p>
-      )}
-
       {validationErrors.length > 0 && (
         <div className="error voice-validate-errors">
           {validationErrors.map((error) => (

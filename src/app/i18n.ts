@@ -67,6 +67,10 @@ const zhCNMessages = {
 
   'settings.title': '设置',
   'settings.loading': '正在加载设置...',
+  'settings.group.youtube': 'YouTube 下载设置',
+  'settings.group.transcription': '转录设置',
+  'settings.group.minimax': 'MiniMax 设置',
+  'settings.group.tts': '语音合成设置',
   'settings.providerReadonly': '服务提供方（只读）',
   'settings.youtubeDownloadAuth': 'YouTube 下载鉴权',
   'settings.auth.none': '无',
@@ -212,6 +216,10 @@ const zhTWMessages: Messages = {
 
   'settings.title': '設定',
   'settings.loading': '正在載入設定...',
+  'settings.group.youtube': 'YouTube 下載設定',
+  'settings.group.transcription': '轉錄設定',
+  'settings.group.minimax': 'MiniMax 設定',
+  'settings.group.tts': '語音合成設定',
   'settings.providerReadonly': '服務提供方（唯讀）',
   'settings.youtubeDownloadAuth': 'YouTube 下載驗證',
   'settings.auth.none': '無',
