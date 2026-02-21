@@ -31,6 +31,14 @@ const WHISPER_MODEL_URLS: Record<string, string> = {
     'https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt',
 }
 
+const MLX_MODEL_REPOS: Record<string, string[]> = {
+  tiny: ['mlx-community/whisper-tiny-mlx', 'mlx-community/whisper-tiny'],
+  base: ['mlx-community/whisper-base-mlx', 'mlx-community/whisper-base'],
+  small: ['mlx-community/whisper-small-mlx', 'mlx-community/whisper-small'],
+  medium: ['mlx-community/whisper-medium-mlx', 'mlx-community/whisper-medium'],
+  large: ['mlx-community/whisper-large-v3-turbo'],
+}
+
 interface TaskEngineEvents {
   status: {
     taskId: string
@@ -140,6 +148,21 @@ function selectWhisperDevice(
   // For tiny/base models, CPU can be faster due to GPU scheduling overhead.
   if (model === 'tiny' || model === 'base') return 'cpu'
   return 'mps'
+}
+
+function selectTranscribeBackend(
+  runtime: Toolchain['whisperRuntime'],
+  model: string | null,
+): 'mlx' | 'openai-whisper' {
+  if (
+    process.platform === 'darwin' &&
+    process.arch === 'arm64' &&
+    runtime.mlxAvailable &&
+    model !== 'tiny'
+  ) {
+    return 'mlx'
+  }
+  return 'openai-whisper'
 }
 
 async function downloadToFile(url: string, filePath: string): Promise<void> {
@@ -426,9 +449,7 @@ export class TaskEngine {
       '--js-runtimes',
       `deno:${toolchain.denoPath}`,
       '-f',
-      'bestvideo*+bestaudio/best',
-      '-S',
-      '+res,+fps,+br,+size',
+      'worst',
       '-o',
       outputTemplate,
     ]
@@ -684,43 +705,129 @@ export class TaskEngine {
     const task = this.deps.taskDao.getTaskById(context.taskId)
     const modelName = task.whisperModel ?? 'base'
     const selectedDevice = selectWhisperDevice(context.toolchain.whisperRuntime, modelName)
-    const modelDir = await this.ensureWhisperModelReady(context, modelName)
+    const selectedBackend = selectTranscribeBackend(context.toolchain.whisperRuntime, modelName)
     const audioBaseName = path.basename(context.audioPath, path.extname(context.audioPath))
     const transcriptPath = path.join(context.taskDir, `${audioBaseName}.txt`)
     const jsonPath = path.join(context.taskDir, `${audioBaseName}.json`)
-
-    const args = [
-      '-m',
-      'whisper',
-      context.audioPath,
-      '--model',
-      modelName,
-      '--model_dir',
-      modelDir,
-      '--device',
-      selectedDevice,
-      '--output_dir',
-      context.taskDir,
-      '--output_format',
-      'all',
-    ]
-    if (selectedDevice === 'cpu') {
-      // Avoid repetitive FP16 CPU warnings and keep logs readable.
-      args.push('--fp16', 'False')
-    }
-    if (task.sourceLanguage) {
-      args.push('--language', task.sourceLanguage)
-    }
 
     this.emit('log', {
       taskId: context.taskId,
       stage: 'transcribing',
       level: 'info',
-      text: `Whisper device selected: ${selectedDevice}`,
+      text: `Transcribe backend=${selectedBackend}, device=${
+        selectedBackend === 'mlx' ? 'metal(auto)' : selectedDevice
+      }`,
       timestamp: new Date().toISOString(),
     })
 
+    const runWithMlxRepo = async (repo: string): Promise<void> => {
+      const scriptLines = [
+        'import json',
+        'import pathlib',
+        'import mlx_whisper',
+        `audio = ${JSON.stringify(context.audioPath)}`,
+        `repo = ${JSON.stringify(repo)}`,
+        `language = ${
+          task.sourceLanguage ? JSON.stringify(task.sourceLanguage) : 'None'
+        }`,
+        'kwargs = {"path_or_hf_repo": repo}',
+        'if language:',
+        '    kwargs["language"] = language',
+        'result = mlx_whisper.transcribe(audio, **kwargs)',
+        `txt_path = pathlib.Path(${JSON.stringify(transcriptPath)})`,
+        `json_path = pathlib.Path(${JSON.stringify(jsonPath)})`,
+        'txt_path.write_text(result.get("text", ""), encoding="utf-8")',
+        'json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")',
+      ]
+
+      await runCommand({
+        command: toolchain.pythonPath,
+        args: ['-c', scriptLines.join('\n')],
+        cwd: context.taskDir,
+        env: {
+          XDG_CACHE_HOME: path.join(this.deps.dataRoot, 'cache'),
+          HF_HOME: path.join(this.deps.dataRoot, 'cache', 'hf'),
+          HF_HUB_DISABLE_IMPLICIT_TOKEN: '1',
+          HF_TOKEN: '',
+          HUGGINGFACE_HUB_TOKEN: '',
+          HUGGING_FACE_HUB_TOKEN: '',
+        },
+        isCanceled: () => this.cancelRequested.has(context.taskId),
+        onStderrLine: (line) => {
+          this.emit('log', {
+            taskId: context.taskId,
+            stage: 'transcribing',
+            level: 'info',
+            text: line,
+            timestamp: new Date().toISOString(),
+          })
+        },
+      })
+    }
+
+    const runWithMlx = async (): Promise<void> => {
+      const repos = MLX_MODEL_REPOS[modelName]
+      if (!repos || repos.length === 0) {
+        throw new Error(`No MLX model mapping found for whisper model "${modelName}"`)
+      }
+      const failures: string[] = []
+      for (const repo of repos) {
+        this.emit('log', {
+          taskId: context.taskId,
+          stage: 'transcribing',
+          level: 'info',
+          text: `MLX trying model repo: ${repo}`,
+          timestamp: new Date().toISOString(),
+        })
+        try {
+          await runWithMlxRepo(repo)
+          this.emit('log', {
+            taskId: context.taskId,
+            stage: 'transcribing',
+            level: 'info',
+            text: `MLX model repo selected: ${repo}`,
+            timestamp: new Date().toISOString(),
+          })
+          return
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          failures.push(`${repo}: ${reason}`)
+          this.emit('log', {
+            taskId: context.taskId,
+            stage: 'transcribing',
+            level: 'warn',
+            text: `MLX model repo failed: ${repo}`,
+            timestamp: new Date().toISOString(),
+          })
+        }
+      }
+      throw new Error(
+        `MLX transcription failed for model "${modelName}" after trying repos (${repos.join(
+          ', ',
+        )}). Details: ${failures.join(' | ')}`,
+      )
+    }
+
     const runWithDevice = async (device: 'cpu' | 'cuda' | 'mps'): Promise<void> => {
+      const modelDir = await this.ensureWhisperModelReady(context, modelName)
+      const args = [
+        '-m',
+        'whisper',
+        context.audioPath!,
+        '--model',
+        modelName,
+        '--model_dir',
+        modelDir,
+        '--device',
+        device,
+        '--output_dir',
+        context.taskDir,
+        '--output_format',
+        'all',
+      ]
+      if (task.sourceLanguage) {
+        args.push('--language', task.sourceLanguage)
+      }
       const deviceArgs = args.map((item, idx) =>
         idx > 0 && args[idx - 1] === '--device' ? device : item,
       )
@@ -748,9 +855,37 @@ export class TaskEngine {
     }
 
     try {
-      await runWithDevice(selectedDevice)
+      if (selectedBackend === 'mlx') {
+        await runWithMlx()
+      } else {
+        await runWithDevice(selectedDevice)
+      }
     } catch (error) {
-      if (selectedDevice !== 'cpu') {
+      if (selectedBackend === 'mlx') {
+        this.emit('log', {
+          taskId: context.taskId,
+          stage: 'transcribing',
+          level: 'warn',
+          text: 'MLX backend failed, fallback to openai-whisper backend',
+          timestamp: new Date().toISOString(),
+        })
+        if (selectedDevice !== 'cpu') {
+          try {
+            await runWithDevice(selectedDevice)
+          } catch {
+            this.emit('log', {
+              taskId: context.taskId,
+              stage: 'transcribing',
+              level: 'warn',
+              text: `Whisper ${selectedDevice} failed, retrying with CPU`,
+              timestamp: new Date().toISOString(),
+            })
+            await runWithDevice('cpu')
+          }
+        } else {
+          await runWithDevice('cpu')
+        }
+      } else if (selectedDevice !== 'cpu') {
         this.emit('log', {
           taskId: context.taskId,
           stage: 'transcribing',

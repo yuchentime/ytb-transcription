@@ -67,6 +67,7 @@ function App() {
   const [output, setOutput] = useState<TaskOutput>({})
   const [taskRunning, setTaskRunning] = useState(false)
   const [taskError, setTaskError] = useState('')
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string>('')
 
   const isStartDisabled = useMemo(() => {
     return taskRunning || !taskForm.youtubeUrl.trim()
@@ -227,6 +228,61 @@ function App() {
       await ipcClient.task.cancel({ taskId: activeTaskId })
     } catch (error) {
       setTaskError(error instanceof Error ? error.message : 'Failed to cancel task')
+    }
+  }
+
+  // 加载音频文件并创建 Blob URL
+  useEffect(() => {
+    const loadAudio = async () => {
+      if (!output.ttsPath) {
+        setTtsAudioUrl('')
+        return
+      }
+
+      try {
+        const { data, mimeType } = await ipcClient.file.readAudio(output.ttsPath)
+        const blob = new Blob([data], { type: mimeType })
+        const url = URL.createObjectURL(blob)
+        setTtsAudioUrl(url)
+
+        // 清理函数
+        return () => {
+          URL.revokeObjectURL(url)
+        }
+      } catch (error) {
+        pushLog({
+          time: new Date().toISOString(),
+          stage: 'tts',
+          level: 'error',
+          text: `Failed to load audio: ${error instanceof Error ? error.message : String(error)}`,
+        })
+      }
+    }
+
+    void loadAudio()
+  }, [output.ttsPath])
+
+  // 处理下载
+  async function handleDownloadAudio(): Promise<void> {
+    if (!output.ttsPath) return
+    try {
+      const { data, mimeType, fileName } = await ipcClient.file.readAudio(output.ttsPath)
+      const blob = new Blob([data], { type: mimeType })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      pushLog({
+        time: new Date().toISOString(),
+        stage: 'tts',
+        level: 'error',
+        text: `Failed to download audio: ${error instanceof Error ? error.message : String(error)}`,
+      })
     }
   }
 
@@ -454,7 +510,19 @@ function App() {
         <div className="output">
           <p>transcript: {output.transcriptPath || '-'}</p>
           <p>translation: {output.translationPath || '-'}</p>
-          <p>tts: {output.ttsPath || '-'}</p>
+          <div className="tts-output">
+            <span>tts:</span>
+            {ttsAudioUrl ? (
+              <div className="tts-player">
+                <audio controls src={ttsAudioUrl} />
+                <button className="btn small" onClick={() => void handleDownloadAudio()}>
+                  下载
+                </button>
+              </div>
+            ) : (
+              '-'
+            )}
+          </div>
         </div>
       </section>
 

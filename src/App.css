@@ -162,6 +162,32 @@ select:focus {
   word-break: break-all;
 }
 
+.tts-output {
+  margin: 6px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tts-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.tts-player audio {
+  height: 32px;
+  flex: 1;
+  max-width: 400px;
+}
+
+.btn.small {
+  padding: 6px 10px;
+  font-size: 12px;
+  text-decoration: none;
+}
+
 .runtime {
   margin: 10px 0 12px;
   border-top: 1px dashed #bbb;

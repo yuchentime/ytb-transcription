@@ -1,3 +1,4 @@
+import { registerFileHandlers } from './file.handlers'
 import { registerHistoryHandlers } from './history.handlers'
 import { registerSettingsHandlers } from './settings.handlers'
 import { registerTaskHandlers } from './task.handlers'
@@ -9,6 +10,7 @@ export function registerIpcHandlers(): void {
   registerTaskHandlers()
   registerHistoryHandlers()
   registerSettingsHandlers()
+  registerFileHandlers()
   registered = true
 }
 

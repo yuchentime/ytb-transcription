@@ -19,6 +19,7 @@ export const IPC_CHANNELS = {
   historyDelete: 'history:delete',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
+  fileReadAudio: 'file:readAudio',
   taskStatus: 'task:status',
   taskProgress: 'task:progress',
   taskLog: 'task:log',
@@ -95,6 +96,12 @@ export interface TaskRuntimeEventPayload {
   timestamp: string
 }
 
+export interface AudioFileResult {
+  data: ArrayBuffer
+  mimeType: string
+  fileName: string
+}
+
 export interface RendererAPI {
   task: {
     create(input: CreateTaskInput): Promise<TaskRecord>
@@ -116,5 +123,8 @@ export interface RendererAPI {
   settings: {
     get(): Promise<AppSettings>
     update(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  file: {
+    readAudio(filePath: string): Promise<AudioFileResult>
   }
 }

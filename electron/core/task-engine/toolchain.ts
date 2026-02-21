@@ -10,6 +10,7 @@ export interface Toolchain {
   whisperRuntime: {
     cudaAvailable: boolean
     mpsAvailable: boolean
+    mlxAvailable: boolean
   }
 }
 
@@ -541,34 +542,70 @@ async function ensureWhisperInstalled(
     })
   }
 
+  let openaiWhisperInstalled = false
   try {
     await runCommand({
       command: venvPython,
       args: ['-m', 'pip', 'show', 'openai-whisper'],
     })
+    openaiWhisperInstalled = true
     options?.reporter?.({
       component: 'whisper',
       status: 'ready',
-      message: 'whisper package already installed',
+      message: 'openai-whisper package already installed',
     })
-    return venvPython
   } catch {
     // install below
   }
 
-  options?.reporter?.({
-    component: 'whisper',
-    status: 'installing',
-    message: 'Installing openai-whisper package',
-  })
-  await runCommand({
-    command: venvPython,
-    args: ['-m', 'pip', 'install', '--upgrade', 'pip'],
-  })
-  await runCommand({
-    command: venvPython,
-    args: ['-m', 'pip', 'install', 'openai-whisper'],
-  })
+  if (!openaiWhisperInstalled) {
+    options?.reporter?.({
+      component: 'whisper',
+      status: 'installing',
+      message: 'Installing openai-whisper package',
+    })
+    await runCommand({
+      command: venvPython,
+      args: ['-m', 'pip', 'install', '--upgrade', 'pip'],
+    })
+    await runCommand({
+      command: venvPython,
+      args: ['-m', 'pip', 'install', 'openai-whisper'],
+    })
+  }
+
+  if (process.platform === 'darwin' && process.arch === 'arm64') {
+    try {
+      await runCommand({
+        command: venvPython,
+        args: ['-m', 'pip', 'show', 'mlx-whisper'],
+      })
+      options?.reporter?.({
+        component: 'whisper',
+        status: 'ready',
+        message: 'mlx-whisper package already installed',
+      })
+    } catch {
+      options?.reporter?.({
+        component: 'whisper',
+        status: 'installing',
+        message: 'Installing mlx-whisper (Apple Silicon acceleration)',
+      })
+      try {
+        await runCommand({
+          command: venvPython,
+          args: ['-m', 'pip', 'install', 'mlx-whisper'],
+        })
+      } catch {
+        options?.reporter?.({
+          component: 'whisper',
+          status: 'error',
+          message: 'mlx-whisper install failed; fallback to openai-whisper backend',
+        })
+      }
+    }
+  }
+
   options?.reporter?.({
     component: 'whisper',
     status: 'ready',
@@ -590,8 +627,10 @@ async function detectWhisperRuntime(
         [
           'import json',
           'import torch',
+          'import importlib.util',
           'mps = bool(hasattr(torch.backends, "mps") and torch.backends.mps.is_available())',
-          'print(json.dumps({"cuda": bool(torch.cuda.is_available()), "mps": mps}))',
+          'mlx = importlib.util.find_spec("mlx_whisper") is not None',
+          'print(json.dumps({"cuda": bool(torch.cuda.is_available()), "mps": mps, "mlx": mlx}))',
         ].join('; '),
       ],
       onStdoutLine: (line) => lines.push(line),
@@ -605,20 +644,22 @@ async function detectWhisperRuntime(
     return {
       cudaAvailable: false,
       mpsAvailable: false,
+      mlxAvailable: false,
     }
   }
 
   const raw = lines[lines.length - 1] ?? '{}'
   try {
-    const parsed = JSON.parse(raw) as { cuda?: unknown; mps?: unknown }
+    const parsed = JSON.parse(raw) as { cuda?: unknown; mps?: unknown; mlx?: unknown }
     const runtime = {
       cudaAvailable: parsed.cuda === true,
       mpsAvailable: parsed.mps === true,
+      mlxAvailable: parsed.mlx === true,
     }
     options?.reporter?.({
       component: 'whisper',
       status: 'ready',
-      message: `whisper runtime: cuda=${runtime.cudaAvailable ? 'yes' : 'no'}, mps=${runtime.mpsAvailable ? 'yes' : 'no'}`,
+      message: `whisper runtime: cuda=${runtime.cudaAvailable ? 'yes' : 'no'}, mps=${runtime.mpsAvailable ? 'yes' : 'no'}, mlx=${runtime.mlxAvailable ? 'yes' : 'no'}`,
     })
     return runtime
   } catch {
@@ -630,6 +671,7 @@ async function detectWhisperRuntime(
     return {
       cudaAvailable: false,
       mpsAvailable: false,
+      mlxAvailable: false,
     }
   }
 }

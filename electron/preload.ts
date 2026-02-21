@@ -29,6 +29,9 @@ const api: RendererAPI = {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
     update: (patch) => ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
   },
+  file: {
+    readAudio: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.fileReadAudio, filePath),
+  },
 }
 
 contextBridge.exposeInMainWorld('appApi', api)
