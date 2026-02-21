@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import type Database from 'better-sqlite3'
 import { SCHEMA_SQL } from './schema'
 
-const LATEST_SCHEMA_VERSION = 1
+const LATEST_SCHEMA_VERSION = 2
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 function resolveSchemaPath(): string | null {
@@ -53,6 +53,38 @@ function applyVersion1(db: Database.Database): void {
   applyMigration()
 }
 
+function resolveMigrationPath(fileName: string): string | null {
+  const candidates = [
+    path.join(process.env.APP_ROOT ?? '', 'electron', 'core', 'db', 'migrations', fileName),
+    path.join(process.cwd(), 'electron', 'core', 'db', 'migrations', fileName),
+    path.join(__dirname, 'migrations', fileName),
+  ]
+
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
+function applyVersion2(db: Database.Database): void {
+  const migrationPath = resolveMigrationPath('002_add_segment_tables.sql')
+  if (!migrationPath) {
+    throw new Error('Cannot find migration file: 002_add_segment_tables.sql')
+  }
+  const migrationSql = fs.readFileSync(migrationPath, 'utf-8')
+  const now = new Date().toISOString()
+
+  const applyMigration = db.transaction(() => {
+    db.exec(migrationSql)
+    db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(2, now)
+  })
+
+  applyMigration()
+}
+
 export function runMigrations(db: Database.Database): void {
   ensureMigrationsTable(db)
 
@@ -65,5 +97,9 @@ export function runMigrations(db: Database.Database): void {
 
   if (currentVersion < 1) {
     applyVersion1(db)
+  }
+
+  if (currentVersion < 2) {
+    applyVersion2(db)
   }
 }

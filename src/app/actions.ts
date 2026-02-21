@@ -80,6 +80,9 @@ export async function loadTaskDetailAction(
 
   try {
     const detail = await ipcClient.task.get({ taskId })
+    const recoveryPlan = await ipcClient.task
+      .recoveryPlan({ taskId })
+      .catch(() => ({ taskId, fromStage: null, failedSegments: [], actions: [] }))
     const progress: Record<string, number> = {}
     for (const step of detail.steps) {
       if (step.status === 'success') {
@@ -98,6 +101,8 @@ export async function loadTaskDetailAction(
       running: isRunningStatus(detail.task.status),
       error: detail.task.errorMessage ?? '',
       stageProgress: progress,
+      segments: detail.segments,
+      recoveryActions: recoveryPlan.actions,
       output: {
         transcriptPath: findLatestArtifactPath(detail.artifacts, 'transcript'),
         translationPath: findLatestArtifactPath(detail.artifacts, 'translation'),
@@ -157,11 +162,22 @@ export async function loadSettingsAction(
 
   try {
     const result = await ipcClient.settings.get()
+    const voiceProfiles = await ipcClient.voices.list().catch(() => [])
+    const voiceValidation = await ipcClient.voices
+      .validateParams({
+        voiceId: result.ttsVoiceId,
+        speed: result.ttsSpeed,
+        pitch: result.ttsPitch,
+        volume: result.ttsVolume,
+      })
+      .catch(() => ({ valid: true, errors: [] }))
     if (!isMounted()) return
 
     setSettingsState((prev) => ({
       ...prev,
       data: result,
+      voiceProfiles,
+      voiceValidationErrors: voiceValidation.errors,
     }))
     setTaskState((prev) => ({
       ...prev,
@@ -205,9 +221,18 @@ export async function saveSettingsAction(
 
   try {
     const saved = await ipcClient.settings.update(settings)
+    const voiceValidation = await ipcClient.voices
+      .validateParams({
+        voiceId: saved.ttsVoiceId,
+        speed: saved.ttsSpeed,
+        pitch: saved.ttsPitch,
+        volume: saved.ttsVolume,
+      })
+      .catch(() => ({ valid: true, errors: [] }))
     setSettingsState((prev) => ({
       ...prev,
       data: saved,
+      voiceValidationErrors: voiceValidation.errors,
     }))
     setTaskState((prev) => ({
       ...prev,
@@ -255,6 +280,8 @@ export async function startTaskAction(
     error: '',
     output: {},
     stageProgress: {},
+    segments: [],
+    recoveryActions: [],
     runtimeItems: createEmptyRuntimeItems(),
     logs: [],
   }))
@@ -264,12 +291,24 @@ export async function startTaskAction(
       youtubeUrl: taskForm.youtubeUrl.trim(),
       targetLanguage: taskForm.targetLanguage,
       whisperModel: settings.defaultWhisperModel,
+      modelConfigSnapshot: {
+        segmentationStrategy: taskForm.segmentationStrategy,
+        segmentationOptions: {
+          targetDurationSec: taskForm.segmentationTargetDurationSec,
+        },
+        ttsVoiceId: settings.ttsVoiceId,
+        ttsSpeed: settings.ttsSpeed,
+        ttsPitch: settings.ttsPitch,
+        ttsVolume: settings.ttsVolume,
+      },
     })
 
     setTaskState((prev) => ({
       ...prev,
       activeTaskId: task.id,
       activeStatus: task.status,
+      segments: [],
+      recoveryActions: [],
     }))
 
     const result = await ipcClient.task.start({ taskId: task.id })
@@ -307,6 +346,100 @@ export async function cancelTaskAction(
     setTaskState((prev) => ({
       ...prev,
       error: getErrorMessage(error, t('error.cancelTask')),
+    }))
+  }
+}
+
+export async function retryFailedSegmentsAction(
+  params: {
+    activeTaskId: string
+    ipcClient: RendererAPI
+    setTaskState: Dispatch<SetStateAction<TaskState>>
+    segmentIds?: string[]
+  } & LogDeps &
+    LocalizedDeps,
+): Promise<void> {
+  const { activeTaskId, ipcClient, setTaskState, segmentIds, pushLog, t } = params
+  if (!activeTaskId) return
+
+  try {
+    const ids = segmentIds && segmentIds.length > 0 ? segmentIds : undefined
+    const segments = ids
+      ? ids
+      : (await ipcClient.task.segments({ taskId: activeTaskId }))
+          .filter((segment) => segment.status === 'failed')
+          .map((segment) => segment.id)
+
+    if (segments.length === 0) {
+      pushLog({
+        time: new Date().toISOString(),
+        stage: 'recovery',
+        level: 'warn',
+        text: '没有可重试的失败分段',
+      })
+      return
+    }
+
+    const result = await ipcClient.task.retrySegments({
+      taskId: activeTaskId,
+      segmentIds: segments,
+    })
+    if (!result.accepted) {
+      throw new Error(result.reason ?? t('error.retryNotAccepted'))
+    }
+
+    setTaskState((prev) => ({
+      ...prev,
+      running: true,
+      error: '',
+      recoveryActions: [],
+    }))
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'recovery',
+      level: 'info',
+      text: `已发起分段重试（${segments.length} 段）`,
+    })
+  } catch (error) {
+    setTaskState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, t('error.retryTask')),
+    }))
+  }
+}
+
+export async function resumeTaskFromCheckpointAction(
+  params: {
+    activeTaskId: string
+    ipcClient: RendererAPI
+    setTaskState: Dispatch<SetStateAction<TaskState>>
+  } & LogDeps &
+    LocalizedDeps,
+): Promise<void> {
+  const { activeTaskId, ipcClient, setTaskState, pushLog, t } = params
+  if (!activeTaskId) return
+
+  try {
+    const result = await ipcClient.task.resumeFromCheckpoint({ taskId: activeTaskId })
+    if (!result.accepted) {
+      throw new Error(result.reason ?? t('error.retryNotAccepted'))
+    }
+    setTaskState((prev) => ({
+      ...prev,
+      running: true,
+      error: '',
+      recoveryActions: [],
+    }))
+    pushLog({
+      time: new Date().toISOString(),
+      stage: 'recovery',
+      level: 'info',
+      text: `从检查点恢复：${result.fromStage}`,
+    })
+  } catch (error) {
+    setTaskState((prev) => ({
+      ...prev,
+      error: getErrorMessage(error, t('error.retryTask')),
     }))
   }
 }
@@ -589,6 +722,8 @@ export async function handleRetryHistoryTaskAction(
       error: '',
       output: {},
       stageProgress: {},
+      segments: [],
+      recoveryActions: [],
       runtimeItems: createEmptyRuntimeItems(),
       logs: [],
     }))

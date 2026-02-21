@@ -1,5 +1,6 @@
 export { TaskDao } from './TaskDao'
 export { TaskStepDao } from './TaskStepDao'
 export { ArtifactDao } from './ArtifactDao'
+export { TaskSegmentDao } from './TaskSegmentDao'
+export { TaskRecoveryDao } from './TaskRecoveryDao'
 export { SettingsDao, DEFAULT_SETTINGS } from './SettingsDao'
-

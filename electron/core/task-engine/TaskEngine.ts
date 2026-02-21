@@ -5,10 +5,28 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import type { ArtifactDao, SettingsDao, TaskDao, TaskStepDao } from '../db/dao'
-import type { StepName, TaskStatus } from '../db/types'
+import type {
+  ArtifactDao,
+  SettingsDao,
+  TaskDao,
+  TaskRecoveryDao,
+  TaskSegmentDao,
+  TaskStepDao,
+} from '../db/dao'
+import type {
+  RecoveryPlan,
+  SegmentStageName,
+  SegmentationOptions,
+  SegmentationStrategy,
+  StepName,
+  TaskSegmentRecord,
+  TaskStatus,
+} from '../db/types'
 import { runCommand } from './command'
 import { minimaxSynthesize, minimaxTranslate } from './minimax'
+import { CheckpointStore } from './recovery/CheckpointStore'
+import { RecoveryPlanner, classifyError } from './recovery/RecoveryPlanner'
+import { assertSegmentIntegrity, segmentText, type TextSegment } from './segmentation/segmenter'
 import { ensureToolchain, type Toolchain } from './toolchain'
 
 const STAGES: StepName[] = [
@@ -51,6 +69,27 @@ interface TaskEngineEvents {
     percent: number
     message: string
   }
+  segmentProgress: {
+    taskId: string
+    stage: SegmentStageName
+    segmentId: string
+    index: number
+    total: number
+    percent: number
+    message: string
+  }
+  segmentFailed: {
+    taskId: string
+    stage: SegmentStageName
+    segmentId: string
+    errorCode: string
+    errorMessage: string
+    retryable: boolean
+  }
+  recoverySuggested: {
+    taskId: string
+    actions: RecoveryPlan['actions']
+  }
   log: {
     taskId: string
     stage: StepName | 'engine'
@@ -91,6 +130,7 @@ interface TaskExecutionContext {
   translationPath?: string
   ttsRawPath?: string
   finalTtsPath?: string
+  translationSegments?: TextSegment[]
 }
 
 type EventName = keyof TaskEngineEvents
@@ -211,17 +251,26 @@ export class TaskEngine {
   private readonly emitter = new EventEmitter()
   private runningTaskId: string | null = null
   private readonly cancelRequested = new Set<string>()
+  private readonly retrySegmentRequests = new Map<string, Set<string>>()
+  private readonly resumeFromStageRequests = new Map<string, StepName>()
+  private readonly checkpointStore: CheckpointStore
+  private readonly recoveryPlanner: RecoveryPlanner
 
   constructor(
     private readonly deps: {
       taskDao: TaskDao
       taskStepDao: TaskStepDao
+      taskSegmentDao: TaskSegmentDao
+      taskRecoveryDao: TaskRecoveryDao
       artifactDao: ArtifactDao
       settingsDao: SettingsDao
       artifactsRoot: string
       dataRoot: string
     },
-  ) {}
+  ) {
+    this.checkpointStore = new CheckpointStore(deps.taskRecoveryDao, deps.taskSegmentDao)
+    this.recoveryPlanner = new RecoveryPlanner(deps.taskSegmentDao, deps.taskRecoveryDao)
+  }
 
   on<T extends EventName>(event: T, listener: Listener<T>): () => void {
     this.emitter.on(event, listener as (...args: unknown[]) => void)
@@ -258,6 +307,58 @@ export class TaskEngine {
     return this.start(taskId)
   }
 
+  listSegments(taskId: string): TaskSegmentRecord[] {
+    return this.deps.taskSegmentDao.listByTask(taskId)
+  }
+
+  getRecoveryPlan(taskId: string): RecoveryPlan {
+    return this.recoveryPlanner.createPlan(taskId)
+  }
+
+  retrySegments(taskId: string, segmentIds: string[]): { accepted: boolean; reason?: string } {
+    if (!Array.isArray(segmentIds) || segmentIds.length === 0) {
+      return { accepted: false, reason: 'segmentIds is required' }
+    }
+    if (this.runningTaskId && this.runningTaskId !== taskId) {
+      return { accepted: false, reason: `Task ${this.runningTaskId} is already running` }
+    }
+    this.retrySegmentRequests.set(taskId, new Set(segmentIds))
+    const allSegments = this.deps.taskSegmentDao.listByTask(taskId)
+    const targetSegments = allSegments.filter((segment) => segmentIds.includes(segment.id))
+    const hasTranslating = targetSegments.some((segment) => segment.stageName === 'translating')
+    if (hasTranslating) {
+      this.resumeFromStageRequests.set(taskId, 'translating')
+    } else {
+      this.resumeFromStageRequests.set(taskId, 'synthesizing')
+    }
+    return this.start(taskId)
+  }
+
+  resumeFromCheckpoint(taskId: string): { accepted: boolean; fromStage: string; reason?: string } {
+    const snapshot = this.deps.taskRecoveryDao.getLatestSnapshot(taskId)
+    if (!snapshot) {
+      return { accepted: false, fromStage: '', reason: 'No checkpoint found' }
+    }
+
+    const stageName = snapshot.stageName as StepName
+    if (!STAGES.includes(stageName)) {
+      return { accepted: false, fromStage: snapshot.stageName, reason: 'Checkpoint stage is invalid' }
+    }
+
+    const retrySegments = snapshot.snapshotJson.failedSegmentIds
+    if (Array.isArray(retrySegments) && retrySegments.length > 0) {
+      this.retrySegmentRequests.set(taskId, new Set(retrySegments.filter((id): id is string => typeof id === 'string')))
+    }
+    this.resumeFromStageRequests.set(taskId, stageName)
+
+    const started = this.start(taskId)
+    return {
+      accepted: started.accepted,
+      fromStage: stageName,
+      reason: started.reason,
+    }
+  }
+
   cancel(taskId: string): { canceled: boolean } {
     const task = this.deps.taskDao.getTaskById(taskId)
     if (task.status === 'queued' && this.runningTaskId !== taskId) {
@@ -286,9 +387,14 @@ export class TaskEngine {
 
     try {
       await fs.mkdir(context.taskDir, { recursive: true })
+      this.hydrateContextFromArtifacts(context)
       await this.ensureResources(context)
 
-      for (const stage of STAGES) {
+      const resumeStage = this.resumeFromStageRequests.get(taskId)
+      const startStageIndex = resumeStage ? Math.max(0, STAGES.indexOf(resumeStage)) : 0
+      const stagesToRun = STAGES.slice(startStageIndex)
+
+      for (const stage of stagesToRun) {
         const canceled = await this.runStage(context, stage)
         if (canceled) return
       }
@@ -324,8 +430,28 @@ export class TaskEngine {
       })
     } finally {
       this.cancelRequested.delete(taskId)
+      this.retrySegmentRequests.delete(taskId)
+      this.resumeFromStageRequests.delete(taskId)
       if (this.runningTaskId === taskId) {
         this.runningTaskId = null
+      }
+    }
+  }
+
+  private hydrateContextFromArtifacts(context: TaskExecutionContext): void {
+    const artifacts = this.deps.artifactDao.listArtifacts(context.taskId)
+    for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+      const artifact = artifacts[index]
+      if (!context.videoPath && artifact.artifactType === 'video') {
+        context.videoPath = artifact.filePath
+      } else if (!context.audioPath && artifact.artifactType === 'audio') {
+        context.audioPath = artifact.filePath
+      } else if (!context.transcriptPath && artifact.artifactType === 'transcript') {
+        context.transcriptPath = artifact.filePath
+      } else if (!context.translationPath && artifact.artifactType === 'translation') {
+        context.translationPath = artifact.filePath
+      } else if (!context.ttsRawPath && artifact.artifactType === 'tts') {
+        context.ttsRawPath = artifact.filePath
       }
     }
   }
@@ -412,6 +538,13 @@ export class TaskEngine {
         errorCode: `E_${stage.toUpperCase()}_FAILED`,
         errorMessage: message,
       })
+      const recoveryPlan = this.recoveryPlanner.createPlan(context.taskId)
+      if (recoveryPlan.actions.length > 0) {
+        this.emit('recoverySuggested', {
+          taskId: context.taskId,
+          actions: recoveryPlan.actions,
+        })
+      }
       this.emit('status', {
         taskId: context.taskId,
         status: 'failed',
@@ -918,21 +1051,190 @@ export class TaskEngine {
     }
   }
 
+  private resolveSegmentationConfig(taskId: string): {
+    strategy: SegmentationStrategy
+    options: SegmentationOptions
+  } {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    const strategyRaw = snapshot.segmentationStrategy
+    const strategy: SegmentationStrategy =
+      strategyRaw === 'sentence' || strategyRaw === 'duration' ? strategyRaw : 'punctuation'
+    const optionsRaw =
+      snapshot.segmentationOptions && typeof snapshot.segmentationOptions === 'object'
+        ? (snapshot.segmentationOptions as Record<string, unknown>)
+        : {}
+    const toNumber = (value: unknown): number | undefined =>
+      typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+    return {
+      strategy,
+      options: {
+        maxCharsPerSegment: toNumber(optionsRaw.maxCharsPerSegment),
+        targetSegmentLength: toNumber(optionsRaw.targetSegmentLength),
+        targetDurationSec: toNumber(optionsRaw.targetDurationSec),
+      },
+    }
+  }
+
+  private resolveRetrySet(taskId: string): Set<string> | null {
+    return this.retrySegmentRequests.get(taskId) ?? null
+  }
+
+  private async ensureStageSegments(
+    taskId: string,
+    stageName: SegmentStageName,
+    segments: TextSegment[],
+  ): Promise<TaskSegmentRecord[]> {
+    const existing = this.deps.taskSegmentDao.listByTaskAndStage(taskId, stageName)
+    const hasShapeChanged =
+      existing.length !== segments.length ||
+      existing.some((segment, index) => {
+        const source = segments[index]
+        return !source || segment.segmentIndex !== source.index || (segment.sourceText ?? '') !== source.text
+      })
+    if (hasShapeChanged) {
+      this.deps.taskSegmentDao.clearByTaskAndStage(taskId, stageName)
+      return this.deps.taskSegmentDao.createSegments(
+        taskId,
+        stageName,
+        segments.map((segment) => ({
+          id: segment.id,
+          segmentIndex: segment.index,
+          sourceText: segment.text,
+          status: 'pending',
+        })),
+      )
+    }
+    return existing
+  }
+
+  private buildCheckpointConfig(taskId: string): Record<string, unknown> {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const settings = this.deps.settingsDao.getSettings()
+    return {
+      targetLanguage: task.targetLanguage,
+      translateModelId: settings.translateModelId,
+      ttsModelId: settings.ttsModelId,
+      ttsVoiceId: settings.ttsVoiceId,
+      ttsSpeed: settings.ttsSpeed,
+      ttsPitch: settings.ttsPitch,
+      ttsVolume: settings.ttsVolume,
+    }
+  }
+
   private async executeTranslating(context: TaskExecutionContext): Promise<void> {
     if (!context.transcriptPath) throw new Error('transcriptPath is missing')
     const task = this.deps.taskDao.getTaskById(context.taskId)
     const settings = this.deps.settingsDao.getSettings()
     const sourceText = await fs.readFile(context.transcriptPath, 'utf-8')
+    const segmentation = this.resolveSegmentationConfig(context.taskId)
+    const segments = segmentText(sourceText, segmentation)
+    assertSegmentIntegrity(sourceText, segments)
 
-    const translated = await minimaxTranslate({
-      settings,
-      sourceText,
-      targetLanguage: task.targetLanguage,
-    })
+    const retrySet = this.resolveRetrySet(context.taskId)
+    const stageSegments = await this.ensureStageSegments(context.taskId, 'translating', segments)
+    const total = stageSegments.length
+    let completed = stageSegments.filter((segment) => segment.status === 'success').length
 
+    const maxAttempts = Math.max(1, settings.retryPolicy.translate + 1)
+    for (const segment of stageSegments) {
+      if (this.cancelRequested.has(context.taskId)) {
+        throw new Error('Task canceled')
+      }
+      if (segment.status === 'success' && (!retrySet || !retrySet.has(segment.id))) {
+        continue
+      }
+      if (retrySet && !retrySet.has(segment.id)) {
+        continue
+      }
+
+      this.deps.taskSegmentDao.markSegmentRunning(segment.id)
+      let translatedText: string | null = null
+      let lastError: unknown = null
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          translatedText = await minimaxTranslate({
+            settings,
+            sourceText: segment.sourceText ?? '',
+            targetLanguage: task.targetLanguage,
+          })
+          break
+        } catch (error) {
+          lastError = error
+          const message = error instanceof Error ? error.message : String(error)
+          const kind = classifyError('E_TRANSLATE_SEGMENT', message)
+          if (kind !== 'retryable' || attempt >= maxAttempts) {
+            break
+          }
+          await sleep(Math.min(4_000, 1000 * (2 ** (attempt - 1))))
+        }
+      }
+
+      if (!translatedText) {
+        const message =
+          lastError instanceof Error ? lastError.message : 'Unknown translating segment error'
+        this.deps.taskSegmentDao.markSegmentFailed(segment.id, {
+          errorCode: 'E_TRANSLATE_SEGMENT',
+          errorMessage: message,
+          incrementRetry: true,
+        })
+        this.emit('segmentFailed', {
+          taskId: context.taskId,
+          stage: 'translating',
+          segmentId: segment.id,
+          errorCode: 'E_TRANSLATE_SEGMENT',
+          errorMessage: message,
+          retryable: classifyError('E_TRANSLATE_SEGMENT', message) === 'retryable',
+        })
+        throw new Error(`Segment translate failed [${segment.segmentIndex}]: ${message}`)
+      }
+
+      this.deps.taskSegmentDao.markSegmentSuccess(segment.id, {
+        targetText: translatedText,
+      })
+      this.checkpointStore.saveSegmentCheckpoint({
+        taskId: context.taskId,
+        stageName: 'translating',
+        checkpointSegmentId: segment.id,
+        configSnapshot: this.buildCheckpointConfig(context.taskId),
+      })
+      completed += 1
+      this.emit('segmentProgress', {
+        taskId: context.taskId,
+        stage: 'translating',
+        segmentId: segment.id,
+        index: segment.segmentIndex + 1,
+        total,
+        percent: Math.round((completed / Math.max(1, total)) * 100),
+        message: `translated ${segment.segmentIndex + 1}/${total}`,
+      })
+    }
+
+    const latestSegments = this.deps.taskSegmentDao.listByTaskAndStage(context.taskId, 'translating')
+    const failed = latestSegments.filter((segment) => segment.status === 'failed')
+    if (failed.length > 0) {
+      throw new Error(`Translating has ${failed.length} failed segments`)
+    }
+
+    const ordered = latestSegments.sort((a, b) => a.segmentIndex - b.segmentIndex)
+    const missing = ordered.find((segment) => !segment.targetText?.trim())
+    if (missing) {
+      throw new Error(`Segment missing translated text: ${missing.id}`)
+    }
+
+    const translated = ordered.map((segment) => segment.targetText ?? '').join('\n')
     const translationPath = path.join(context.taskDir, 'translation.txt')
     await fs.writeFile(translationPath, translated, 'utf-8')
     context.translationPath = translationPath
+    context.translationSegments = ordered.map((segment) => ({
+      id: segment.id,
+      index: segment.segmentIndex,
+      text: segment.targetText ?? '',
+      estimatedDurationSec: Math.max(1, Math.ceil((segment.targetText ?? '').length / 4)),
+    }))
+
     this.deps.artifactDao.addArtifact({
       taskId: context.taskId,
       artifactType: 'translation',
@@ -943,15 +1245,143 @@ export class TaskEngine {
 
   private async executeSynthesizing(context: TaskExecutionContext): Promise<void> {
     if (!context.translationPath) throw new Error('translationPath is missing')
+    if (!context.toolchain) throw new Error('toolchain is not ready')
     const settings = this.deps.settingsDao.getSettings()
-    const text = await fs.readFile(context.translationPath, 'utf-8')
-    const ttsRawPath = path.join(context.taskDir, 'tts.raw.mp3')
+    const translationText = await fs.readFile(context.translationPath, 'utf-8')
+    const segmentation = this.resolveSegmentationConfig(context.taskId)
 
-    const { downloadUrl } = await minimaxSynthesize({
-      settings,
-      text,
-    })
-    await downloadToFile(downloadUrl, ttsRawPath)
+    const baseSegments =
+      context.translationSegments && context.translationSegments.length > 0
+        ? context.translationSegments
+        : segmentText(translationText, segmentation)
+    assertSegmentIntegrity(translationText, baseSegments)
+
+    const stageSegments = await this.ensureStageSegments(context.taskId, 'synthesizing', baseSegments)
+    const retrySet = this.resolveRetrySet(context.taskId)
+    const total = stageSegments.length
+    let completed = stageSegments.filter((segment) => segment.status === 'success').length
+    const maxAttempts = Math.max(1, settings.retryPolicy.tts + 1)
+    const segmentDir = path.join(context.taskDir, 'tts-segments')
+    await fs.mkdir(segmentDir, { recursive: true })
+
+    const mutableErrors: string[] = []
+    const workers = Array.from({ length: Math.min(3, Math.max(2, total > 2 ? 3 : 2)) }, () => undefined)
+    let nextIndex = 0
+    const processOne = async (): Promise<void> => {
+      while (nextIndex < stageSegments.length) {
+        const currentIndex = nextIndex
+        nextIndex += 1
+        const segment = stageSegments[currentIndex]
+        if (!segment) continue
+        if (segment.status === 'success' && (!retrySet || !retrySet.has(segment.id))) continue
+        if (retrySet && !retrySet.has(segment.id)) continue
+
+        this.deps.taskSegmentDao.markSegmentRunning(segment.id)
+        let outputPath: string | null = null
+        let lastError: unknown = null
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          try {
+            const synth = await minimaxSynthesize({
+              settings,
+              text: segment.sourceText ?? '',
+            })
+            const targetPath = path.join(segmentDir, `${segment.segmentIndex.toString().padStart(4, '0')}.mp3`)
+            await downloadToFile(synth.downloadUrl, targetPath)
+            outputPath = targetPath
+            break
+          } catch (error) {
+            lastError = error
+            const message = error instanceof Error ? error.message : String(error)
+            const kind = classifyError('E_TTS_SEGMENT', message)
+            if (kind !== 'retryable' || attempt >= maxAttempts) {
+              break
+            }
+            await sleep(Math.min(4_000, 1000 * (2 ** (attempt - 1))))
+          }
+        }
+
+        if (!outputPath) {
+          const message = lastError instanceof Error ? lastError.message : 'Unknown synthesize segment error'
+          this.deps.taskSegmentDao.markSegmentFailed(segment.id, {
+            errorCode: 'E_TTS_SEGMENT',
+            errorMessage: message,
+            incrementRetry: true,
+          })
+          this.emit('segmentFailed', {
+            taskId: context.taskId,
+            stage: 'synthesizing',
+            segmentId: segment.id,
+            errorCode: 'E_TTS_SEGMENT',
+            errorMessage: message,
+            retryable: classifyError('E_TTS_SEGMENT', message) === 'retryable',
+          })
+          mutableErrors.push(`Segment synth failed [${segment.segmentIndex}]: ${message}`)
+          continue
+        }
+
+        this.deps.taskSegmentDao.markSegmentSuccess(segment.id, {
+          targetText: outputPath,
+        })
+        this.checkpointStore.saveSegmentCheckpoint({
+          taskId: context.taskId,
+          stageName: 'synthesizing',
+          checkpointSegmentId: segment.id,
+          configSnapshot: this.buildCheckpointConfig(context.taskId),
+        })
+
+        completed += 1
+        this.emit('segmentProgress', {
+          taskId: context.taskId,
+          stage: 'synthesizing',
+          segmentId: segment.id,
+          index: segment.segmentIndex + 1,
+          total,
+          percent: Math.round((completed / Math.max(1, total)) * 100),
+          message: `synthesized ${segment.segmentIndex + 1}/${total}`,
+        })
+      }
+    }
+
+    await Promise.all(workers.map(() => processOne()))
+
+    if (mutableErrors.length > 0) {
+      throw new Error(mutableErrors[0])
+    }
+
+    const latestSegments = this.deps.taskSegmentDao.listByTaskAndStage(context.taskId, 'synthesizing')
+    const ordered = latestSegments.sort((a, b) => a.segmentIndex - b.segmentIndex)
+    const failed = ordered.filter((segment) => segment.status !== 'success')
+    if (failed.length > 0) {
+      throw new Error(`Synthesizing has ${failed.length} incomplete segments`)
+    }
+    const missing = ordered.find((segment) => !segment.targetText)
+    if (missing) {
+      throw new Error(`Segment missing synthesized file: ${missing.id}`)
+    }
+
+    const concatListPath = path.join(segmentDir, 'concat.txt')
+    const concatBody = ordered
+      .map((segment) => `file '${(segment.targetText ?? '').replace(/'/g, `'\\''`)}'`)
+      .join('\n')
+    await fs.writeFile(concatListPath, concatBody, 'utf-8')
+
+    const ttsRawPath = path.join(context.taskDir, 'tts.raw.mp3')
+    try {
+      await runCommand({
+        command: context.toolchain.ffmpegPath,
+        args: ['-y', '-f', 'concat', '-safe', '0', '-i', concatListPath, '-c', 'copy', ttsRawPath],
+        cwd: context.taskDir,
+        isCanceled: () => this.cancelRequested.has(context.taskId),
+      })
+    } catch {
+      await runCommand({
+        command: context.toolchain.ffmpegPath,
+        args: ['-y', '-f', 'concat', '-safe', '0', '-i', concatListPath, '-c:a', 'libmp3lame', '-b:a', '128k', ttsRawPath],
+        cwd: context.taskDir,
+        isCanceled: () => this.cancelRequested.has(context.taskId),
+      })
+    }
 
     context.ttsRawPath = ttsRawPath
     this.deps.artifactDao.addArtifact({

@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
 import { translateLanguageLabel } from '../app/i18n'
+import { VoicePresetPanel } from '../components/VoicePresetPanel'
 
 interface SettingsPageModel {
   settings: AppSettings
@@ -9,6 +10,16 @@ interface SettingsPageModel {
   settingsSaving: boolean
   settingsError: string
   defaultStageTimeoutMs: number
+  voiceProfiles: Array<{
+    id: string
+    displayName: string
+    description: string
+    language: 'zh' | 'en' | 'ja' | 'multi'
+    speedRange: [number, number]
+    pitchRange: [number, number]
+    volumeRange: [number, number]
+  }>
+  voiceValidationErrors: string[]
 }
 
 interface SettingsPageActions {
@@ -170,19 +181,14 @@ export function SettingsPage(props: SettingsPageProps) {
           />
         </label>
 
-        <label>
-          {props.t('settings.ttsVoiceId')}
-          <input
-            type="text"
-            value={settings.ttsVoiceId}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                ttsVoiceId: event.target.value,
-              }))
-            }
+        <div className="full">
+          <VoicePresetPanel
+            settings={settings}
+            voiceProfiles={props.model.voiceProfiles}
+            validationErrors={props.model.voiceValidationErrors}
+            setSettings={setSettings}
           />
-        </label>
+        </div>
 
         <label>
           {props.t('settings.defaultTargetLanguage')}
@@ -368,6 +374,7 @@ export function SettingsPage(props: SettingsPageProps) {
       </details>
 
       <p className="hint">{props.t('settings.securityNote')}</p>
+      <p className="hint">参数范围：语速 0.5-2.0，音调 -10~10，音量 0~10。</p>
 
       <div className="actions">
         <button

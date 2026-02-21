@@ -12,6 +12,8 @@ export function initTaskEngine(dbContext: DatabaseContext): TaskEngine {
   engine = new TaskEngine({
     taskDao: dbContext.taskDao,
     taskStepDao: dbContext.taskStepDao,
+    taskSegmentDao: dbContext.taskSegmentDao,
+    taskRecoveryDao: dbContext.taskRecoveryDao,
     artifactDao: dbContext.artifactDao,
     settingsDao: dbContext.settingsDao,
     artifactsRoot,

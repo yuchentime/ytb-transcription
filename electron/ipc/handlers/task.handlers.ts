@@ -4,7 +4,7 @@ import { getTaskEngine } from '../../core/task-engine'
 import {
   IPC_CHANNELS,
   type TaskDetail,
-  type TaskIdPayload
+  type TaskIdPayload,
 } from '../channels'
 
 let taskEventsSubscribed = false
@@ -27,6 +27,9 @@ export function registerTaskHandlers(): void {
     const engine = getTaskEngine()
     engine.on('status', (payload) => broadcast(IPC_CHANNELS.taskStatus, payload))
     engine.on('progress', (payload) => broadcast(IPC_CHANNELS.taskProgress, payload))
+    engine.on('segmentProgress', (payload) => broadcast(IPC_CHANNELS.taskSegmentProgress, payload))
+    engine.on('segmentFailed', (payload) => broadcast(IPC_CHANNELS.taskSegmentFailed, payload))
+    engine.on('recoverySuggested', (payload) => broadcast(IPC_CHANNELS.taskRecoverySuggested, payload))
     engine.on('log', (payload) => broadcast(IPC_CHANNELS.taskLog, payload))
     engine.on('completed', (payload) => broadcast(IPC_CHANNELS.taskCompleted, payload))
     engine.on('failed', (payload) => broadcast(IPC_CHANNELS.taskFailed, payload))
@@ -47,11 +50,13 @@ export function registerTaskHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.taskGet, (_event, payload: TaskIdPayload): TaskDetail => {
     const taskId = assertTaskId(payload)
-    const { taskDao, taskStepDao, artifactDao } = getDatabaseContext()
+    const { taskDao, taskStepDao, taskSegmentDao, taskRecoveryDao, artifactDao } = getDatabaseContext()
     return {
       task: taskDao.getTaskById(taskId),
       steps: taskStepDao.listSteps(taskId),
       artifacts: artifactDao.listArtifacts(taskId),
+      segments: taskSegmentDao.listByTask(taskId),
+      recoverySnapshots: taskRecoveryDao.listSnapshots(taskId, 20),
     }
   })
 

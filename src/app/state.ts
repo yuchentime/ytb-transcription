@@ -1,9 +1,19 @@
-import type { AppSettings, TaskRecord, TaskStatus } from '../../electron/core/db/types'
+import type {
+  AppSettings,
+  RecoveryAction,
+  SegmentationStrategy,
+  TaskRecord,
+  TaskSegmentRecord,
+  TaskStatus,
+  VoiceProfile,
+} from '../../electron/core/db/types'
 import { DEFAULT_SETTINGS } from './utils'
 
 export interface TaskFormState {
   youtubeUrl: string
   targetLanguage: 'zh' | 'en' | 'ja'
+  segmentationStrategy: SegmentationStrategy
+  segmentationTargetDurationSec: number
 }
 
 export interface TaskOutput {
@@ -40,6 +50,8 @@ export interface SettingsState {
   loading: boolean
   saving: boolean
   error: string
+  voiceProfiles: VoiceProfile[]
+  voiceValidationErrors: string[]
 }
 
 export interface TaskState {
@@ -48,6 +60,8 @@ export interface TaskState {
   activeStatus: TaskStatus | ''
   stageProgress: Record<string, number>
   runtimeItems: Record<RuntimeItem['component'], RuntimeItem | undefined>
+  segments: TaskSegmentRecord[]
+  recoveryActions: RecoveryAction[]
   logs: LogItem[]
   output: TaskOutput
   running: boolean
@@ -67,6 +81,7 @@ export interface HistoryState {
   keywordDraft: string
   statusDraft: 'all' | TaskStatus
   languageDraft: 'all' | 'zh' | 'en' | 'ja'
+  recoverableOnly: boolean
 }
 
 export function createInitialSettingsState(): SettingsState {
@@ -75,6 +90,8 @@ export function createInitialSettingsState(): SettingsState {
     loading: true,
     saving: false,
     error: '',
+    voiceProfiles: [],
+    voiceValidationErrors: [],
   }
 }
 
@@ -94,11 +111,15 @@ export function createInitialTaskState(): TaskState {
     form: {
       youtubeUrl: '',
       targetLanguage: 'zh',
+      segmentationStrategy: 'punctuation',
+      segmentationTargetDurationSec: 8,
     },
     activeTaskId: '',
     activeStatus: '',
     stageProgress: {},
     runtimeItems: createEmptyRuntimeItems(),
+    segments: [],
+    recoveryActions: [],
     logs: [],
     output: {},
     running: false,
@@ -120,5 +141,6 @@ export function createInitialHistoryState(): HistoryState {
     keywordDraft: '',
     statusDraft: 'all',
     languageDraft: 'all',
+    recoverableOnly: false,
   }
 }

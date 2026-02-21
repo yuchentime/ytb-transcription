@@ -5,7 +5,6 @@ import type { TranslateFn } from '../i18n'
 import { translateTaskStatus } from '../i18n'
 import type { HistoryQueryState, LogItem, TaskState } from '../state'
 import { isRunningStatus } from '../utils'
-import { loadTaskContentAction } from '../actions'
 
 interface UseTaskEventsOptions {
   ipcClient: RendererAPI
@@ -21,6 +20,25 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
   const { ipcClient, activeTaskId, historyQuery, setTaskState, pushLog, refreshHistory, t } = options
 
   useEffect(() => {
+    const refreshSegmentsAndRecovery = async (taskId: string): Promise<void> => {
+      try {
+        const [segments, recoveryPlan] = await Promise.all([
+          ipcClient.task.segments({ taskId }),
+          ipcClient.task
+            .recoveryPlan({ taskId })
+            .catch(() => ({ taskId, fromStage: null, failedSegments: [], actions: [] })),
+        ])
+
+        setTaskState((prev) => ({
+          ...prev,
+          segments,
+          recoveryActions: recoveryPlan.actions,
+        }))
+      } catch {
+        // Ignore refresh failures to avoid interrupting task status updates.
+      }
+    }
+
     const offStatus = ipcClient.task.onStatus((payload) => {
       if (payload.taskId !== activeTaskId && activeTaskId) return
       setTaskState((prev) => ({
@@ -47,6 +65,37 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
           ...prev.stageProgress,
           [payload.stage]: payload.percent,
         },
+      }))
+    })
+
+    const offSegmentProgress = ipcClient.task.onSegmentProgress((payload) => {
+      if (payload.taskId !== activeTaskId && activeTaskId) return
+      setTaskState((prev) => ({
+        ...prev,
+        stageProgress: {
+          ...prev.stageProgress,
+          [payload.stage]: payload.percent,
+        },
+      }))
+      void refreshSegmentsAndRecovery(payload.taskId)
+    })
+
+    const offSegmentFailed = ipcClient.task.onSegmentFailed((payload) => {
+      if (payload.taskId !== activeTaskId && activeTaskId) return
+      pushLog({
+        time: new Date().toISOString(),
+        stage: payload.stage,
+        level: 'error',
+        text: `${payload.errorCode}: ${payload.errorMessage}`,
+      })
+      void refreshSegmentsAndRecovery(payload.taskId)
+    })
+
+    const offRecoverySuggested = ipcClient.task.onRecoverySuggested((payload) => {
+      if (payload.taskId !== activeTaskId && activeTaskId) return
+      setTaskState((prev) => ({
+        ...prev,
+        recoveryActions: payload.actions,
       }))
     })
 
@@ -91,16 +140,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         level: 'info',
         text: t('log.taskCompleted'),
       })
-
-      // Load transcript and translation content after task completes
-      void loadTaskContentAction({
-        ipcClient,
-        setTaskState,
-        transcriptPath: payload.output.transcriptPath,
-        translationPath: payload.output.translationPath,
-        pushLog,
-      })
-
+      void refreshSegmentsAndRecovery(payload.taskId)
       void refreshHistory(historyQuery)
     })
 
@@ -118,12 +158,16 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         level: 'error',
         text: `${payload.errorCode}: ${payload.errorMessage}`,
       })
+      void refreshSegmentsAndRecovery(payload.taskId)
       void refreshHistory(historyQuery)
     })
 
     return () => {
       offStatus()
       offProgress()
+      offSegmentProgress()
+      offSegmentFailed()
+      offRecoverySuggested()
       offRuntime()
       offLog()
       offCompleted()

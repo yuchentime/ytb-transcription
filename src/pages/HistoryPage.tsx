@@ -16,17 +16,20 @@ interface HistoryPageModel {
   historyTotal: number
   canPrevPage: boolean
   canNextPage: boolean
+  historyRecoverableOnly: boolean
 }
 
 interface HistoryPageActions {
   onHistoryKeywordDraftChange(value: string): void
   onHistoryStatusDraftChange(value: 'all' | TaskStatus): void
   onHistoryLanguageDraftChange(value: 'all' | 'zh' | 'en' | 'ja'): void
+  onRecoverableOnlyChange(value: boolean): void
   onHistoryPageSizeChange(value: number): void
   onApplyFilters(): void
   onRefresh(): Promise<void>
   onLoadTaskDetail(taskId: string): Promise<void>
   onRetryTask(taskId: string): Promise<void>
+  onResumeTask(taskId: string): Promise<void>
   onDeleteTask(taskId: string): Promise<void>
   onExportDiagnostics(taskId: string): Promise<void>
   onPrevPage(): void
@@ -95,6 +98,15 @@ export function HistoryPage(props: HistoryPageProps) {
         </label>
 
         <label>
+          可恢复任务
+          <input
+            type="checkbox"
+            checked={props.model.historyRecoverableOnly}
+            onChange={(event) => props.actions.onRecoverableOnlyChange(event.target.checked)}
+          />
+        </label>
+
+        <label>
           {props.t('history.pageSize')}
           <select
             value={props.model.historyPageSize}
@@ -159,6 +171,13 @@ export function HistoryPage(props: HistoryPageProps) {
                       {props.model.historyBusyTaskId === item.id
                         ? props.t('history.processing')
                         : props.t('history.retry')}
+                    </button>
+                    <button
+                      className="btn small"
+                      disabled={item.status !== 'failed' || !!props.model.historyBusyTaskId}
+                      onClick={() => void props.actions.onResumeTask(item.id)}
+                    >
+                      恢复任务
                     </button>
                     <button
                       className="btn small"

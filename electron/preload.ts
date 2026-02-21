@@ -14,8 +14,15 @@ const api: RendererAPI = {
     cancel: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskCancel, payload),
     retry: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskRetry, payload),
     get: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskGet, payload),
+    segments: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskSegments, payload),
+    retrySegments: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskRetrySegments, payload),
+    resumeFromCheckpoint: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskResumeFromCheckpoint, payload),
+    recoveryPlan: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskRecoveryPlan, payload),
     onStatus: (listener) => subscribe(IPC_CHANNELS.taskStatus, listener),
     onProgress: (listener) => subscribe(IPC_CHANNELS.taskProgress, listener),
+    onSegmentProgress: (listener) => subscribe(IPC_CHANNELS.taskSegmentProgress, listener),
+    onSegmentFailed: (listener) => subscribe(IPC_CHANNELS.taskSegmentFailed, listener),
+    onRecoverySuggested: (listener) => subscribe(IPC_CHANNELS.taskRecoverySuggested, listener),
     onLog: (listener) => subscribe(IPC_CHANNELS.taskLog, listener),
     onCompleted: (listener) => subscribe(IPC_CHANNELS.taskCompleted, listener),
     onFailed: (listener) => subscribe(IPC_CHANNELS.taskFailed, listener),
@@ -28,6 +35,10 @@ const api: RendererAPI = {
   settings: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
     update: (patch) => ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
+  },
+  voices: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.voicesList),
+    validateParams: (input) => ipcRenderer.invoke(IPC_CHANNELS.voicesValidateParams, input),
   },
   system: {
     openPath: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemOpenPath, payload),

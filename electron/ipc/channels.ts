@@ -4,9 +4,15 @@ import type {
   CreateTaskInput,
   HistoryListResult,
   HistoryQuery,
+  RecoveryAction,
+  RecoveryPlan,
   TaskRecord,
+  TaskRecoverySnapshotRecord,
+  TaskSegmentRecord,
   TaskStatus,
   TaskStepRecord,
+  VoiceParamInput,
+  VoiceProfile,
 } from '../core/db/types'
 
 export const IPC_CHANNELS = {
@@ -15,16 +21,25 @@ export const IPC_CHANNELS = {
   taskCancel: 'task:cancel',
   taskRetry: 'task:retry',
   taskGet: 'task:get',
+  taskSegments: 'task:segments',
+  taskRetrySegments: 'task:retrySegments',
+  taskResumeFromCheckpoint: 'task:resumeFromCheckpoint',
+  taskRecoveryPlan: 'task:recoveryPlan',
   historyList: 'history:list',
   historyDelete: 'history:delete',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
+  voicesList: 'voices:list',
+  voicesValidateParams: 'voices:validateParams',
   systemOpenPath: 'system:openPath',
   systemExportDiagnostics: 'system:exportDiagnostics',
   fileReadAudio: 'file:readAudio',
   fileReadText: 'file:readText',
   taskStatus: 'task:status',
   taskProgress: 'task:progress',
+  taskSegmentProgress: 'task:segmentProgress',
+  taskSegmentFailed: 'task:segmentFailed',
+  taskRecoverySuggested: 'task:recoverySuggested',
   taskLog: 'task:log',
   taskCompleted: 'task:completed',
   taskFailed: 'task:failed',
@@ -33,6 +48,10 @@ export const IPC_CHANNELS = {
 
 export interface TaskIdPayload {
   taskId: string
+}
+
+export interface RetrySegmentsPayload extends TaskIdPayload {
+  segmentIds: string[]
 }
 
 export interface TaskActionResult {
@@ -68,6 +87,8 @@ export interface TaskDetail {
   task: TaskRecord
   steps: TaskStepRecord[]
   artifacts: ArtifactRecord[]
+  segments: TaskSegmentRecord[]
+  recoverySnapshots: TaskRecoverySnapshotRecord[]
 }
 
 export interface TaskStatusEventPayload {
@@ -81,6 +102,30 @@ export interface TaskProgressEventPayload {
   stage: string
   percent: number
   message: string
+}
+
+export interface TaskSegmentProgressEventPayload {
+  taskId: string
+  stage: string
+  segmentId: string
+  index: number
+  total: number
+  percent: number
+  message: string
+}
+
+export interface TaskSegmentFailedEventPayload {
+  taskId: string
+  stage: string
+  segmentId: string
+  errorCode: string
+  errorMessage: string
+  retryable: boolean
+}
+
+export interface TaskRecoverySuggestedEventPayload {
+  taskId: string
+  actions: RecoveryAction[]
 }
 
 export interface TaskLogEventPayload {
@@ -115,6 +160,17 @@ export interface TaskRuntimeEventPayload {
   timestamp: string
 }
 
+export interface ResumeFromCheckpointResult {
+  accepted: boolean
+  fromStage: string
+  reason?: string
+}
+
+export interface VoiceValidateResult {
+  valid: boolean
+  errors: string[]
+}
+
 export interface AudioFileResult {
   data: ArrayBuffer
   mimeType: string
@@ -133,8 +189,15 @@ export interface RendererAPI {
     cancel(payload: TaskIdPayload): Promise<TaskCancelResult>
     retry(payload: TaskIdPayload): Promise<TaskActionResult>
     get(payload: TaskIdPayload): Promise<TaskDetail>
+    segments(payload: TaskIdPayload): Promise<TaskSegmentRecord[]>
+    retrySegments(payload: RetrySegmentsPayload): Promise<TaskActionResult>
+    resumeFromCheckpoint(payload: TaskIdPayload): Promise<ResumeFromCheckpointResult>
+    recoveryPlan(payload: TaskIdPayload): Promise<RecoveryPlan>
     onStatus(listener: (payload: TaskStatusEventPayload) => void): () => void
     onProgress(listener: (payload: TaskProgressEventPayload) => void): () => void
+    onSegmentProgress(listener: (payload: TaskSegmentProgressEventPayload) => void): () => void
+    onSegmentFailed(listener: (payload: TaskSegmentFailedEventPayload) => void): () => void
+    onRecoverySuggested(listener: (payload: TaskRecoverySuggestedEventPayload) => void): () => void
     onLog(listener: (payload: TaskLogEventPayload) => void): () => void
     onCompleted(listener: (payload: TaskCompletedEventPayload) => void): () => void
     onFailed(listener: (payload: TaskFailedEventPayload) => void): () => void
@@ -147,6 +210,10 @@ export interface RendererAPI {
   settings: {
     get(): Promise<AppSettings>
     update(patch: Partial<AppSettings>): Promise<AppSettings>
+  }
+  voices: {
+    list(): Promise<VoiceProfile[]>
+    validateParams(input: VoiceParamInput): Promise<VoiceValidateResult>
   }
   system: {
     openPath(payload: OpenPathPayload): Promise<OpenPathResult>

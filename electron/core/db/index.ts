@@ -3,13 +3,22 @@ import path from 'node:path'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { runMigrations } from './migrate'
-import { ArtifactDao, SettingsDao, TaskDao, TaskStepDao } from './dao'
+import {
+  ArtifactDao,
+  SettingsDao,
+  TaskDao,
+  TaskRecoveryDao,
+  TaskSegmentDao,
+  TaskStepDao,
+} from './dao'
 
 export interface DatabaseContext {
   dbPath: string
   db: Database.Database
   taskDao: TaskDao
   taskStepDao: TaskStepDao
+  taskSegmentDao: TaskSegmentDao
+  taskRecoveryDao: TaskRecoveryDao
   artifactDao: ArtifactDao
   settingsDao: SettingsDao
 }
@@ -36,6 +45,8 @@ export function initDatabase(options?: { dataRoot?: string; dbPath?: string }): 
 
   const taskDao = new TaskDao(db)
   const taskStepDao = new TaskStepDao(db)
+  const taskSegmentDao = new TaskSegmentDao(db)
+  const taskRecoveryDao = new TaskRecoveryDao(db)
   const artifactDao = new ArtifactDao(db)
   const settingsDao = new SettingsDao(db)
   settingsDao.initializeDefaults()
@@ -45,6 +56,8 @@ export function initDatabase(options?: { dataRoot?: string; dbPath?: string }): 
     db,
     taskDao,
     taskStepDao,
+    taskSegmentDao,
+    taskRecoveryDao,
     artifactDao,
     settingsDao,
   }

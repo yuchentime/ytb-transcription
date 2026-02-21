@@ -12,6 +12,8 @@ import {
   loadHistoryAction,
   loadSettingsAction,
   loadTaskDetailAction,
+  resumeTaskFromCheckpointAction,
+  retryFailedSegmentsAction,
   saveSettingsAction,
   startTaskAction,
 } from './app/actions'
@@ -52,9 +54,18 @@ function App() {
   const [historyState, setHistoryState] = useState<HistoryState>(createInitialHistoryState)
   const t = useMemo(() => createTranslator(locale), [locale])
 
+  const filteredHistoryItems = useMemo(() => {
+    if (!historyState.recoverableOnly) return historyState.items
+    return historyState.items.filter((item) => item.status === 'failed')
+  }, [historyState.items, historyState.recoverableOnly])
+
+  const historyVisibleTotal = useMemo(() => {
+    return historyState.recoverableOnly ? filteredHistoryItems.length : historyState.total
+  }, [filteredHistoryItems.length, historyState.recoverableOnly, historyState.total])
+
   const historyTotalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(historyState.total / historyState.query.pageSize))
-  }, [historyState.total, historyState.query.pageSize])
+    return Math.max(1, Math.ceil(historyVisibleTotal / historyState.query.pageSize))
+  }, [historyVisibleTotal, historyState.query.pageSize])
 
   const isStartDisabled = useMemo(() => {
     return taskState.running || !taskState.form.youtubeUrl.trim()
@@ -260,12 +271,49 @@ function App() {
     })
   }
 
+  async function handleRetryFailedSegments(segmentIds?: string[]): Promise<void> {
+    await retryFailedSegmentsAction({
+      activeTaskId: taskState.activeTaskId,
+      ipcClient,
+      setTaskState,
+      segmentIds,
+      pushLog,
+      t,
+    })
+  }
+
+  async function handleResumeFromCheckpoint(taskId = taskState.activeTaskId): Promise<void> {
+    await resumeTaskFromCheckpointAction({
+      activeTaskId: taskId,
+      ipcClient,
+      setTaskState,
+      pushLog,
+      t,
+    })
+    setActiveRoute('task')
+  }
+
+  async function refreshRecoveryPlan(taskId = taskState.activeTaskId): Promise<void> {
+    if (!taskId) return
+    const recoveryPlan = await ipcClient.task
+      .recoveryPlan({ taskId })
+      .catch(() => ({ taskId, fromStage: null, failedSegments: [], actions: [] }))
+    const segments = await ipcClient.task.segments({ taskId }).catch(() => [])
+    setTaskState((prev) => ({
+      ...prev,
+      recoveryActions: recoveryPlan.actions,
+      segments,
+    }))
+  }
+
   const settingsPageModel = {
     settings: settingsState.data,
     settingsLoading: settingsState.loading,
     settingsSaving: settingsState.saving,
     settingsError: settingsState.error,
     defaultStageTimeoutMs: DEFAULT_SETTINGS.stageTimeoutMs,
+    voiceProfiles: settingsState.voiceProfiles,
+    voiceValidationErrors: settingsState.voiceValidationErrors,
   }
   const settingsPageActions = {
     setSettings: setSettingsData,
@@ -303,6 +351,8 @@ function App() {
     stageProgress: taskState.stageProgress,
     overallProgress,
     runtimeItems: taskState.runtimeItems,
+    segments: taskState.segments,
+    recoveryActions: taskState.recoveryActions,
     output: taskState.output,
     ttsAudioUrl: taskState.ttsAudioUrl,
     logs: taskState.logs,
@@ -316,6 +366,10 @@ function App() {
     onExportDiagnostics: (taskId: string) => handleExportDiagnostics(taskId),
     onDownloadAudio: handleDownloadAudio,
     onOpenOutputDirectory: handleOpenOutputDirectory,
+    onRetrySingleSegment: (segmentId: string) => handleRetryFailedSegments([segmentId]),
+    onRetryFailedSegments: () => handleRetryFailedSegments(),
+    onResumeFromCheckpoint: () => handleResumeFromCheckpoint(),
+    onRefreshRecoveryPlan: () => refreshRecoveryPlan(),
   }
 
   const historyPageModel = {
@@ -325,13 +379,15 @@ function App() {
     historyPageSize: historyState.query.pageSize,
     historyError: historyState.error,
     historyLoading: historyState.loading,
-    historyItems: historyState.items,
+    historyItems: filteredHistoryItems,
     historyBusyTaskId: historyState.busyTaskId,
-    historyPage: historyState.query.page,
+    historyPage: historyState.recoverableOnly ? 1 : historyState.query.page,
     historyTotalPages,
-    historyTotal: historyState.total,
-    canPrevPage: historyState.query.page > 1 && !historyState.loading,
-    canNextPage: historyState.query.page < historyTotalPages && !historyState.loading,
+    historyTotal: historyVisibleTotal,
+    canPrevPage: !historyState.recoverableOnly && historyState.query.page > 1 && !historyState.loading,
+    canNextPage:
+      !historyState.recoverableOnly && historyState.query.page < historyTotalPages && !historyState.loading,
+    historyRecoverableOnly: historyState.recoverableOnly,
   }
   const historyPageActions = {
     onHistoryKeywordDraftChange: (value: string) =>
@@ -349,6 +405,11 @@ function App() {
         ...prev,
         languageDraft: value,
       })),
+    onRecoverableOnlyChange: (value: boolean) =>
+      setHistoryState((prev) => ({
+        ...prev,
+        recoverableOnly: value,
+      })),
     onHistoryPageSizeChange: (pageSize: number) =>
       setHistoryState((prev) => ({
         ...prev,
@@ -362,6 +423,10 @@ function App() {
     onRefresh: () => loadHistory(historyState.query),
     onLoadTaskDetail: loadTaskDetail,
     onRetryTask: handleRetryHistoryTask,
+    onResumeTask: async (taskId: string) => {
+      await loadTaskDetail(taskId)
+      await handleResumeFromCheckpoint(taskId)
+    },
     onDeleteTask: handleDeleteHistoryTask,
     onExportDiagnostics: (taskId: string) => handleExportDiagnostics(taskId),
     onPrevPage: () =>

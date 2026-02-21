@@ -1,12 +1,17 @@
 import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import type { TaskStatus } from '../../electron/core/db/types'
+import type { RecoveryAction, TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
 import { translateLanguageLabel, translateRuntimeStatus, translateTaskStatus } from '../app/i18n'
+import { RecoveryActions } from '../components/RecoveryActions'
+import { SegmentProgressList } from '../components/SegmentProgressList'
+import { SegmentationConfigPanel } from '../components/SegmentationConfigPanel'
 
 interface TaskFormState {
   youtubeUrl: string
   targetLanguage: 'zh' | 'en' | 'ja'
+  segmentationStrategy: 'punctuation' | 'sentence' | 'duration'
+  segmentationTargetDurationSec: number
 }
 
 interface TaskOutput {
@@ -41,6 +46,8 @@ interface TaskPageModel {
   stageProgress: Record<string, number>
   overallProgress: number
   runtimeItems: Record<RuntimeItem['component'], RuntimeItem | undefined>
+  segments: TaskSegmentRecord[]
+  recoveryActions: RecoveryAction[]
   output: TaskOutput
   ttsAudioUrl: string
   logs: LogItem[]
@@ -55,6 +62,10 @@ interface TaskPageActions {
   onExportDiagnostics(taskId: string): Promise<void>
   onDownloadAudio(): Promise<void>
   onOpenOutputDirectory(): Promise<void>
+  onRetrySingleSegment(segmentId: string): Promise<void>
+  onRetryFailedSegments(): Promise<void>
+  onResumeFromCheckpoint(): Promise<void>
+  onRefreshRecoveryPlan(): Promise<void>
 }
 
 interface TaskPageProps {
@@ -205,6 +216,13 @@ export function TaskPage(props: TaskPageProps) {
               <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
             </select>
           </label>
+
+          <label className="full">
+            <SegmentationConfigPanel
+              taskForm={props.model.taskForm}
+              setTaskForm={props.actions.setTaskForm}
+            />
+          </label>
         </div>
 
         <div className="actions">
@@ -333,6 +351,25 @@ export function TaskPage(props: TaskPageProps) {
               [{new Date(log.time).toLocaleTimeString()}] [{log.stage}] {log.text}
             </p>
           ))}
+        </div>
+
+        <div className="task-m2-section">
+          <h3>段级进度</h3>
+          <SegmentProgressList
+            segments={props.model.segments}
+            onRetrySingle={props.actions.onRetrySingleSegment}
+          />
+        </div>
+
+        <div className="task-m2-section">
+          <h3>恢复操作</h3>
+          <RecoveryActions
+            actions={props.model.recoveryActions}
+            disabled={props.model.taskRunning}
+            onRetryFailedSegments={props.actions.onRetryFailedSegments}
+            onResumeFromCheckpoint={props.actions.onResumeFromCheckpoint}
+            onRefreshPlan={props.actions.onRefreshRecoveryPlan}
+          />
         </div>
       </section>
     </>
