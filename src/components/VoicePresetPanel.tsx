@@ -1,26 +1,46 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { AppSettings, VoiceProfile } from '../../electron/core/db/types'
+import type { VoiceProfile } from '../../electron/core/db/types'
 
 interface VoicePresetPanelProps {
-  settings: AppSettings
+  voiceId: string
+  speed: number
+  pitch: number
+  volume: number
   voiceProfiles: VoiceProfile[]
   validationErrors: string[]
-  setSettings: Dispatch<SetStateAction<AppSettings>>
+  showAdvancedParams?: boolean
+  setVoiceConfig: Dispatch<
+    SetStateAction<{
+      voiceId: string
+      speed: number
+      pitch: number
+      volume: number
+    }>
+  >
 }
 
 export function VoicePresetPanel(props: VoicePresetPanelProps) {
-  const { settings, voiceProfiles, validationErrors, setSettings } = props
+  const {
+    voiceId,
+    speed,
+    pitch,
+    volume,
+    voiceProfiles,
+    validationErrors,
+    showAdvancedParams = true,
+    setVoiceConfig,
+  } = props
 
   return (
     <div className="voice-preset-panel">
       <label>
         音色预设
         <select
-          value={settings.ttsVoiceId}
+          value={voiceId}
           onChange={(event) =>
-            setSettings((prev) => ({
+            setVoiceConfig((prev) => ({
               ...prev,
-              ttsVoiceId: event.target.value,
+              voiceId: event.target.value,
             }))
           }
         >
@@ -32,6 +52,59 @@ export function VoicePresetPanel(props: VoicePresetPanelProps) {
           ))}
         </select>
       </label>
+
+      {showAdvancedParams && (
+        <>
+          <label>
+            语速（0.5 ~ 2）
+            <input
+              type="number"
+              min={0.5}
+              max={2}
+              step={0.1}
+              value={speed}
+              onChange={(event) =>
+                setVoiceConfig((prev) => ({
+                  ...prev,
+                  speed: Number(event.target.value) || 1,
+                }))
+              }
+            />
+          </label>
+          <label>
+            音调（-10 ~ 10）
+            <input
+              type="number"
+              min={-10}
+              max={10}
+              step={0.1}
+              value={pitch}
+              onChange={(event) =>
+                setVoiceConfig((prev) => ({
+                  ...prev,
+                  pitch: Number(event.target.value) || 0,
+                }))
+              }
+            />
+          </label>
+          <label>
+            音量（0 ~ 10）
+            <input
+              type="number"
+              min={0}
+              max={10}
+              step={0.1}
+              value={volume}
+              onChange={(event) =>
+                setVoiceConfig((prev) => ({
+                  ...prev,
+                  volume: Number(event.target.value) || 1,
+                }))
+              }
+            />
+          </label>
+        </>
+      )}
 
       {validationErrors.length > 0 && (
         <div className="error voice-validate-errors">

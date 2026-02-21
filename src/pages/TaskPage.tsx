@@ -1,17 +1,17 @@
 import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import type { RecoveryAction, TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
+import type { TaskSegmentRecord, TaskStatus, VoiceProfile } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
 import { translateRuntimeStatus, translateTaskStatus } from '../app/i18n'
-import { RecoveryActions } from '../components/RecoveryActions'
 import { SegmentProgressList } from '../components/SegmentProgressList'
 import { SegmentationConfigPanel } from '../components/SegmentationConfigPanel'
 
 interface TaskFormState {
   youtubeUrl: string
-  targetLanguage: 'zh-CN' | 'zh-TW'
+  targetLanguage: 'zh' | 'en' | 'ja'
   segmentationStrategy: 'punctuation' | 'sentence' | 'duration'
   segmentationTargetDurationSec: number
+  ttsVoiceId: string
 }
 
 interface TaskOutput {
@@ -46,8 +46,9 @@ interface TaskPageModel {
   stageProgress: Record<string, number>
   overallProgress: number
   runtimeItems: Record<RuntimeItem['component'], RuntimeItem | undefined>
+  voiceProfiles: VoiceProfile[]
+  taskFormErrors: string[]
   segments: TaskSegmentRecord[]
-  recoveryActions: RecoveryAction[]
   output: TaskOutput
   ttsAudioUrl: string
   logs: LogItem[]
@@ -63,9 +64,6 @@ interface TaskPageActions {
   onDownloadAudio(): Promise<void>
   onOpenOutputDirectory(): Promise<void>
   onRetrySingleSegment(segmentId: string): Promise<void>
-  onRetryFailedSegments(): Promise<void>
-  onResumeFromCheckpoint(): Promise<void>
-  onRefreshRecoveryPlan(): Promise<void>
 }
 
 interface TaskPageProps {
@@ -207,12 +205,13 @@ export function TaskPage(props: TaskPageProps) {
               onChange={(event) =>
                 props.actions.setTaskForm((prev) => ({
                   ...prev,
-                  targetLanguage: event.target.value as 'zh-CN' | 'zh-TW',
+                  targetLanguage: event.target.value as 'zh' | 'en' | 'ja',
                 }))
               }
             >
-              <option value="zh-CN">{props.t('lang.zhCN')}</option>
-              <option value="zh-TW">{props.t('lang.zhTW')}</option>
+              <option value="zh">{props.t('lang.zhCN')}</option>
+              <option value="en">English</option>
+              <option value="ja">日本語</option>
             </select>
           </label>
 
@@ -222,7 +221,35 @@ export function TaskPage(props: TaskPageProps) {
               setTaskForm={props.actions.setTaskForm}
             />
           </label>
+
+          <label>
+            音色预设
+            <select
+              value={props.model.taskForm.ttsVoiceId}
+              onChange={(event) =>
+                props.actions.setTaskForm((prev) => ({
+                  ...prev,
+                  ttsVoiceId: event.target.value,
+                }))
+              }
+            >
+              <option value="">请选择音色</option>
+              {props.model.voiceProfiles.map((voice) => (
+                <option key={voice.id} value={voice.id}>
+                  {voice.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
+
+        {props.model.taskFormErrors.length > 0 && (
+          <div className="error task-form-errors">
+            {props.model.taskFormErrors.map((error) => (
+              <p key={error}>{error}</p>
+            ))}
+          </div>
+        )}
 
         <div className="actions">
           <button
@@ -284,6 +311,15 @@ export function TaskPage(props: TaskPageProps) {
             ))}
           </div>
         )}
+
+        <div className="task-m2-section">
+          <h3>段级进度</h3>
+          <SegmentProgressList
+            segments={props.model.segments}
+            activeStatus={props.model.activeStatus}
+            onRetrySingle={props.actions.onRetrySingleSegment}
+          />
+        </div>
 
         {/* Final Output Section - only show when audio is ready */}
         {props.model.ttsAudioUrl && (

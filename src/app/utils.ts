@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ttsSpeed: 1,
   ttsPitch: 0,
   ttsVolume: 1,
-  defaultTargetLanguage: 'zh-CN',
+  defaultTargetLanguage: 'zh',
   stageTimeoutMs: 10 * 60 * 1000,
   retryPolicy: {
     download: 2,

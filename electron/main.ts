@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, nativeImage } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { closeDatabase, initDatabase } from './core/db'
@@ -36,7 +36,7 @@ function createWindow() {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    icon: path.join(publicRoot, 'electron-vite.svg'),
+    icon: path.join(publicRoot, 'logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
@@ -78,6 +78,15 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
+  // Set dock icon for macOS
+  if (process.platform === 'darwin') {
+    const publicRoot = process.env.VITE_PUBLIC ?? path.join(APP_ROOT, 'public')
+    const dockIcon = nativeImage.createFromPath(path.join(publicRoot, 'logo.png'))
+    if (!dockIcon.isEmpty()) {
+      app.dock.setIcon(dockIcon)
+    }
+  }
+
   try {
     const dbContext = initDatabase()
     initTaskEngine(dbContext)

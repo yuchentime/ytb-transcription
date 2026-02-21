@@ -17,6 +17,7 @@ const zhCNMessages = {
   'route.task': '任务',
   'route.history': '历史',
   'route.settings': '设置',
+  'route.about': '关于我',
 
   'task.title': '运行任务',
   'task.youtubeUrl': 'YouTube 链接',
@@ -166,6 +167,7 @@ const zhTWMessages: Messages = {
   'route.task': '任務',
   'route.history': '歷史',
   'route.settings': '設定',
+  'route.about': '關於我',
 
   'task.title': '執行任務',
   'task.youtubeUrl': 'YouTube 連結',
@@ -329,10 +331,11 @@ const RUNTIME_STATUS_KEYS: Record<'checking' | 'downloading' | 'installing' | 'r
   error: 'runtime.error',
 }
 
-const ROUTE_KEYS: Record<'task' | 'history' | 'settings', TranslateKey> = {
+const ROUTE_KEYS: Record<'task' | 'history' | 'settings' | 'about', TranslateKey> = {
   task: 'route.task',
   history: 'route.history',
   settings: 'route.settings',
+  about: 'route.about',
 }
 
 function interpolate(template: string, params?: TranslateParams): string {
@@ -405,7 +408,7 @@ export function translateRuntimeStatus(
   return t(RUNTIME_STATUS_KEYS[status])
 }
 
-export function translateRouteLabel(route: 'task' | 'history' | 'settings', t: TranslateFn): string {
+export function translateRouteLabel(route: 'task' | 'history' | 'settings' | 'about', t: TranslateFn): string {
   return t(ROUTE_KEYS[route])
 }
 

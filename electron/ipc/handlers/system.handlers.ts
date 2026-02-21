@@ -26,10 +26,23 @@ function maskSecret(secret: string): string {
   return `${secret.slice(0, 3)}***${secret.slice(-3)}`
 }
 
-function sanitizeSettings(settings: AppSettings): Omit<AppSettings, 'minimaxApiKey'> & { minimaxApiKey: string } {
+function maskLocalPath(rawPath: string): string {
+  const trimmed = rawPath.trim()
+  if (!trimmed) return ''
+  const fileName = path.basename(trimmed)
+  return fileName ? `***${fileName}` : '***'
+}
+
+function sanitizeSettings(
+  settings: AppSettings,
+): Omit<AppSettings, 'minimaxApiKey' | 'ytDlpCookiesFilePath'> & {
+  minimaxApiKey: string
+  ytDlpCookiesFilePath: string
+} {
   return {
     ...settings,
     minimaxApiKey: maskSecret(settings.minimaxApiKey),
+    ytDlpCookiesFilePath: maskLocalPath(settings.ytDlpCookiesFilePath),
   }
 }
 

@@ -8,7 +8,6 @@ import {
   handleDownloadAudioAction,
   handleExportDiagnosticsAction,
   handleOpenOutputDirectoryAction,
-  handleRetryHistoryTaskAction,
   loadHistoryAction,
   loadSettingsAction,
   loadTaskDetailAction,
@@ -40,6 +39,7 @@ import { DEFAULT_SETTINGS, STAGES, formatDateTime } from './app/utils'
 import { useTaskAudio } from './app/hooks/useTaskAudio'
 import { useTaskEvents } from './app/hooks/useTaskEvents'
 import { SidebarMenu } from './components/SidebarMenu'
+import { AboutPage } from './pages/AboutPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { TaskPage } from './pages/TaskPage'
@@ -52,6 +52,7 @@ function App() {
   const [settingsState, setSettingsState] = useState(createInitialSettingsState)
   const [taskState, setTaskState] = useState<TaskState>(createInitialTaskState)
   const [historyState, setHistoryState] = useState<HistoryState>(createInitialHistoryState)
+  const [playingAudio, setPlayingAudio] = useState<{ taskId: string; url: string } | null>(null)
   const t = useMemo(() => createTranslator(locale), [locale])
 
   const filteredHistoryItems = useMemo(() => {
@@ -67,9 +68,44 @@ function App() {
     return Math.max(1, Math.ceil(historyVisibleTotal / historyState.query.pageSize))
   }, [historyVisibleTotal, historyState.query.pageSize])
 
+  const taskFormErrors = useMemo(() => {
+    const errors: string[] = []
+    const voiceId = taskState.form.ttsVoiceId.trim()
+
+    if (!taskState.form.youtubeUrl.trim()) {
+      errors.push('请输入有效的 YouTube 链接')
+    }
+    if (!settingsState.data.ttsModelId.trim()) {
+      errors.push('请先在设置页选择 TTS 模型')
+    }
+    if (!voiceId) {
+      errors.push('请选择音色预设')
+    }
+    if (
+      taskState.form.segmentationStrategy === 'duration' &&
+      (taskState.form.segmentationTargetDurationSec < 4 || taskState.form.segmentationTargetDurationSec > 30)
+    ) {
+      errors.push('按时长分段时，目标时长需在 4 ~ 30 秒')
+    }
+
+    if (voiceId && settingsState.voiceProfiles.length > 0) {
+      const selectedVoice = settingsState.voiceProfiles.find((voice) => voice.id === voiceId)
+      if (!selectedVoice) {
+        errors.push('音色不存在，请重新选择')
+      } else if (
+        selectedVoice.language !== 'multi' &&
+        selectedVoice.language !== taskState.form.targetLanguage
+      ) {
+        errors.push(`音色语言(${selectedVoice.language})与目标语言(${taskState.form.targetLanguage})不一致`)
+      }
+    }
+
+    return errors
+  }, [settingsState.data.ttsModelId, settingsState.voiceProfiles, taskState.form])
+
   const isStartDisabled = useMemo(() => {
-    return taskState.running || !taskState.form.youtubeUrl.trim()
-  }, [taskState.running, taskState.form.youtubeUrl])
+    return taskState.running || taskFormErrors.length > 0
+  }, [taskState.running, taskFormErrors.length])
 
   const setSettingsData: Dispatch<SetStateAction<AppSettings>> = (updater) => {
     setSettingsState((prev) => ({
@@ -257,20 +293,6 @@ function App() {
     })
   }
 
-  async function handleRetryHistoryTask(taskId: string): Promise<void> {
-    await handleRetryHistoryTaskAction({
-      taskId,
-      historyQuery: historyState.query,
-      refreshHistory: loadHistory,
-      setActiveRoute,
-      ipcClient,
-      setHistoryState,
-      setTaskState,
-      pushLog,
-      t,
-    })
-  }
-
   async function handleRetryFailedSegments(segmentIds?: string[]): Promise<void> {
     await retryFailedSegmentsAction({
       activeTaskId: taskState.activeTaskId,
@@ -291,19 +313,6 @@ function App() {
       t,
     })
     setActiveRoute('task')
-  }
-
-  async function refreshRecoveryPlan(taskId = taskState.activeTaskId): Promise<void> {
-    if (!taskId) return
-    const recoveryPlan = await ipcClient.task
-      .recoveryPlan({ taskId })
-      .catch(() => ({ taskId, fromStage: null, failedSegments: [], actions: [] }))
-    const segments = await ipcClient.task.segments({ taskId }).catch(() => [])
-    setTaskState((prev) => ({
-      ...prev,
-      recoveryActions: recoveryPlan.actions,
-      segments,
-    }))
   }
 
   const settingsPageModel = {
@@ -351,8 +360,9 @@ function App() {
     stageProgress: taskState.stageProgress,
     overallProgress,
     runtimeItems: taskState.runtimeItems,
+    voiceProfiles: settingsState.voiceProfiles,
+    taskFormErrors,
     segments: taskState.segments,
-    recoveryActions: taskState.recoveryActions,
     output: taskState.output,
     ttsAudioUrl: taskState.ttsAudioUrl,
     logs: taskState.logs,
@@ -367,9 +377,6 @@ function App() {
     onDownloadAudio: handleDownloadAudio,
     onOpenOutputDirectory: handleOpenOutputDirectory,
     onRetrySingleSegment: (segmentId: string) => handleRetryFailedSegments([segmentId]),
-    onRetryFailedSegments: () => handleRetryFailedSegments(),
-    onResumeFromCheckpoint: () => handleResumeFromCheckpoint(),
-    onRefreshRecoveryPlan: () => refreshRecoveryPlan(),
   }
 
   const historyPageModel = {
@@ -388,6 +395,8 @@ function App() {
     canNextPage:
       !historyState.recoverableOnly && historyState.query.page < historyTotalPages && !historyState.loading,
     historyRecoverableOnly: historyState.recoverableOnly,
+    playingTaskId: playingAudio?.taskId ?? '',
+    playingAudioUrl: playingAudio?.url ?? '',
   }
   const historyPageActions = {
     onHistoryKeywordDraftChange: (value: string) =>
@@ -422,13 +431,28 @@ function App() {
     onApplyFilters: applyHistoryFilters,
     onRefresh: () => loadHistory(historyState.query),
     onLoadTaskDetail: loadTaskDetail,
-    onRetryTask: handleRetryHistoryTask,
     onResumeTask: async (taskId: string) => {
       await loadTaskDetail(taskId)
       await handleResumeFromCheckpoint(taskId)
     },
     onDeleteTask: handleDeleteHistoryTask,
-    onExportDiagnostics: (taskId: string) => handleExportDiagnostics(taskId),
+    onPlayAudio: async (taskId: string) => {
+      const task = historyState.items.find((item) => item.id === taskId)
+      if (!task) return
+      const taskDetail = await ipcClient.task.get({ taskId }).catch(() => null)
+      const ttsArtifact = taskDetail?.artifacts.find((artifact) => artifact.artifactType === 'tts')
+      if (!ttsArtifact) {
+        pushLog({ time: new Date().toLocaleTimeString(), stage: 'history', level: 'error', text: '未找到音频文件' })
+        return
+      }
+      const result = await ipcClient.file.readAudio(ttsArtifact.filePath).catch(() => null)
+      if (result) {
+        const blob = new Blob([result.data], { type: result.mimeType })
+        const url = URL.createObjectURL(blob)
+        setPlayingAudio({ taskId, url })
+      }
+    },
+    onStopAudio: () => setPlayingAudio(null),
     onPrevPage: () =>
       setHistoryState((prev) => ({
         ...prev,
@@ -488,6 +512,8 @@ function App() {
           {activeRoute === 'history' && (
             <HistoryPage model={historyPageModel} actions={historyPageActions} t={t} />
           )}
+
+          {activeRoute === 'about' && <AboutPage t={t} />}
         </div>
       </div>
     </main>

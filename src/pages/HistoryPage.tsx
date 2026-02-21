@@ -17,21 +17,23 @@ interface HistoryPageModel {
   canPrevPage: boolean
   canNextPage: boolean
   historyRecoverableOnly: boolean
+  playingTaskId: string
+  playingAudioUrl: string
 }
 
 interface HistoryPageActions {
   onHistoryKeywordDraftChange(value: string): void
   onHistoryStatusDraftChange(value: 'all' | TaskStatus): void
-  onHistoryLanguageDraftChange(value: 'all' | 'zh-CN' | 'zh-TW'): void
+  onHistoryLanguageDraftChange(value: 'all' | 'zh' | 'en' | 'ja'): void
   onRecoverableOnlyChange(value: boolean): void
   onHistoryPageSizeChange(value: number): void
   onApplyFilters(): void
   onRefresh(): Promise<void>
   onLoadTaskDetail(taskId: string): Promise<void>
-  onRetryTask(taskId: string): Promise<void>
   onResumeTask(taskId: string): Promise<void>
   onDeleteTask(taskId: string): Promise<void>
-  onExportDiagnostics(taskId: string): Promise<void>
+  onPlayAudio(taskId: string): Promise<void>
+  onStopAudio(): void
   onPrevPage(): void
   onNextPage(): void
   formatDateTime(value: string | null): string
@@ -87,12 +89,13 @@ export function HistoryPage(props: HistoryPageProps) {
           <select
             value={props.model.historyLanguageDraft}
             onChange={(event) =>
-              props.actions.onHistoryLanguageDraftChange(event.target.value as 'all' | 'zh-CN' | 'zh-TW')
+              props.actions.onHistoryLanguageDraftChange(event.target.value as 'all' | 'zh' | 'en' | 'ja')
             }
           >
             <option value="all">{translateLanguageLabel('all', props.t)}</option>
-            <option value="zh-CN">{translateLanguageLabel('zh-CN', props.t)}</option>
-            <option value="zh-TW">{translateLanguageLabel('zh-TW', props.t)}</option>
+            <option value="zh">{translateLanguageLabel('zh', props.t)}</option>
+            <option value="en">{translateLanguageLabel('en', props.t)}</option>
+            <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
           </select>
         </label>
 
@@ -159,25 +162,51 @@ export function HistoryPage(props: HistoryPageProps) {
                 </td>
                 <td>
                   <div className="table-actions">
+                    {/* Play/Stop Button - Always first */}
+                    {item.status === 'completed' ? (
+                      <button
+                        className="btn small icon-btn"
+                        disabled={!!props.model.historyBusyTaskId}
+                        onClick={() =>
+                          props.model.playingTaskId === item.id
+                            ? props.actions.onStopAudio()
+                            : void props.actions.onPlayAudio(item.id)
+                        }
+                        title={props.model.playingTaskId === item.id ? '停止' : '播放'}
+                      >
+                        {props.model.playingTaskId === item.id ? (
+                          /* Stop Icon */
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="4" y="4" width="16" height="16" />
+                          </svg>
+                        ) : (
+                          /* Play Icon */
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    ) : (
+                      /* Disabled Play Icon */
+                      <button className="btn small icon-btn" disabled title="无音频">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" opacity="0.3">
+                          <path d="M8 5v14l11-7z" />
+                        </svg>
+                      </button>
+                    )}
+
                     <button className="btn small" onClick={() => void props.actions.onLoadTaskDetail(item.id)}>
                       {props.t('history.view')}
                     </button>
-                    <button
-                      className="btn small"
-                      disabled={!!props.model.historyBusyTaskId}
-                      onClick={() => void props.actions.onRetryTask(item.id)}
-                    >
-                      {props.model.historyBusyTaskId === item.id
-                        ? props.t('history.processing')
-                        : props.t('history.retry')}
-                    </button>
+
                     <button
                       className="btn small"
                       disabled={item.status !== 'failed' || !!props.model.historyBusyTaskId}
                       onClick={() => void props.actions.onResumeTask(item.id)}
                     >
-                      恢复任务
+                      恢复
                     </button>
+
                     <button
                       className="btn small"
                       disabled={!!props.model.historyBusyTaskId}
@@ -185,14 +214,12 @@ export function HistoryPage(props: HistoryPageProps) {
                     >
                       {props.t('history.delete')}
                     </button>
-                    <button
-                      className="btn small"
-                      disabled={!!props.model.historyBusyTaskId}
-                      onClick={() => void props.actions.onExportDiagnostics(item.id)}
-                    >
-                      {props.t('history.exportDiagnostics')}
-                    </button>
                   </div>
+                  {props.model.playingTaskId === item.id && props.model.playingAudioUrl && (
+                    <div className="history-audio-player">
+                      <audio controls autoPlay src={props.model.playingAudioUrl} />
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

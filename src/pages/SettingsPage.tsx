@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
+import { translateLanguageLabel } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
 
 interface SettingsPageModel {
@@ -134,23 +135,45 @@ export function SettingsPage(props: SettingsPageProps) {
               onChange={(event) =>
                 setSettings((prev) => ({
                   ...prev,
-                  defaultTargetLanguage: event.target.value as 'zh-CN' | 'zh-TW',
+                  defaultTargetLanguage: event.target.value as 'zh' | 'en' | 'ja',
                 }))
               }
             >
-              <option value="zh-CN">{props.t('lang.zhCN')}</option>
-              <option value="zh-TW">{props.t('lang.zhTW')}</option>
+              <option value="zh">{translateLanguageLabel('zh', props.t)}</option>
+              <option value="en">{translateLanguageLabel('en', props.t)}</option>
+              <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
             </select>
           </label>
 
-          <label>
+          <div className="full">
             <VoicePresetPanel
-              settings={settings}
+              voiceId={settings.ttsVoiceId}
+              speed={settings.ttsSpeed}
+              pitch={settings.ttsPitch}
+              volume={settings.ttsVolume}
               voiceProfiles={props.model.voiceProfiles}
               validationErrors={props.model.voiceValidationErrors}
-              setSettings={setSettings}
+              showAdvancedParams={false}
+              setVoiceConfig={(updater) =>
+                setSettings((prev) => {
+                  const base = {
+                    voiceId: prev.ttsVoiceId,
+                    speed: prev.ttsSpeed,
+                    pitch: prev.ttsPitch,
+                    volume: prev.ttsVolume,
+                  }
+                  const next = typeof updater === 'function' ? updater(base) : updater
+                  return {
+                    ...prev,
+                    ttsVoiceId: next.voiceId,
+                    ttsSpeed: next.speed,
+                    ttsPitch: next.pitch,
+                    ttsVolume: next.volume,
+                  }
+                })
+              }
             />
-          </label>
+          </div>
         </div>
       </div>
       

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bench:dao2-04": "node scripts/benchmarks/dao2-04-segment-db-perf.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

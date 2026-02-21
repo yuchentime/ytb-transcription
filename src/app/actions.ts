@@ -113,11 +113,6 @@ export async function loadTaskDetailAction(
     const transcriptPath = findLatestArtifactPath(detail.artifacts, 'transcript')
     const translationPath = findLatestArtifactPath(detail.artifacts, 'translation')
 
-     
-    console.log('[loadTaskDetailAction] artifacts:', detail.artifacts)
-     
-    console.log('[loadTaskDetailAction] transcriptPath:', transcriptPath, 'translationPath:', translationPath)
-
     if (transcriptPath || translationPath) {
       await loadTaskContentAction({
         ipcClient,
@@ -184,6 +179,7 @@ export async function loadSettingsAction(
       form: {
         ...prev.form,
         targetLanguage: result.defaultTargetLanguage,
+        ttsVoiceId: result.ttsVoiceId,
       },
     }))
   } catch (error) {
@@ -239,6 +235,7 @@ export async function saveSettingsAction(
       form: {
         ...prev.form,
         targetLanguage: saved.defaultTargetLanguage,
+        ttsVoiceId: saved.ttsVoiceId,
       },
     }))
 
@@ -287,16 +284,29 @@ export async function startTaskAction(
   }))
 
   try {
+    const voiceValidation = await ipcClient.voices.validateParams({
+      voiceId: taskForm.ttsVoiceId,
+      speed: settings.ttsSpeed,
+      pitch: settings.ttsPitch,
+      volume: settings.ttsVolume,
+    })
+    if (!voiceValidation.valid) {
+      throw new Error(voiceValidation.errors.join('；') || 'TTS 参数不合法')
+    }
+
     const task = await ipcClient.task.create({
       youtubeUrl: taskForm.youtubeUrl.trim(),
       targetLanguage: taskForm.targetLanguage,
       whisperModel: settings.defaultWhisperModel,
+      translateModelId: settings.translateModelId,
+      ttsModelId: settings.ttsModelId,
+      ttsVoice: taskForm.ttsVoiceId,
       modelConfigSnapshot: {
         segmentationStrategy: taskForm.segmentationStrategy,
         segmentationOptions: {
           targetDurationSec: taskForm.segmentationTargetDurationSec,
         },
-        ttsVoiceId: settings.ttsVoiceId,
+        ttsVoiceId: taskForm.ttsVoiceId,
         ttsSpeed: settings.ttsSpeed,
         ttsPitch: settings.ttsPitch,
         ttsVolume: settings.ttsVolume,

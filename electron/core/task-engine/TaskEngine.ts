@@ -14,6 +14,7 @@ import type {
   TaskStepDao,
 } from '../db/dao'
 import type {
+  AppSettings,
   RecoveryPlan,
   SegmentStageName,
   SegmentationOptions,
@@ -26,8 +27,9 @@ import { runCommand } from './command'
 import { minimaxSynthesize, minimaxTranslate } from './minimax'
 import { CheckpointStore } from './recovery/CheckpointStore'
 import { RecoveryPlanner, classifyError } from './recovery/RecoveryPlanner'
-import { assertSegmentIntegrity, segmentText, type TextSegment } from './segmentation/segmenter'
+import { assertSegmentIntegrity, segment, type TextSegment } from './segmentation'
 import { ensureToolchain, type Toolchain } from './toolchain'
+import { runWithConcurrency } from '../../services/minimax/ttsAsyncOrchestrator'
 
 const STAGES: StepName[] = [
   'downloading',
@@ -236,6 +238,94 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+type CheckpointComparableValue = string | number | null
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function toComparableNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function toComparableString(value: unknown): string | null | undefined {
+  if (typeof value === 'string') return value
+  if (value === null) return null
+  return undefined
+}
+
+function formatComparableValue(value: CheckpointComparableValue | undefined): string {
+  if (value === undefined) return 'undefined'
+  return JSON.stringify(value)
+}
+
+function normalizeCheckpointStageName(stageName: unknown): StepName | null {
+  if (typeof stageName !== 'string') return null
+  const normalized = stageName.trim().toLowerCase()
+  if (STAGES.includes(normalized as StepName)) {
+    return normalized as StepName
+  }
+
+  if (normalized === 'translate' || normalized === 'translation') {
+    return 'translating'
+  }
+  if (normalized === 'tts' || normalized === 'synthesize' || normalized === 'synthesis') {
+    return 'synthesizing'
+  }
+  return null
+}
+
+function isSegmentStage(stageName: StepName): stageName is SegmentStageName {
+  return stageName === 'translating' || stageName === 'synthesizing'
+}
+
+function parseFailedSegmentIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean)
+}
+
+function buildComparableCheckpointConfig(config: Record<string, unknown>): Record<string, CheckpointComparableValue> {
+  const comparable: Record<string, CheckpointComparableValue> = {}
+
+  const directStringKeys = [
+    'targetLanguage',
+    'segmentationStrategy',
+    'translateModelId',
+    'ttsModelId',
+    'ttsVoiceId',
+  ] as const
+  for (const key of directStringKeys) {
+    const value = toComparableString(config[key])
+    if (value !== undefined) {
+      comparable[key] = value
+    }
+  }
+
+  const directNumberKeys = ['ttsSpeed', 'ttsPitch', 'ttsVolume', 'ttsPollingConcurrency'] as const
+  for (const key of directNumberKeys) {
+    const value = toComparableNumber(config[key])
+    if (value !== undefined) {
+      comparable[key] = value
+    }
+  }
+
+  const segmentationOptions = isRecord(config.segmentationOptions) ? config.segmentationOptions : {}
+  const maxCharsPerSegment = toComparableNumber(segmentationOptions.maxCharsPerSegment)
+  const targetSegmentLength = toComparableNumber(segmentationOptions.targetSegmentLength)
+  const targetDurationSec = toComparableNumber(segmentationOptions.targetDurationSec)
+  if (maxCharsPerSegment !== undefined) {
+    comparable['segmentationOptions.maxCharsPerSegment'] = maxCharsPerSegment
+  }
+  if (targetSegmentLength !== undefined) {
+    comparable['segmentationOptions.targetSegmentLength'] = targetSegmentLength
+  }
+  if (targetDurationSec !== undefined) {
+    comparable['segmentationOptions.targetDurationSec'] = targetDurationSec
+  }
+
+  return comparable
+}
+
 async function downloadFileStream(url: string, filePath: string): Promise<void> {
   const response = await fetch(url)
   if (!response.ok) {
@@ -356,14 +446,25 @@ export class TaskEngine {
       return { accepted: false, fromStage: '', reason: 'No checkpoint found' }
     }
 
-    const stageName = snapshot.stageName as StepName
-    if (!STAGES.includes(stageName)) {
+    const stageName = this.resolveCheckpointStage(snapshot.stageName, snapshot.snapshotJson)
+    if (!stageName) {
       return { accepted: false, fromStage: snapshot.stageName, reason: 'Checkpoint stage is invalid' }
     }
 
-    const retrySegments = snapshot.snapshotJson.failedSegmentIds
-    if (Array.isArray(retrySegments) && retrySegments.length > 0) {
-      this.retrySegmentRequests.set(taskId, new Set(retrySegments.filter((id): id is string => typeof id === 'string')))
+    const configCheck = this.validateCheckpointConfig(taskId, snapshot.snapshotJson.configSnapshot)
+    if (!configCheck.accepted) {
+      return {
+        accepted: false,
+        fromStage: stageName,
+        reason: configCheck.reason,
+      }
+    }
+
+    const retrySet = this.resolveResumeRetrySet(taskId, stageName, snapshot.snapshotJson.failedSegmentIds)
+    if (retrySet.size > 0) {
+      this.retrySegmentRequests.set(taskId, retrySet)
+    } else {
+      this.retrySegmentRequests.delete(taskId)
     }
     this.resumeFromStageRequests.set(taskId, stageName)
 
@@ -1143,31 +1244,186 @@ export class TaskEngine {
 
   private buildCheckpointConfig(taskId: string): Record<string, unknown> {
     const task = this.deps.taskDao.getTaskById(taskId)
-    const settings = this.deps.settingsDao.getSettings()
+    const settings = this.resolveExecutionSettings(taskId)
+    const segmentation = this.resolveSegmentationConfig(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    const ttsPollingConcurrency =
+      typeof snapshot.ttsPollingConcurrency === 'number' && Number.isFinite(snapshot.ttsPollingConcurrency)
+        ? Math.floor(snapshot.ttsPollingConcurrency)
+        : undefined
+
     return {
       targetLanguage: task.targetLanguage,
+      segmentationStrategy: segmentation.strategy,
+      segmentationOptions: segmentation.options,
       translateModelId: settings.translateModelId,
       ttsModelId: settings.ttsModelId,
       ttsVoiceId: settings.ttsVoiceId,
       ttsSpeed: settings.ttsSpeed,
       ttsPitch: settings.ttsPitch,
       ttsVolume: settings.ttsVolume,
+      ttsPollingConcurrency,
     }
+  }
+
+  private resolveCheckpointStage(
+    stageName: string,
+    snapshotJson: Record<string, unknown>,
+  ): StepName | null {
+    const fromStageColumn = normalizeCheckpointStageName(stageName)
+    if (fromStageColumn) return fromStageColumn
+    return normalizeCheckpointStageName(snapshotJson.stageName)
+  }
+
+  private validateCheckpointConfig(
+    taskId: string,
+    snapshotConfig: unknown,
+  ): { accepted: boolean; reason?: string } {
+    if (!isRecord(snapshotConfig)) {
+      return {
+        accepted: false,
+        reason: 'Checkpoint config snapshot is missing',
+      }
+    }
+
+    const expected = buildComparableCheckpointConfig(snapshotConfig)
+    if (Object.keys(expected).length === 0) {
+      return {
+        accepted: false,
+        reason: 'Checkpoint config snapshot is empty',
+      }
+    }
+
+    const currentConfig = buildComparableCheckpointConfig(this.buildCheckpointConfig(taskId))
+    const mismatches: string[] = []
+    for (const [key, expectedValue] of Object.entries(expected)) {
+      const currentValue = currentConfig[key]
+      if (currentValue !== expectedValue) {
+        mismatches.push(
+          `${key}: checkpoint=${formatComparableValue(expectedValue)}, current=${formatComparableValue(currentValue)}`,
+        )
+      }
+    }
+
+    if (mismatches.length > 0) {
+      return {
+        accepted: false,
+        reason: `Checkpoint config mismatch. ${mismatches.slice(0, 3).join(' | ')}`,
+      }
+    }
+
+    return { accepted: true }
+  }
+
+  private resolveResumeRetrySet(
+    taskId: string,
+    stageName: StepName,
+    snapshotFailedSegmentIds: unknown,
+  ): Set<string> {
+    const retrySet = new Set<string>(parseFailedSegmentIds(snapshotFailedSegmentIds))
+    if (!isSegmentStage(stageName)) {
+      return retrySet
+    }
+
+    const unresolved = this.deps.taskSegmentDao
+      .listByTaskAndStage(taskId, stageName)
+      .filter((segment) => segment.status !== 'success')
+      .map((segment) => segment.id)
+    for (const segmentId of unresolved) {
+      retrySet.add(segmentId)
+    }
+    return retrySet
+  }
+
+  private assertStageSegmentIntegrity(
+    stageName: SegmentStageName,
+    dbSegments: TaskSegmentRecord[],
+    expectedSegments: TextSegment[],
+  ): TaskSegmentRecord[] {
+    const ordered = [...dbSegments].sort((a, b) => a.segmentIndex - b.segmentIndex)
+    if (ordered.length !== expectedSegments.length) {
+      throw new Error(
+        `${stageName} segment count mismatch: expected ${expectedSegments.length}, got ${ordered.length}`,
+      )
+    }
+
+    for (let index = 0; index < ordered.length; index += 1) {
+      const record = ordered[index]
+      const expected = expectedSegments[index]
+      if (!record || !expected) {
+        throw new Error(`${stageName} segment missing at index ${index}`)
+      }
+      if (record.segmentIndex !== index) {
+        throw new Error(
+          `${stageName} segment order mismatch at index ${index}: got segmentIndex=${record.segmentIndex}`,
+        )
+      }
+      if ((record.sourceText ?? '') !== expected.text) {
+        throw new Error(
+          `${stageName} segment source mismatch at index ${index}`,
+        )
+      }
+    }
+
+    return ordered
+  }
+
+  private resolveTtsConcurrency(taskId: string, totalSegments: number): number {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    const requested = snapshot.ttsPollingConcurrency
+    const configured =
+      typeof requested === 'number' && Number.isFinite(requested)
+        ? Math.floor(requested)
+        : 3
+    return Math.max(1, Math.min(3, configured, Math.max(1, totalSegments)))
+  }
+
+  private resolveExecutionSettings(taskId: string): AppSettings {
+    const base = this.deps.settingsDao.getSettings()
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+
+    const resolved: AppSettings = {
+      ...base,
+    }
+    const patchString = (key: 'translateModelId' | 'ttsModelId' | 'ttsVoiceId'): void => {
+      const value = snapshot[key]
+      if (typeof value === 'string') {
+        resolved[key] = value
+      }
+    }
+    const patchNumber = (key: 'ttsSpeed' | 'ttsPitch' | 'ttsVolume'): void => {
+      const value = snapshot[key]
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        resolved[key] = value
+      }
+    }
+
+    patchString('translateModelId')
+    patchString('ttsModelId')
+    patchString('ttsVoiceId')
+    patchNumber('ttsSpeed')
+    patchNumber('ttsPitch')
+    patchNumber('ttsVolume')
+
+    return resolved
   }
 
   private async executeTranslating(context: TaskExecutionContext): Promise<void> {
     if (!context.transcriptPath) throw new Error('transcriptPath is missing')
     const task = this.deps.taskDao.getTaskById(context.taskId)
-    const settings = this.deps.settingsDao.getSettings()
+    const settings = this.resolveExecutionSettings(context.taskId)
     const sourceText = await fs.readFile(context.transcriptPath, 'utf-8')
     const segmentation = this.resolveSegmentationConfig(context.taskId)
-    const segments = segmentText(sourceText, segmentation)
+    const segments = segment(sourceText, segmentation.strategy, segmentation.options)
     assertSegmentIntegrity(sourceText, segments)
 
     const retrySet = this.resolveRetrySet(context.taskId)
     const stageSegments = await this.ensureStageSegments(context.taskId, 'translating', segments)
     const total = stageSegments.length
     let completed = stageSegments.filter((segment) => segment.status === 'success').length
+    const failedSegmentErrors: string[] = []
 
     const maxAttempts = Math.max(1, settings.retryPolicy.translate + 1)
     for (const segment of stageSegments) {
@@ -1220,7 +1476,10 @@ export class TaskEngine {
           errorMessage: message,
           retryable: classifyError('E_TRANSLATE_SEGMENT', message) === 'retryable',
         })
-        throw new Error(`Segment translate failed [${segment.segmentIndex}]: ${message}`)
+        failedSegmentErrors.push(
+          `#${segment.segmentIndex + 1}:${message}`,
+        )
+        continue
       }
 
       this.deps.taskSegmentDao.markSegmentSuccess(segment.id, {
@@ -1247,10 +1506,15 @@ export class TaskEngine {
     const latestSegments = this.deps.taskSegmentDao.listByTaskAndStage(context.taskId, 'translating')
     const failed = latestSegments.filter((segment) => segment.status === 'failed')
     if (failed.length > 0) {
-      throw new Error(`Translating has ${failed.length} failed segments`)
+      const failedExcerpt = failedSegmentErrors.slice(0, 3).join(' | ')
+      throw new Error(
+        failedExcerpt
+          ? `Translating has ${failed.length} failed segments. ${failedExcerpt}`
+          : `Translating has ${failed.length} failed segments`,
+      )
     }
 
-    const ordered = latestSegments.sort((a, b) => a.segmentIndex - b.segmentIndex)
+    const ordered = this.assertStageSegmentIntegrity('translating', latestSegments, segments)
     const missing = ordered.find((segment) => !segment.targetText?.trim())
     if (missing) {
       throw new Error(`Segment missing translated text: ${missing.id}`)
@@ -1278,14 +1542,14 @@ export class TaskEngine {
   private async executeSynthesizing(context: TaskExecutionContext): Promise<void> {
     if (!context.translationPath) throw new Error('translationPath is missing')
     if (!context.toolchain) throw new Error('toolchain is not ready')
-    const settings = this.deps.settingsDao.getSettings()
+    const settings = this.resolveExecutionSettings(context.taskId)
     const translationText = await fs.readFile(context.translationPath, 'utf-8')
     const segmentation = this.resolveSegmentationConfig(context.taskId)
 
     const baseSegments =
       context.translationSegments && context.translationSegments.length > 0
         ? context.translationSegments
-        : segmentText(translationText, segmentation)
+        : segment(translationText, segmentation.strategy, segmentation.options)
     assertSegmentIntegrity(translationText, baseSegments)
 
     const stageSegments = await this.ensureStageSegments(context.taskId, 'synthesizing', baseSegments)
@@ -1296,97 +1560,105 @@ export class TaskEngine {
     const segmentDir = path.join(context.taskDir, this.buildUniqueName('tts-segments'))
     await fs.mkdir(segmentDir, { recursive: true })
 
+    const runnableSegments = stageSegments.filter((segment) => {
+      if (segment.status === 'success' && (!retrySet || !retrySet.has(segment.id))) return false
+      if (retrySet && !retrySet.has(segment.id)) return false
+      return true
+    })
     const mutableErrors: string[] = []
-    const workers = Array.from({ length: Math.min(3, Math.max(2, total > 2 ? 3 : 2)) }, () => undefined)
-    let nextIndex = 0
-    const processOne = async (): Promise<void> => {
-      while (nextIndex < stageSegments.length) {
-        const currentIndex = nextIndex
-        nextIndex += 1
-        const segment = stageSegments[currentIndex]
-        if (!segment) continue
-        if (segment.status === 'success' && (!retrySet || !retrySet.has(segment.id))) continue
-        if (retrySet && !retrySet.has(segment.id)) continue
+    const concurrency = this.resolveTtsConcurrency(context.taskId, runnableSegments.length)
+    this.emit('log', {
+      taskId: context.taskId,
+      stage: 'synthesizing',
+      level: 'info',
+      text: `Segment TTS orchestrator concurrency=${concurrency}, runnable=${runnableSegments.length}, total=${total}`,
+      timestamp: new Date().toISOString(),
+    })
 
-        this.deps.taskSegmentDao.markSegmentRunning(segment.id)
-        let outputPath: string | null = null
-        let lastError: unknown = null
+    const synthTasks = runnableSegments.map((segment) => async () => {
+      this.deps.taskSegmentDao.markSegmentRunning(segment.id)
+      let outputPath: string | null = null
+      let lastError: unknown = null
 
-        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-          try {
-            const synth = await minimaxSynthesize({
-              settings,
-              text: segment.sourceText ?? '',
-            })
-            const targetPath = this.buildUniqueFilePath(
-              segmentDir,
-              `tts-segment-${segment.segmentIndex.toString().padStart(4, '0')}`,
-              'mp3',
-            )
-            await downloadToFile(synth.downloadUrl, targetPath)
-            outputPath = targetPath
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          const synth = await minimaxSynthesize({
+            settings,
+            text: segment.sourceText ?? '',
+          })
+          const targetPath = this.buildUniqueFilePath(
+            segmentDir,
+            `tts-segment-${segment.segmentIndex.toString().padStart(4, '0')}`,
+            'mp3',
+          )
+          await downloadToFile(synth.downloadUrl, targetPath)
+          outputPath = targetPath
+          break
+        } catch (error) {
+          lastError = error
+          const message = error instanceof Error ? error.message : String(error)
+          const kind = classifyError('E_TTS_SEGMENT', message)
+          if (kind !== 'retryable' || attempt >= maxAttempts) {
             break
-          } catch (error) {
-            lastError = error
-            const message = error instanceof Error ? error.message : String(error)
-            const kind = classifyError('E_TTS_SEGMENT', message)
-            if (kind !== 'retryable' || attempt >= maxAttempts) {
-              break
-            }
-            await sleep(Math.min(4_000, 1000 * (2 ** (attempt - 1))))
           }
+          await sleep(Math.min(4_000, 1000 * (2 ** (attempt - 1))))
         }
+      }
 
-        if (!outputPath) {
-          const message = lastError instanceof Error ? lastError.message : 'Unknown synthesize segment error'
-          this.deps.taskSegmentDao.markSegmentFailed(segment.id, {
-            errorCode: 'E_TTS_SEGMENT',
-            errorMessage: message,
-            incrementRetry: true,
-          })
-          this.emit('segmentFailed', {
-            taskId: context.taskId,
-            stage: 'synthesizing',
-            segmentId: segment.id,
-            errorCode: 'E_TTS_SEGMENT',
-            errorMessage: message,
-            retryable: classifyError('E_TTS_SEGMENT', message) === 'retryable',
-          })
-          mutableErrors.push(`Segment synth failed [${segment.segmentIndex}]: ${message}`)
-          continue
-        }
-
-        this.deps.taskSegmentDao.markSegmentSuccess(segment.id, {
-          targetText: outputPath,
+      if (!outputPath) {
+        const message = lastError instanceof Error ? lastError.message : 'Unknown synthesize segment error'
+        this.deps.taskSegmentDao.markSegmentFailed(segment.id, {
+          errorCode: 'E_TTS_SEGMENT',
+          errorMessage: message,
+          incrementRetry: true,
         })
-        this.checkpointStore.saveSegmentCheckpoint({
-          taskId: context.taskId,
-          stageName: 'synthesizing',
-          checkpointSegmentId: segment.id,
-          configSnapshot: this.buildCheckpointConfig(context.taskId),
-        })
-
-        completed += 1
-        this.emit('segmentProgress', {
+        this.emit('segmentFailed', {
           taskId: context.taskId,
           stage: 'synthesizing',
           segmentId: segment.id,
-          index: segment.segmentIndex + 1,
-          total,
-          percent: Math.round((completed / Math.max(1, total)) * 100),
-          message: `synthesized ${segment.segmentIndex + 1}/${total}`,
+          errorCode: 'E_TTS_SEGMENT',
+          errorMessage: message,
+          retryable: classifyError('E_TTS_SEGMENT', message) === 'retryable',
         })
+        mutableErrors.push(`#${segment.segmentIndex + 1}:${message}`)
+        return
       }
-    }
 
-    await Promise.all(workers.map(() => processOne()))
+      this.deps.taskSegmentDao.markSegmentSuccess(segment.id, {
+        targetText: outputPath,
+      })
+      this.checkpointStore.saveSegmentCheckpoint({
+        taskId: context.taskId,
+        stageName: 'synthesizing',
+        checkpointSegmentId: segment.id,
+        configSnapshot: this.buildCheckpointConfig(context.taskId),
+      })
+
+      completed += 1
+      this.emit('segmentProgress', {
+        taskId: context.taskId,
+        stage: 'synthesizing',
+        segmentId: segment.id,
+        index: segment.segmentIndex + 1,
+        total,
+        percent: Math.round((completed / Math.max(1, total)) * 100),
+        message: `synthesized ${segment.segmentIndex + 1}/${total}`,
+      })
+    })
+
+    await runWithConcurrency(synthTasks, concurrency)
 
     if (mutableErrors.length > 0) {
-      throw new Error(mutableErrors[0])
+      const failedExcerpt = mutableErrors.slice(0, 3).join(' | ')
+      throw new Error(
+        failedExcerpt
+          ? `Synthesizing has ${mutableErrors.length} failed segments. ${failedExcerpt}`
+          : `Synthesizing has ${mutableErrors.length} failed segments`,
+      )
     }
 
     const latestSegments = this.deps.taskSegmentDao.listByTaskAndStage(context.taskId, 'synthesizing')
-    const ordered = latestSegments.sort((a, b) => a.segmentIndex - b.segmentIndex)
+    const ordered = this.assertStageSegmentIntegrity('synthesizing', latestSegments, baseSegments)
     const failed = ordered.filter((segment) => segment.status !== 'success')
     if (failed.length > 0) {
       throw new Error(`Synthesizing has ${failed.length} incomplete segments`)

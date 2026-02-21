@@ -26,7 +26,7 @@ function estimateDurationSec(text: string): number {
   return Math.max(1, Math.ceil(text.length / charsPerSecond))
 }
 
-export function segmentText(text: string, config: SegmenterOptions): TextSegment[] {
+function segmentWithConfig(text: string, config: SegmenterOptions): TextSegment[] {
   const cleaned = text.replace(/\r\n/g, '\n').trim()
   if (!cleaned) return []
 
@@ -46,6 +46,19 @@ export function segmentText(text: string, config: SegmenterOptions): TextSegment
     text: chunk,
     estimatedDurationSec: estimateDurationSec(chunk),
   }))
+}
+
+export function segment(
+  text: string,
+  strategy: SegmentationStrategy,
+  options?: SegmentationOptions,
+): TextSegment[] {
+  return segmentWithConfig(text, { strategy, options })
+}
+
+// Backward-compatible wrapper for callers using the old config-object signature.
+export function segmentText(text: string, config: SegmenterOptions): TextSegment[] {
+  return segmentWithConfig(text, config)
 }
 
 export function assertSegmentIntegrity(originalText: string, segments: TextSegment[]): void {

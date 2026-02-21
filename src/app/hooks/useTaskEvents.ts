@@ -20,6 +20,16 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
   const { ipcClient, activeTaskId, historyQuery, setTaskState, pushLog, refreshHistory, t } = options
 
   useEffect(() => {
+    const formatRecoveryActionsLog = (
+      actions: Array<{ label: string; reason: string }>,
+    ): string => {
+      if (actions.length === 0) return '未生成恢复建议'
+      return actions
+        .slice(0, 3)
+        .map((action, index) => `${index + 1}. ${action.label}：${action.reason}`)
+        .join(' | ')
+    }
+
     const refreshSegmentsAndRecovery = async (taskId: string): Promise<void> => {
       try {
         const [segments, recoveryPlan] = await Promise.all([
@@ -95,8 +105,16 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       if (payload.taskId !== activeTaskId && activeTaskId) return
       setTaskState((prev) => ({
         ...prev,
+        activeTaskId: prev.activeTaskId || payload.taskId,
         recoveryActions: payload.actions,
       }))
+      pushLog({
+        time: new Date().toISOString(),
+        stage: 'recovery',
+        level: 'warn',
+        text: `恢复建议：${formatRecoveryActionsLog(payload.actions)}`,
+      })
+      void refreshSegmentsAndRecovery(payload.taskId)
     })
 
     const offRuntime = ipcClient.task.onRuntime((payload) => {

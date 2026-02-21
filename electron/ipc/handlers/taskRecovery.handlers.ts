@@ -8,10 +8,17 @@ import {
 } from '../channels'
 
 function assertTaskId(payload: TaskIdPayload): string {
-  if (!payload?.taskId || typeof payload.taskId !== 'string') {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('payload is required')
+  }
+  if (typeof payload.taskId !== 'string') {
     throw new Error('taskId is required')
   }
-  return payload.taskId
+  const taskId = payload.taskId.trim()
+  if (!taskId) {
+    throw new Error('taskId cannot be empty')
+  }
+  return taskId
 }
 
 function assertRetrySegmentPayload(payload: RetrySegmentsPayload): { taskId: string; segmentIds: string[] } {
@@ -19,11 +26,24 @@ function assertRetrySegmentPayload(payload: RetrySegmentsPayload): { taskId: str
   if (!Array.isArray(payload.segmentIds)) {
     throw new Error('segmentIds must be an array')
   }
+  if (payload.segmentIds.length === 0) {
+    throw new Error('segmentIds cannot be empty')
+  }
 
-  const segmentIds = payload.segmentIds
-    .filter((segmentId): segmentId is string => typeof segmentId === 'string')
-    .map((segmentId) => segmentId.trim())
-    .filter(Boolean)
+  const dedup = new Set<string>()
+  const segmentIds: string[] = []
+  for (const segmentId of payload.segmentIds) {
+    if (typeof segmentId !== 'string') {
+      throw new Error('segmentIds must contain only string values')
+    }
+    const normalized = segmentId.trim()
+    if (!normalized) {
+      throw new Error('segmentIds cannot contain empty values')
+    }
+    if (dedup.has(normalized)) continue
+    dedup.add(normalized)
+    segmentIds.push(normalized)
+  }
 
   if (segmentIds.length === 0) {
     throw new Error('segmentIds cannot be empty')
