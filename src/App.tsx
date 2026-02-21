@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TaskStatus } from '../electron/core/db/types'
 import {
@@ -28,7 +28,9 @@ import {
   createInitialSettingsState,
   createInitialTaskState,
 } from './app/state'
-import { DEFAULT_SETTINGS, STAGES, formatDateTime, isRunningStatus } from './app/utils'
+import { DEFAULT_SETTINGS, STAGES, formatDateTime } from './app/utils'
+import { useTaskAudio } from './app/hooks/useTaskAudio'
+import { useTaskEvents } from './app/hooks/useTaskEvents'
 import { SidebarMenu } from './components/SidebarMenu'
 import { HistoryPage } from './pages/HistoryPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -70,7 +72,7 @@ function App() {
     }))
   }
 
-  function pushLog(item: Omit<LogItem, 'id'>): void {
+  const pushLog = useCallback((item: Omit<LogItem, 'id'>): void => {
     setTaskState((prev) => ({
       ...prev,
       logs: [
@@ -81,17 +83,17 @@ function App() {
         },
       ],
     }))
-  }
+  }, [])
 
-  async function loadHistory(query: HistoryQueryState = historyState.query): Promise<void> {
+  const loadHistory = useCallback(async (query: HistoryQueryState): Promise<void> => {
     await loadHistoryAction({
       ipcClient,
       setHistoryState,
       query,
     })
-  }
+  }, [])
 
-  async function loadTaskDetail(taskId: string): Promise<void> {
+  const loadTaskDetail = useCallback(async (taskId: string): Promise<void> => {
     await loadTaskDetailAction({
       ipcClient,
       setTaskState,
@@ -99,11 +101,12 @@ function App() {
       pushLog,
       taskId,
     })
-  }
+  }, [pushLog])
 
   useEffect(() => {
     void loadHistory(historyState.query)
   }, [
+    loadHistory,
     historyState.query.page,
     historyState.query.pageSize,
     historyState.query.status,
@@ -121,154 +124,26 @@ function App() {
       isMounted: () => mounted,
     })
 
-    const offStatus = ipcClient.task.onStatus((payload) => {
-      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
-      setTaskState((prev) => ({
-        ...prev,
-        activeTaskId: payload.taskId,
-        activeStatus: payload.status,
-        running: isRunningStatus(payload.status),
-      }))
-
-      pushLog({
-        time: payload.timestamp,
-        stage: 'status',
-        level: 'info',
-        text: `Status -> ${payload.status}`,
-      })
-    })
-
-    const offProgress = ipcClient.task.onProgress((payload) => {
-      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
-      setTaskState((prev) => ({
-        ...prev,
-        activeTaskId: payload.taskId,
-        stageProgress: {
-          ...prev.stageProgress,
-          [payload.stage]: payload.percent,
-        },
-      }))
-    })
-
-    const offRuntime = ipcClient.task.onRuntime((payload) => {
-      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
-      setTaskState((prev) => ({
-        ...prev,
-        runtimeItems: {
-          ...prev.runtimeItems,
-          [payload.component]: {
-            component: payload.component,
-            status: payload.status,
-            message: payload.message,
-            timestamp: payload.timestamp,
-          },
-        },
-      }))
-    })
-
-    const offLog = ipcClient.task.onLog((payload) => {
-      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
-      pushLog({
-        time: payload.timestamp,
-        stage: payload.stage,
-        level: payload.level,
-        text: payload.text,
-      })
-    })
-
-    const offCompleted = ipcClient.task.onCompleted((payload) => {
-      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
-      setTaskState((prev) => ({
-        ...prev,
-        running: false,
-        error: '',
-        output: payload.output,
-      }))
-
-      pushLog({
-        time: new Date().toISOString(),
-        stage: 'completed',
-        level: 'info',
-        text: 'Task completed',
-      })
-      void loadHistory(historyState.query)
-    })
-
-    const offFailed = ipcClient.task.onFailed((payload) => {
-      if (payload.taskId !== taskState.activeTaskId && taskState.activeTaskId) return
-      setTaskState((prev) => ({
-        ...prev,
-        running: false,
-        error: payload.errorMessage,
-      }))
-
-      pushLog({
-        time: new Date().toISOString(),
-        stage: payload.stage,
-        level: 'error',
-        text: `${payload.errorCode}: ${payload.errorMessage}`,
-      })
-      void loadHistory(historyState.query)
-    })
-
     return () => {
       mounted = false
-      offStatus()
-      offProgress()
-      offRuntime()
-      offLog()
-      offCompleted()
-      offFailed()
     }
-  }, [taskState.activeTaskId, historyState.query])
+  }, [])
 
-  useEffect(() => {
-    let objectUrl: string | null = null
-    let disposed = false
+  useTaskEvents({
+    ipcClient,
+    activeTaskId: taskState.activeTaskId,
+    historyQuery: historyState.query,
+    setTaskState,
+    pushLog,
+    refreshHistory: loadHistory,
+  })
 
-    const loadAudio = async () => {
-      if (!taskState.output.ttsPath) {
-        setTaskState((prev) => ({
-          ...prev,
-          ttsAudioUrl: '',
-        }))
-        return
-      }
-
-      try {
-        const { data, mimeType } = await ipcClient.file.readAudio(taskState.output.ttsPath)
-        const blob = new Blob([data], { type: mimeType })
-        const url = URL.createObjectURL(blob)
-
-        if (disposed) {
-          URL.revokeObjectURL(url)
-          return
-        }
-
-        objectUrl = url
-        setTaskState((prev) => ({
-          ...prev,
-          ttsAudioUrl: url,
-        }))
-      } catch (error) {
-        pushLog({
-          time: new Date().toISOString(),
-          stage: 'tts',
-          level: 'error',
-          text: `Failed to load audio: ${error instanceof Error ? error.message : String(error)}`,
-        })
-      }
-    }
-
-    void loadAudio()
-
-    return () => {
-      disposed = true
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl)
-      }
-    }
-  }, [taskState.output.ttsPath])
+  useTaskAudio({
+    ipcClient,
+    ttsPath: taskState.output.ttsPath,
+    setTaskState,
+    pushLog,
+  })
 
   async function saveSettings(): Promise<void> {
     await saveSettingsAction({
