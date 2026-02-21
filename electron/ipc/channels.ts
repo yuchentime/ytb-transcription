@@ -22,6 +22,7 @@ export const IPC_CHANNELS = {
   systemOpenPath: 'system:openPath',
   systemExportDiagnostics: 'system:exportDiagnostics',
   fileReadAudio: 'file:readAudio',
+  fileReadText: 'file:readText',
   taskStatus: 'task:status',
   taskProgress: 'task:progress',
   taskLog: 'task:log',
@@ -120,6 +121,11 @@ export interface AudioFileResult {
   fileName: string
 }
 
+export interface TextFileResult {
+  content: string
+  fileName: string
+}
+
 export interface RendererAPI {
   task: {
     create(input: CreateTaskInput): Promise<TaskRecord>
@@ -148,5 +154,6 @@ export interface RendererAPI {
   }
   file: {
     readAudio(filePath: string): Promise<AudioFileResult>
+    readText(filePath: string): Promise<TextFileResult>
   }
 }

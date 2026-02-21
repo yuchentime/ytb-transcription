@@ -6,6 +6,9 @@ import path from 'node:path'
 // 允许读取的音频文件扩展名
 const ALLOWED_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.webm']
 
+// 允许读取的文本文件扩展名
+const ALLOWED_TEXT_EXTENSIONS = ['.txt', '.md', '.json', '.srt', '.vtt']
+
 export function registerFileHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.fileReadAudio, async (_event, filePath: string) => {
     // 验证文件路径
@@ -41,6 +44,33 @@ export function registerFileHandlers(): void {
     return {
       data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
       mimeType: mimeTypeMap[ext] || 'audio/mpeg',
+      fileName: path.basename(filePath),
+    }
+  })
+
+  // 读取文本文件
+  ipcMain.handle(IPC_CHANNELS.fileReadText, async (_event, filePath: string) => {
+    // 验证文件路径
+    if (!filePath || typeof filePath !== 'string') {
+      throw new Error('Invalid file path')
+    }
+
+    // 检查文件扩展名
+    const ext = path.extname(filePath).toLowerCase()
+    if (!ALLOWED_TEXT_EXTENSIONS.includes(ext)) {
+      throw new Error(`Unsupported text format: ${ext}`)
+    }
+
+    // 检查文件是否存在
+    if (!fs.existsSync(filePath)) {
+      throw new Error('File not found')
+    }
+
+    // 读取文件内容
+    const content = fs.readFileSync(filePath, 'utf-8')
+
+    return {
+      content,
       fileName: path.basename(filePath),
     }
   })

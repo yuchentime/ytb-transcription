@@ -5,6 +5,7 @@ import type { TranslateFn } from '../i18n'
 import { translateTaskStatus } from '../i18n'
 import type { HistoryQueryState, LogItem, TaskState } from '../state'
 import { isRunningStatus } from '../utils'
+import { loadTaskContentAction } from '../actions'
 
 interface UseTaskEventsOptions {
   ipcClient: RendererAPI
@@ -90,6 +91,16 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         level: 'info',
         text: t('log.taskCompleted'),
       })
+
+      // Load transcript and translation content after task completes
+      void loadTaskContentAction({
+        ipcClient,
+        setTaskState,
+        transcriptPath: payload.output.transcriptPath,
+        translationPath: payload.output.translationPath,
+        pushLog,
+      })
+
       void refreshHistory(historyQuery)
     })
 

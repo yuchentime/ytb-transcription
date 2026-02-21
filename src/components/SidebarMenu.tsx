@@ -11,7 +11,6 @@ interface SidebarMenuProps {
 export function SidebarMenu(props: SidebarMenuProps) {
   return (
     <aside className="sidebar">
-      <h2 className="sidebar-title">{props.t('menu.title')}</h2>
       <nav className="sidebar-nav" aria-label={props.t('menu.ariaMainNavigation')}>
         {APP_ROUTES.map((route) => (
           <button

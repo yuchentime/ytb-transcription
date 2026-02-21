@@ -101,6 +101,25 @@ function ChevronUpIcon({ className }: { className?: string }) {
   )
 }
 
+// Check Icon Component
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  )
+}
+
 // Collapsible Section Component
 interface CollapsibleSectionProps {
   title: string
@@ -224,15 +243,18 @@ export function TaskPage(props: TaskPageProps) {
             </span>
           </div>
 
-          <div className="progress-wrap">
-            <span className="progress-current">
-              {translateTaskStatus(props.model.activeStatus || 'idle', props.t)}
-            </span>
-            <div className="progress-track">
-              <div className="progress-fill" style={{ width: `${props.model.overallProgress}%` }} />
+          {/* Hide progress when audio is ready */}
+          {!props.model.ttsAudioUrl && (
+            <div className="progress-wrap">
+              <span className="progress-current">
+                {translateTaskStatus(props.model.activeStatus || 'idle', props.t)}
+              </span>
+              <div className="progress-track">
+                <div className="progress-fill" style={{ width: `${props.model.overallProgress}%` }} />
+              </div>
+              <span className="progress-percent">{props.model.overallProgress}%</span>
             </div>
-            <span className="progress-percent">{props.model.overallProgress}%</span>
-          </div>
+          )}
         </div>
 
         {runtimeEntries.length > 0 && (
@@ -246,32 +268,31 @@ export function TaskPage(props: TaskPageProps) {
           </div>
         )}
 
-        <div className="output">
-          <div className="output-row">
-            <span className="output-label">{props.t('task.outputTranscript')}</span>
-            <span className="output-value">{props.model.output.transcriptPath || props.t('common.hyphen')}</span>
-          </div>
-          <div className="output-row">
-            <span className="output-label">{props.t('task.outputTranslation')}</span>
-            <span className="output-value">{props.model.output.translationPath || props.t('common.hyphen')}</span>
-          </div>
-          <div className="output-row">
-            <span className="output-label">{props.t('task.outputTts')}</span>
-            {props.model.ttsAudioUrl ? (
-              <div className="tts-player">
+        {/* Final Output Section - only show when audio is ready */}
+        {props.model.ttsAudioUrl && (
+          <div className="output-final">
+            <div className="output-final-header">
+              <span className="output-final-badge">{props.t('task.finalOutput')}</span>
+              <span className="output-final-status">
+                <CheckIcon />
+                {props.t('task.completed')}
+              </span>
+            </div>
+            <div className="output-final-content">
+              <div className="tts-player-final">
                 <audio controls src={props.model.ttsAudioUrl} />
-                <button className="btn small" onClick={() => void props.actions.onDownloadAudio()}>
-                  {props.t('task.downloadAudio')}
-                </button>
-                <button className="btn small" onClick={() => void props.actions.onOpenOutputDirectory()}>
-                  {props.t('task.openDirectory')}
-                </button>
+                <div className="tts-actions">
+                  <button className="btn primary" onClick={() => void props.actions.onDownloadAudio()}>
+                    {props.t('task.downloadAudio')}
+                  </button>
+                  <button className="btn" onClick={() => void props.actions.onOpenOutputDirectory()}>
+                    {props.t('task.openDirectory')}
+                  </button>
+                </div>
               </div>
-            ) : (
-              <span className="output-value">{props.t('common.hyphen')}</span>
-            )}
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       {/* Collapsible Results Section */}

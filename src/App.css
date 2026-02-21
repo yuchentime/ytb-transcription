@@ -357,7 +357,7 @@ input:read-only {
   line-height: 1.6;
 }
 
-/* Output Section */
+/* Output Section - Legacy (kept for compatibility) */
 .output {
   margin-top: 16px;
   padding-top: 16px;
@@ -401,6 +401,74 @@ input:read-only {
   height: 28px;
   flex: 1;
   min-width: 200px;
+}
+
+/* Final Output Section - Enhanced Visual Attention */
+.output-final {
+  margin-top: 24px;
+  padding: 20px;
+  background: #fafafa;
+  border: 2px solid #000;
+  border-radius: 8px;
+}
+
+.output-final-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.output-final-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: #000;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 4px;
+}
+
+.output-final-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #000;
+}
+
+.output-final-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tts-player-final {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tts-player-final audio {
+  width: 100%;
+  height: 40px;
+}
+
+.tts-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-start;
+}
+
+.tts-actions .btn {
+  padding: 10px 20px;
+  font-size: 14px;
 }
 
 /* Collapsible Results Section */

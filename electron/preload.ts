@@ -35,6 +35,7 @@ const api: RendererAPI = {
   },
   file: {
     readAudio: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.fileReadAudio, filePath),
+    readText: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.fileReadText, filePath),
   },
 }
 

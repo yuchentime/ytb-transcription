@@ -39,6 +39,8 @@ const zhCNMessages = {
   'task.translationResult': '翻译结果',
   'task.noTranscriptContent': '暂无转录内容',
   'task.noTranslationContent': '暂无翻译内容',
+  'task.finalOutput': '成果',
+  'task.completed': '已完成',
 
   'history.title': '历史记录',
   'history.keyword': '关键词',
@@ -182,6 +184,8 @@ const zhTWMessages: Messages = {
   'task.translationResult': '翻譯結果',
   'task.noTranscriptContent': '暫無轉錄內容',
   'task.noTranslationContent': '暫無翻譯內容',
+  'task.finalOutput': '成果',
+  'task.completed': '已完成',
 
   'history.title': '歷史記錄',
   'history.keyword': '關鍵字',
