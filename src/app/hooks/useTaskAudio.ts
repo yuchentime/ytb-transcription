@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { RendererAPI } from '../../../electron/ipc/channels'
+import type { TranslateFn } from '../i18n'
 import type { LogItem, TaskState } from '../state'
 
 interface UseTaskAudioOptions {
@@ -8,10 +9,11 @@ interface UseTaskAudioOptions {
   ttsPath?: string
   setTaskState: Dispatch<SetStateAction<TaskState>>
   pushLog(item: Omit<LogItem, 'id'>): void
+  t: TranslateFn
 }
 
 export function useTaskAudio(options: UseTaskAudioOptions): void {
-  const { ipcClient, ttsPath, setTaskState, pushLog } = options
+  const { ipcClient, ttsPath, setTaskState, pushLog, t } = options
 
   useEffect(() => {
     let objectUrl: string | null = null
@@ -46,7 +48,9 @@ export function useTaskAudio(options: UseTaskAudioOptions): void {
           time: new Date().toISOString(),
           stage: 'tts',
           level: 'error',
-          text: `Failed to load audio: ${error instanceof Error ? error.message : String(error)}`,
+          text: t('error.loadAudio', {
+            message: error instanceof Error ? error.message : String(error),
+          }),
         })
       }
     }
@@ -59,5 +63,5 @@ export function useTaskAudio(options: UseTaskAudioOptions): void {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [ipcClient, ttsPath, pushLog, setTaskState])
+  }, [ipcClient, ttsPath, pushLog, setTaskState, t])
 }

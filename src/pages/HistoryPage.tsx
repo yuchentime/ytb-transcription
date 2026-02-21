@@ -1,4 +1,6 @@
 import type { TaskRecord, TaskStatus } from '../../electron/core/db/types'
+import type { TranslateFn } from '../app/i18n'
+import { translateLanguageLabel, translateStatusFilter, translateTaskStatus } from '../app/i18n'
 
 interface HistoryPageModel {
   historyKeywordDraft: string
@@ -35,62 +37,65 @@ interface HistoryPageActions {
 interface HistoryPageProps {
   model: HistoryPageModel
   actions: HistoryPageActions
+  t: TranslateFn
 }
 
 export function HistoryPage(props: HistoryPageProps) {
   return (
     <section className="panel main-panel">
-      <h2>History</h2>
+      <h2>{props.t('history.title')}</h2>
 
       <div className="history-filters">
         <label>
-          Keyword
+          {props.t('history.keyword')}
           <input
             type="text"
             value={props.model.historyKeywordDraft}
             onChange={(event) => props.actions.onHistoryKeywordDraftChange(event.target.value)}
-            placeholder="Search URL/title"
+            placeholder={props.t('history.keywordPlaceholder')}
           />
         </label>
 
         <label>
-          Status
+          {props.t('history.status')}
           <select
             value={props.model.historyStatusDraft}
-            onChange={(event) => props.actions.onHistoryStatusDraftChange(event.target.value as 'all' | TaskStatus)}
+            onChange={(event) =>
+              props.actions.onHistoryStatusDraftChange(event.target.value as 'all' | TaskStatus)
+            }
           >
-            <option value="all">all</option>
-            <option value="completed">completed</option>
-            <option value="failed">failed</option>
-            <option value="canceled">canceled</option>
-            <option value="queued">queued</option>
-            <option value="downloading">downloading</option>
-            <option value="extracting">extracting</option>
-            <option value="transcribing">transcribing</option>
-            <option value="translating">translating</option>
-            <option value="synthesizing">synthesizing</option>
-            <option value="merging">merging</option>
-            <option value="idle">idle</option>
+            <option value="all">{translateStatusFilter('all', props.t)}</option>
+            <option value="completed">{translateStatusFilter('completed', props.t)}</option>
+            <option value="failed">{translateStatusFilter('failed', props.t)}</option>
+            <option value="canceled">{translateStatusFilter('canceled', props.t)}</option>
+            <option value="queued">{translateStatusFilter('queued', props.t)}</option>
+            <option value="downloading">{translateStatusFilter('downloading', props.t)}</option>
+            <option value="extracting">{translateStatusFilter('extracting', props.t)}</option>
+            <option value="transcribing">{translateStatusFilter('transcribing', props.t)}</option>
+            <option value="translating">{translateStatusFilter('translating', props.t)}</option>
+            <option value="synthesizing">{translateStatusFilter('synthesizing', props.t)}</option>
+            <option value="merging">{translateStatusFilter('merging', props.t)}</option>
+            <option value="idle">{translateStatusFilter('idle', props.t)}</option>
           </select>
         </label>
 
         <label>
-          Target Language
+          {props.t('history.targetLanguage')}
           <select
             value={props.model.historyLanguageDraft}
             onChange={(event) =>
               props.actions.onHistoryLanguageDraftChange(event.target.value as 'all' | 'zh' | 'en' | 'ja')
             }
           >
-            <option value="all">all</option>
-            <option value="zh">zh</option>
-            <option value="en">en</option>
-            <option value="ja">ja</option>
+            <option value="all">{translateLanguageLabel('all', props.t)}</option>
+            <option value="zh">{translateLanguageLabel('zh', props.t)}</option>
+            <option value="en">{translateLanguageLabel('en', props.t)}</option>
+            <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
           </select>
         </label>
 
         <label>
-          Page Size
+          {props.t('history.pageSize')}
           <select
             value={props.model.historyPageSize}
             onChange={(event) => props.actions.onHistoryPageSizeChange(Number(event.target.value))}
@@ -103,10 +108,10 @@ export function HistoryPage(props: HistoryPageProps) {
 
         <div className="history-filter-actions">
           <button className="btn primary" onClick={props.actions.onApplyFilters}>
-            Apply Filters
+            {props.t('history.applyFilters')}
           </button>
           <button className="btn" onClick={() => void props.actions.onRefresh()}>
-            Refresh
+            {props.t('history.refresh')}
           </button>
         </div>
       </div>
@@ -117,18 +122,18 @@ export function HistoryPage(props: HistoryPageProps) {
         <table className="history-table">
           <thead>
             <tr>
-              <th>Created At</th>
-              <th>Status</th>
-              <th>Target</th>
-              <th>URL</th>
-              <th>Actions</th>
+              <th>{props.t('history.createdAt')}</th>
+              <th>{props.t('history.status')}</th>
+              <th>{props.t('history.target')}</th>
+              <th>{props.t('history.url')}</th>
+              <th>{props.t('history.actions')}</th>
             </tr>
           </thead>
           <tbody>
             {!props.model.historyLoading && props.model.historyItems.length === 0 && (
               <tr>
                 <td colSpan={5} className="hint-cell">
-                  No history records.
+                  {props.t('history.noRecords')}
                 </td>
               </tr>
             )}
@@ -136,36 +141,38 @@ export function HistoryPage(props: HistoryPageProps) {
             {props.model.historyItems.map((item) => (
               <tr key={item.id}>
                 <td>{props.actions.formatDateTime(item.createdAt)}</td>
-                <td>{item.status}</td>
-                <td>{item.targetLanguage}</td>
+                <td>{translateTaskStatus(item.status, props.t)}</td>
+                <td>{translateLanguageLabel(item.targetLanguage, props.t)}</td>
                 <td className="url-cell" title={item.youtubeUrl}>
                   {item.youtubeTitle || item.youtubeUrl}
                 </td>
                 <td>
                   <div className="table-actions">
                     <button className="btn small" onClick={() => void props.actions.onLoadTaskDetail(item.id)}>
-                      查看
+                      {props.t('history.view')}
                     </button>
                     <button
                       className="btn small"
                       disabled={!!props.model.historyBusyTaskId}
                       onClick={() => void props.actions.onRetryTask(item.id)}
                     >
-                      {props.model.historyBusyTaskId === item.id ? '处理中...' : '重试'}
+                      {props.model.historyBusyTaskId === item.id
+                        ? props.t('history.processing')
+                        : props.t('history.retry')}
                     </button>
                     <button
                       className="btn small"
                       disabled={!!props.model.historyBusyTaskId}
                       onClick={() => void props.actions.onDeleteTask(item.id)}
                     >
-                      删除
+                      {props.t('history.delete')}
                     </button>
                     <button
                       className="btn small"
                       disabled={!!props.model.historyBusyTaskId}
                       onClick={() => void props.actions.onExportDiagnostics(item.id)}
                     >
-                      导出诊断
+                      {props.t('history.exportDiagnostics')}
                     </button>
                   </div>
                 </td>
@@ -176,15 +183,21 @@ export function HistoryPage(props: HistoryPageProps) {
       </div>
 
       <div className="pagination">
-        <button className="btn" disabled={!props.model.canPrevPage} onClick={props.actions.onPrevPage}>
-          Prev
-        </button>
         <span>
-          Page {props.model.historyPage} / {props.model.historyTotalPages} (Total: {props.model.historyTotal})
+          {props.t('history.pageInfo', {
+            page: props.model.historyPage,
+            totalPages: props.model.historyTotalPages,
+            total: props.model.historyTotal,
+          })}
         </span>
-        <button className="btn" disabled={!props.model.canNextPage} onClick={props.actions.onNextPage}>
-          Next
-        </button>
+        <div className="pagination-controls">
+          <button className="btn" disabled={!props.model.canPrevPage} onClick={props.actions.onPrevPage}>
+            {props.t('history.prev')}
+          </button>
+          <button className="btn" disabled={!props.model.canNextPage} onClick={props.actions.onNextPage}>
+            {props.t('history.next')}
+          </button>
+        </div>
       </div>
     </section>
   )

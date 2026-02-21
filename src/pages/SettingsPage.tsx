@@ -1,5 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings } from '../../electron/core/db/types'
+import type { TranslateFn } from '../app/i18n'
+import { translateLanguageLabel } from '../app/i18n'
 
 interface SettingsPageModel {
   settings: AppSettings
@@ -17,6 +19,7 @@ interface SettingsPageActions {
 interface SettingsPageProps {
   model: SettingsPageModel
   actions: SettingsPageActions
+  t: TranslateFn
 }
 
 export function SettingsPage(props: SettingsPageProps) {
@@ -25,17 +28,17 @@ export function SettingsPage(props: SettingsPageProps) {
 
   return (
     <section className="panel main-panel">
-      <h2>Settings</h2>
-      {props.model.settingsLoading && <p className="hint">Loading settings...</p>}
+      <h2>{props.t('settings.title')}</h2>
+      {props.model.settingsLoading && <p className="hint">{props.t('settings.loading')}</p>}
 
-      <div className="grid">
+      <div className="grid two-col">
         <label>
-          Provider (Read-only)
+          {props.t('settings.providerReadonly')}
           <input type="text" value={settings.provider} readOnly />
         </label>
 
         <label>
-          YouTube Download Auth
+          {props.t('settings.youtubeDownloadAuth')}
           <select
             value={settings.ytDlpAuthMode}
             onChange={(event) =>
@@ -45,15 +48,15 @@ export function SettingsPage(props: SettingsPageProps) {
               }))
             }
           >
-            <option value="none">None</option>
-            <option value="browser_cookies">Browser Cookies</option>
-            <option value="cookies_file">Cookies File</option>
+            <option value="none">{props.t('settings.auth.none')}</option>
+            <option value="browser_cookies">{props.t('settings.auth.browserCookies')}</option>
+            <option value="cookies_file">{props.t('settings.auth.cookiesFile')}</option>
           </select>
         </label>
 
         {settings.ytDlpAuthMode === 'browser_cookies' && (
           <label>
-            Cookies Browser
+            {props.t('settings.cookiesBrowser')}
             <select
               value={settings.ytDlpCookiesBrowser}
               onChange={(event) =>
@@ -75,7 +78,7 @@ export function SettingsPage(props: SettingsPageProps) {
 
         {settings.ytDlpAuthMode === 'cookies_file' && (
           <label className="full">
-            Cookies File Path
+            {props.t('settings.cookiesFilePath')}
             <input
               type="text"
               value={settings.ytDlpCookiesFilePath}
@@ -91,7 +94,7 @@ export function SettingsPage(props: SettingsPageProps) {
         )}
 
         <label>
-          Whisper Model
+          {props.t('settings.whisperModel')}
           <select
             value={settings.defaultWhisperModel}
             onChange={(event) =>
@@ -110,7 +113,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </label>
 
         <label>
-          MiniMax API Key
+          {props.t('settings.minimaxApiKey')}
           <input
             type="password"
             value={settings.minimaxApiKey}
@@ -125,7 +128,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </label>
 
         <label>
-          MiniMax Base URL
+          {props.t('settings.minimaxBaseUrl')}
           <input
             type="text"
             value={settings.minimaxApiBaseUrl}
@@ -140,7 +143,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </label>
 
         <label>
-          Translate Model ID
+          {props.t('settings.translateModelId')}
           <input
             type="text"
             value={settings.translateModelId}
@@ -154,24 +157,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </label>
 
         <label>
-          Translate Temperature
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            max="2"
-            value={settings.translateTemperature}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                translateTemperature: Number(event.target.value) || 0,
-              }))
-            }
-          />
-        </label>
-
-        <label>
-          TTS Model ID
+          {props.t('settings.ttsModelId')}
           <input
             type="text"
             value={settings.ttsModelId}
@@ -185,7 +171,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </label>
 
         <label>
-          TTS Voice ID
+          {props.t('settings.ttsVoiceId')}
           <input
             type="text"
             value={settings.ttsVoiceId}
@@ -199,58 +185,7 @@ export function SettingsPage(props: SettingsPageProps) {
         </label>
 
         <label>
-          TTS Speed
-          <input
-            type="number"
-            step="0.1"
-            min="0.5"
-            max="2"
-            value={settings.ttsSpeed}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                ttsSpeed: Number(event.target.value) || 1,
-              }))
-            }
-          />
-        </label>
-
-        <label>
-          TTS Pitch
-          <input
-            type="number"
-            step="0.1"
-            min="-10"
-            max="10"
-            value={settings.ttsPitch}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                ttsPitch: Number(event.target.value) || 0,
-              }))
-            }
-          />
-        </label>
-
-        <label>
-          TTS Volume
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            max="10"
-            value={settings.ttsVolume}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                ttsVolume: Number(event.target.value) || 1,
-              }))
-            }
-          />
-        </label>
-
-        <label>
-          Default Target Language
+          {props.t('settings.defaultTargetLanguage')}
           <select
             value={settings.defaultTargetLanguage}
             onChange={(event) =>
@@ -260,108 +195,179 @@ export function SettingsPage(props: SettingsPageProps) {
               }))
             }
           >
-            <option value="zh">zh</option>
-            <option value="en">en</option>
-            <option value="ja">ja</option>
+            <option value="zh">{translateLanguageLabel('zh', props.t)}</option>
+            <option value="en">{translateLanguageLabel('en', props.t)}</option>
+            <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
           </select>
-        </label>
-
-        <label>
-          Stage Timeout (ms)
-          <input
-            type="number"
-            min="1000"
-            step="1000"
-            value={settings.stageTimeoutMs}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                stageTimeoutMs: Number(event.target.value) || props.model.defaultStageTimeoutMs,
-              }))
-            }
-          />
-        </label>
-
-        <label>
-          Retry: Download
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={settings.retryPolicy.download}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                retryPolicy: {
-                  ...prev.retryPolicy,
-                  download: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                },
-              }))
-            }
-          />
-        </label>
-
-        <label>
-          Retry: Translate
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={settings.retryPolicy.translate}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                retryPolicy: {
-                  ...prev.retryPolicy,
-                  translate: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                },
-              }))
-            }
-          />
-        </label>
-
-        <label>
-          Retry: TTS
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={settings.retryPolicy.tts}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                retryPolicy: {
-                  ...prev.retryPolicy,
-                  tts: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                },
-              }))
-            }
-          />
-        </label>
-
-        <label>
-          Retry: Transcribe
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={settings.retryPolicy.transcribe}
-            onChange={(event) =>
-              setSettings((prev) => ({
-                ...prev,
-                retryPolicy: {
-                  ...prev.retryPolicy,
-                  transcribe: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                },
-              }))
-            }
-          />
         </label>
       </div>
 
-      <p className="hint">
-        Security note: translation and TTS will send text content to MiniMax cloud APIs.
-      </p>
+      <details className="settings-advanced">
+        <summary>{props.t('settings.advanced')}</summary>
+        <div className="grid two-col settings-advanced-grid">
+          <label>
+            {props.t('settings.translateTemperature')}
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              max="2"
+              value={settings.translateTemperature}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  translateTemperature: Number(event.target.value) || 0,
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            {props.t('settings.ttsSpeed')}
+            <input
+              type="number"
+              step="0.1"
+              min="0.5"
+              max="2"
+              value={settings.ttsSpeed}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  ttsSpeed: Number(event.target.value) || 1,
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            {props.t('settings.ttsPitch')}
+            <input
+              type="number"
+              step="0.1"
+              min="-10"
+              max="10"
+              value={settings.ttsPitch}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  ttsPitch: Number(event.target.value) || 0,
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            {props.t('settings.ttsVolume')}
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              max="10"
+              value={settings.ttsVolume}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  ttsVolume: Number(event.target.value) || 1,
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            {props.t('settings.stageTimeoutMs')}
+            <input
+              type="number"
+              min="1000"
+              step="1000"
+              value={settings.stageTimeoutMs}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  stageTimeoutMs: Number(event.target.value) || props.model.defaultStageTimeoutMs,
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            {props.t('settings.retryDownload')}
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={settings.retryPolicy.download}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  retryPolicy: {
+                    ...prev.retryPolicy,
+                    download: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                  },
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            {props.t('settings.retryTranslate')}
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={settings.retryPolicy.translate}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  retryPolicy: {
+                    ...prev.retryPolicy,
+                    translate: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                  },
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            {props.t('settings.retryTts')}
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={settings.retryPolicy.tts}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  retryPolicy: {
+                    ...prev.retryPolicy,
+                    tts: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                  },
+                }))
+              }
+            />
+          </label>
+
+          <label>
+            {props.t('settings.retryTranscribe')}
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={settings.retryPolicy.transcribe}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  retryPolicy: {
+                    ...prev.retryPolicy,
+                    transcribe: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                  },
+                }))
+              }
+            />
+          </label>
+        </div>
+      </details>
+
+      <p className="hint">{props.t('settings.securityNote')}</p>
 
       <div className="actions">
         <button
@@ -369,7 +375,7 @@ export function SettingsPage(props: SettingsPageProps) {
           onClick={() => void props.actions.onSave()}
           disabled={props.model.settingsSaving}
         >
-          {props.model.settingsSaving ? 'Saving...' : 'Save Settings'}
+          {props.model.settingsSaving ? props.t('settings.saving') : props.t('settings.save')}
         </button>
         {props.model.settingsError && <span className="error">{props.model.settingsError}</span>}
       </div>

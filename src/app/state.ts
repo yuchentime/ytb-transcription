@@ -53,6 +53,8 @@ export interface TaskState {
   running: boolean
   error: string
   ttsAudioUrl: string
+  transcriptContent?: string
+  translationContent?: string
 }
 
 export interface HistoryState {
@@ -102,6 +104,8 @@ export function createInitialTaskState(): TaskState {
     running: false,
     error: '',
     ttsAudioUrl: '',
+    transcriptContent: undefined,
+    translationContent: undefined,
   }
 }
 

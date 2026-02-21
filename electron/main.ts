@@ -32,6 +32,10 @@ function createWindow() {
   const publicRoot = process.env.VITE_PUBLIC ?? path.join(APP_ROOT, 'public')
 
   win = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 900,
+    minHeight: 600,
     icon: path.join(publicRoot, 'electron-vite.svg'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),

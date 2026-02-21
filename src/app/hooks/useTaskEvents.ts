@@ -1,6 +1,8 @@
 import { useEffect } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { RendererAPI } from '../../../electron/ipc/channels'
+import type { TranslateFn } from '../i18n'
+import { translateTaskStatus } from '../i18n'
 import type { HistoryQueryState, LogItem, TaskState } from '../state'
 import { isRunningStatus } from '../utils'
 
@@ -11,10 +13,11 @@ interface UseTaskEventsOptions {
   setTaskState: Dispatch<SetStateAction<TaskState>>
   pushLog(item: Omit<LogItem, 'id'>): void
   refreshHistory(query: HistoryQueryState): Promise<void>
+  t: TranslateFn
 }
 
 export function useTaskEvents(options: UseTaskEventsOptions): void {
-  const { ipcClient, activeTaskId, historyQuery, setTaskState, pushLog, refreshHistory } = options
+  const { ipcClient, activeTaskId, historyQuery, setTaskState, pushLog, refreshHistory, t } = options
 
   useEffect(() => {
     const offStatus = ipcClient.task.onStatus((payload) => {
@@ -30,7 +33,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         time: payload.timestamp,
         stage: 'status',
         level: 'info',
-        text: `Status -> ${payload.status}`,
+        text: t('log.statusChanged', { status: translateTaskStatus(payload.status, t) }),
       })
     })
 
@@ -85,7 +88,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         time: new Date().toISOString(),
         stage: 'completed',
         level: 'info',
-        text: 'Task completed',
+        text: t('log.taskCompleted'),
       })
       void refreshHistory(historyQuery)
     })
@@ -115,5 +118,5 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       offCompleted()
       offFailed()
     }
-  }, [activeTaskId, historyQuery, ipcClient, pushLog, refreshHistory, setTaskState])
+  }, [activeTaskId, historyQuery, ipcClient, pushLog, refreshHistory, setTaskState, t])
 }

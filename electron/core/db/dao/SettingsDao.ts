@@ -46,6 +46,7 @@ function encodeSettingValue(value: unknown): string {
 function parseRowsToSettings(rows: SettingRow[]): Partial<AppSettings> {
   const partial: Partial<AppSettings> = {}
   for (const row of rows) {
+    // eslint-disable-next-line no-extra-semi
     ;(partial as Record<string, unknown>)[row.key] = decodeSettingValue(row.value)
   }
   return partial
