@@ -22,7 +22,7 @@ interface HistoryPageModel {
 interface HistoryPageActions {
   onHistoryKeywordDraftChange(value: string): void
   onHistoryStatusDraftChange(value: 'all' | TaskStatus): void
-  onHistoryLanguageDraftChange(value: 'all' | 'zh' | 'en' | 'ja'): void
+  onHistoryLanguageDraftChange(value: 'all' | 'zh-CN' | 'zh-TW'): void
   onRecoverableOnlyChange(value: boolean): void
   onHistoryPageSizeChange(value: number): void
   onApplyFilters(): void
@@ -87,13 +87,12 @@ export function HistoryPage(props: HistoryPageProps) {
           <select
             value={props.model.historyLanguageDraft}
             onChange={(event) =>
-              props.actions.onHistoryLanguageDraftChange(event.target.value as 'all' | 'zh' | 'en' | 'ja')
+              props.actions.onHistoryLanguageDraftChange(event.target.value as 'all' | 'zh-CN' | 'zh-TW')
             }
           >
             <option value="all">{translateLanguageLabel('all', props.t)}</option>
-            <option value="zh">{translateLanguageLabel('zh', props.t)}</option>
-            <option value="en">{translateLanguageLabel('en', props.t)}</option>
-            <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
+            <option value="zh-CN">{translateLanguageLabel('zh-CN', props.t)}</option>
+            <option value="zh-TW">{translateLanguageLabel('zh-TW', props.t)}</option>
           </select>
         </label>
 

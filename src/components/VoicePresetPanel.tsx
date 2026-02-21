@@ -27,7 +27,7 @@ export function VoicePresetPanel(props: VoicePresetPanelProps) {
           <option value="">请选择音色</option>
           {voiceProfiles.map((voice) => (
             <option key={voice.id} value={voice.id}>
-              {voice.displayName} ({voice.language})
+              {voice.displayName}
             </option>
           ))}
         </select>

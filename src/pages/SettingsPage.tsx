@@ -1,7 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
-import { translateLanguageLabel } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
 
 interface SettingsPageModel {
@@ -155,8 +154,7 @@ export function SettingsPage(props: SettingsPageProps) {
 
         <label>
           {props.t('settings.translateModelId')}
-          <input
-            type="text"
+          <select
             value={settings.translateModelId}
             onChange={(event) =>
               setSettings((prev) => ({
@@ -164,13 +162,18 @@ export function SettingsPage(props: SettingsPageProps) {
                 translateModelId: event.target.value,
               }))
             }
-          />
+          >
+            <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+            <option value="MiniMax-M2.5-highspeed">MiniMax-M2.5-highspeed</option>
+            <option value="MiniMax-M2.1">MiniMax-M2.1</option>
+            <option value="MiniMax-M2.1-highspeed">MiniMax-M2.1-highspeed</option>
+            <option value="MiniMax-M2">MiniMax-M2</option>
+          </select>
         </label>
 
         <label>
           {props.t('settings.ttsModelId')}
-          <input
-            type="text"
+          <select
             value={settings.ttsModelId}
             onChange={(event) =>
               setSettings((prev) => ({
@@ -178,17 +181,25 @@ export function SettingsPage(props: SettingsPageProps) {
                 ttsModelId: event.target.value,
               }))
             }
-          />
+          >
+            <option value="">{props.t('settings.selectModel')}</option>
+            <option value="speech-2.8-hd">speech-2.8-hd</option>
+            <option value="speech-2.6-hd">speech-2.6-hd</option>
+            <option value="speech-2.8-turbo">speech-2.8-turbo</option>
+            <option value="speech-2.6-turbo">speech-2.6-turbo</option>
+            <option value="speech-02-hd">speech-02-hd</option>
+            <option value="speech-02-turbo">speech-02-turbo</option>
+          </select>
         </label>
 
-        <div className="full">
+        <label>
           <VoicePresetPanel
             settings={settings}
             voiceProfiles={props.model.voiceProfiles}
             validationErrors={props.model.voiceValidationErrors}
             setSettings={setSettings}
           />
-        </div>
+        </label>
 
         <label>
           {props.t('settings.defaultTargetLanguage')}
@@ -197,13 +208,12 @@ export function SettingsPage(props: SettingsPageProps) {
             onChange={(event) =>
               setSettings((prev) => ({
                 ...prev,
-                defaultTargetLanguage: event.target.value as 'zh' | 'en' | 'ja',
+                defaultTargetLanguage: event.target.value as 'zh-CN' | 'zh-TW',
               }))
             }
           >
-            <option value="zh">{translateLanguageLabel('zh', props.t)}</option>
-            <option value="en">{translateLanguageLabel('en', props.t)}</option>
-            <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
+            <option value="zh-CN">{props.t('lang.zhCN')}</option>
+            <option value="zh-TW">{props.t('lang.zhTW')}</option>
           </select>
         </label>
       </div>

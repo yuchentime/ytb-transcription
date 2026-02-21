@@ -41,7 +41,7 @@ export interface HistoryQueryState {
   page: number
   pageSize: number
   status?: TaskStatus
-  targetLanguage?: 'zh' | 'en' | 'ja'
+  targetLanguage?: 'zh-CN' | 'zh-TW'
   keyword?: string
 }
 
@@ -80,7 +80,7 @@ export interface HistoryState {
   busyTaskId: string
   keywordDraft: string
   statusDraft: 'all' | TaskStatus
-  languageDraft: 'all' | 'zh' | 'en' | 'ja'
+  languageDraft: 'all' | 'zh-CN' | 'zh-TW'
   recoverableOnly: boolean
 }
 
@@ -110,7 +110,7 @@ export function createInitialTaskState(): TaskState {
   return {
     form: {
       youtubeUrl: '',
-      targetLanguage: 'zh',
+      targetLanguage: 'zh-CN',
       segmentationStrategy: 'punctuation',
       segmentationTargetDurationSec: 8,
     },

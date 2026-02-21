@@ -2,14 +2,14 @@ import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { RecoveryAction, TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
-import { translateLanguageLabel, translateRuntimeStatus, translateTaskStatus } from '../app/i18n'
+import { translateRuntimeStatus, translateTaskStatus } from '../app/i18n'
 import { RecoveryActions } from '../components/RecoveryActions'
 import { SegmentProgressList } from '../components/SegmentProgressList'
 import { SegmentationConfigPanel } from '../components/SegmentationConfigPanel'
 
 interface TaskFormState {
   youtubeUrl: string
-  targetLanguage: 'zh' | 'en' | 'ja'
+  targetLanguage: 'zh-CN' | 'zh-TW'
   segmentationStrategy: 'punctuation' | 'sentence' | 'duration'
   segmentationTargetDurationSec: number
 }
@@ -207,13 +207,12 @@ export function TaskPage(props: TaskPageProps) {
               onChange={(event) =>
                 props.actions.setTaskForm((prev) => ({
                   ...prev,
-                  targetLanguage: event.target.value as 'zh' | 'en' | 'ja',
+                  targetLanguage: event.target.value as 'zh-CN' | 'zh-TW',
                 }))
               }
             >
-              <option value="zh">{translateLanguageLabel('zh', props.t)}</option>
-              <option value="en">{translateLanguageLabel('en', props.t)}</option>
-              <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
+              <option value="zh-CN">{props.t('lang.zhCN')}</option>
+              <option value="zh-TW">{props.t('lang.zhTW')}</option>
             </select>
           </label>
 

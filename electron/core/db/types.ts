@@ -193,7 +193,7 @@ export interface AppSettings {
   ttsSpeed: number
   ttsPitch: number
   ttsVolume: number
-  defaultTargetLanguage: 'zh' | 'en' | 'ja'
+  defaultTargetLanguage: 'zh-CN' | 'zh-TW'
   stageTimeoutMs: number
   retryPolicy: {
     download: number

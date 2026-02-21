@@ -78,8 +78,9 @@ const zhCNMessages = {
   'settings.minimaxApiKey': 'MiniMax API Key',
   'settings.minimaxBaseUrl': 'MiniMax Base URL',
   'settings.translateModelId': '翻译模型 ID',
-  'settings.ttsModelId': 'TTS 模型 ID',
+  'settings.ttsModelId': '语音合成模型',
   'settings.ttsVoiceId': 'TTS 音色 ID',
+  'settings.selectModel': '请选择模型',
   'settings.defaultTargetLanguage': '默认目标语言',
   'settings.advanced': '高级选项',
   'settings.translateTemperature': '翻译温度',
@@ -115,9 +116,8 @@ const zhCNMessages = {
   'runtime.error': '错误',
 
   'lang.all': '全部',
-  'lang.zh': '中文',
-  'lang.en': '英语',
-  'lang.ja': '日语',
+  'lang.zhCN': '简体中文',
+  'lang.zhTW': '繁体中文',
 
   'error.loadHistory': '加载历史记录失败',
   'error.loadTaskDetail': '加载任务详情失败',
@@ -223,8 +223,9 @@ const zhTWMessages: Messages = {
   'settings.minimaxApiKey': 'MiniMax API Key',
   'settings.minimaxBaseUrl': 'MiniMax Base URL',
   'settings.translateModelId': '翻譯模型 ID',
-  'settings.ttsModelId': 'TTS 模型 ID',
+  'settings.ttsModelId': '語音合成模型',
   'settings.ttsVoiceId': 'TTS 音色 ID',
+  'settings.selectModel': '請選擇模型',
   'settings.defaultTargetLanguage': '預設目標語言',
   'settings.advanced': '進階選項',
   'settings.translateTemperature': '翻譯溫度',
@@ -260,9 +261,8 @@ const zhTWMessages: Messages = {
   'runtime.error': '錯誤',
 
   'lang.all': '全部',
-  'lang.zh': '中文',
-  'lang.en': '英文',
-  'lang.ja': '日文',
+  'lang.zhCN': '簡體中文',
+  'lang.zhTW': '繁體中文',
 
   'error.loadHistory': '載入歷史記錄失敗',
   'error.loadTaskDetail': '載入任務詳情失敗',
@@ -405,12 +405,16 @@ export function translateLanguageLabel(language: string, t: TranslateFn): string
   switch (language) {
     case 'all':
       return t('lang.all')
+    case 'zh-CN':
+      return t('lang.zhCN')
+    case 'zh-TW':
+      return t('lang.zhTW')
     case 'zh':
-      return t('lang.zh')
+      return t('lang.zhCN')
     case 'en':
-      return t('lang.en')
+      return 'English'
     case 'ja':
-      return t('lang.ja')
+      return '日本語'
     default:
       return language
   }
