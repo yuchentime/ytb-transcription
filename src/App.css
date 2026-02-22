@@ -358,6 +358,14 @@ input:read-only {
   font-size: 12px;
 }
 
+.btn.icon-btn {
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
 /* Status & Progress - Simplified Design */
 .status-bar {
   margin-top: 16px;
@@ -658,7 +666,23 @@ input:read-only {
 }
 
 /* Logs */
+.logs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.logs-header h2 {
+  margin: 0;
+}
+
+.logs-copy-btn {
+  flex-shrink: 0;
+}
+
 .logbox {
+  margin-top: 8px;
   max-height: 200px;
   overflow: auto;
   background: #fafafa;

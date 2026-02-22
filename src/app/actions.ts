@@ -107,6 +107,8 @@ export async function loadTaskDetailAction(
         translationPath: findLatestArtifactPath(detail.artifacts, 'translation'),
         ttsPath: findLatestArtifactPath(detail.artifacts, 'tts'),
       },
+      transcriptContent: undefined,
+      translationContent: undefined,
     }))
     // Load transcript and translation content if available (before routing)
     const transcriptPath = findLatestArtifactPath(detail.artifacts, 'transcript')
@@ -302,6 +304,8 @@ export async function startTaskAction(
     segments: [],
     recoveryActions: [],
     logs: [],
+    transcriptContent: undefined,
+    translationContent: undefined,
   }))
 
   try {
@@ -642,6 +646,8 @@ export async function handleDeleteHistoryTaskAction(
         activeStatus: '',
         running: false,
         output: {},
+        transcriptContent: undefined,
+        translationContent: undefined,
       }))
     }
 
@@ -676,24 +682,24 @@ export async function loadTaskContentAction(
 ): Promise<void> {
   const { ipcClient, setTaskState, transcriptPath, translationPath, pushLog } = params
 
-   
-  console.log('[loadTaskContentAction] transcriptPath:', transcriptPath, 'translationPath:', translationPath)
+  setTaskState((prev) => ({
+    ...prev,
+    transcriptContent: transcriptPath ? prev.transcriptContent : undefined,
+    translationContent: translationPath ? prev.translationContent : undefined,
+  }))
 
-  // Load transcript content if path exists
   if (transcriptPath) {
     try {
-       
-      console.log('[loadTaskContentAction] Loading transcript from:', transcriptPath)
       const result = await ipcClient.file.readText(transcriptPath)
-       
-      console.log('[loadTaskContentAction] Transcript loaded, length:', result.content.length)
       setTaskState((prev) => ({
         ...prev,
         transcriptContent: result.content,
       }))
     } catch (error) {
-       
-      console.error('[loadTaskContentAction] Failed to load transcript:', error)
+      setTaskState((prev) => ({
+        ...prev,
+        transcriptContent: undefined,
+      }))
       pushLog({
         time: new Date().toISOString(),
         stage: 'transcript',
@@ -703,21 +709,18 @@ export async function loadTaskContentAction(
     }
   }
 
-  // Load translation content if path exists
   if (translationPath) {
     try {
-       
-      console.log('[loadTaskContentAction] Loading translation from:', translationPath)
       const result = await ipcClient.file.readText(translationPath)
-       
-      console.log('[loadTaskContentAction] Translation loaded, length:', result.content.length)
       setTaskState((prev) => ({
         ...prev,
         translationContent: result.content,
       }))
     } catch (error) {
-       
-      console.error('[loadTaskContentAction] Failed to load translation:', error)
+      setTaskState((prev) => ({
+        ...prev,
+        translationContent: undefined,
+      }))
       pushLog({
         time: new Date().toISOString(),
         stage: 'translation',
@@ -777,6 +780,8 @@ export async function handleRetryHistoryTaskAction(
       segments: [],
       recoveryActions: [],
       logs: [],
+      transcriptContent: undefined,
+      translationContent: undefined,
     }))
     setActiveRoute('task')
 

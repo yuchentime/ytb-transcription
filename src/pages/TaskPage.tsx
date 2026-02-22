@@ -3,7 +3,6 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { TaskSegmentRecord, TaskStatus, VoiceProfile } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
 import { translateTaskStatus } from '../app/i18n'
-import { SegmentProgressList } from '../components/SegmentProgressList'
 import { SegmentationConfigPanel } from '../components/SegmentationConfigPanel'
 
 interface TaskFormState {
@@ -121,6 +120,26 @@ function CheckIcon({ className }: { className?: string }) {
   )
 }
 
+function CopyIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  )
+}
+
 // Collapsible Section Component
 interface CollapsibleSectionProps {
   title: string
@@ -160,11 +179,40 @@ export function TaskPage(props: TaskPageProps) {
   // State for collapsible sections
   const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false)
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
+  const [copySuccess, setCopySuccess] = useState(false)
 
   // Check if content exists
   const hasTranscript = !!props.model.transcriptContent
   const hasTranslation = !!props.model.translationContent
-  const hasSegmentProgress = props.model.segments.length > 0
+  const logsCopyLabel = copySuccess ? props.t('task.copyLogsDone') : props.t('task.copyLogs')
+
+  const handleCopyLogs = async (): Promise<void> => {
+    if (props.model.logs.length === 0) return
+    const content = props.model.logs
+      .map((log) => `[${new Date(log.time).toLocaleTimeString()}] [${log.stage}] ${log.text}`)
+      .join('\n')
+
+    try {
+      if (window.isSecureContext && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = content
+        textarea.setAttribute('readonly', 'true')
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      setCopySuccess(true)
+      window.setTimeout(() => setCopySuccess(false), 1500)
+    } catch {
+      setCopySuccess(false)
+    }
+  }
 
   return (
     <>
@@ -290,17 +338,6 @@ export function TaskPage(props: TaskPageProps) {
           )}
         </div>
 
-        {hasSegmentProgress && (
-          <details className="task-m2-section" open={false}>
-            <summary>处理细节（可选）</summary>
-            <SegmentProgressList
-              segments={props.model.segments}
-              activeStatus={props.model.activeStatus}
-              onRetrySingle={props.actions.onRetrySingleSegment}
-            />
-          </details>
-        )}
-
         {/* Final Output Section - only show when audio is ready */}
         {props.model.ttsAudioUrl && (
           <div className="output-final">
@@ -358,7 +395,19 @@ export function TaskPage(props: TaskPageProps) {
       </section>
 
       <section className="panel main-panel">
-        <h2>{props.t('task.logs')}</h2>
+        <div className="logs-header">
+          <h2>{props.t('task.logs')}</h2>
+          <button
+            type="button"
+            className="btn small icon-btn logs-copy-btn"
+            onClick={() => void handleCopyLogs()}
+            disabled={props.model.logs.length === 0}
+            title={logsCopyLabel}
+            aria-label={logsCopyLabel}
+          >
+            <CopyIcon />
+          </button>
+        </div>
         <div className="logbox">
           {props.model.logs.length === 0 && <p className="hint">{props.t('task.noLogs')}</p>}
           {props.model.logs.map((log) => (

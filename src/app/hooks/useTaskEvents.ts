@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { RendererAPI } from '../../../electron/ipc/channels'
 import type { TranslateFn } from '../i18n'
 import { translateTaskStatus } from '../i18n'
+import { loadTaskContentAction } from '../actions'
 import type { HistoryQueryState, LogItem, TaskState } from '../state'
 import { isRunningStatus } from '../utils'
 
@@ -135,6 +136,13 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         error: '',
         output: payload.output,
       }))
+      void loadTaskContentAction({
+        ipcClient,
+        setTaskState,
+        transcriptPath: payload.output.transcriptPath,
+        translationPath: payload.output.translationPath,
+        pushLog,
+      })
 
       pushLog({
         time: new Date().toISOString(),
