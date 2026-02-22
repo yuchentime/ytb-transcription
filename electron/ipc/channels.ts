@@ -34,6 +34,8 @@ export const IPC_CHANNELS = {
   systemOpenPath: 'system:openPath',
   systemExportDiagnostics: 'system:exportDiagnostics',
   systemProbePiper: 'system:probePiper',
+  systemInstallPiper: 'system:installPiper',
+  systemTestTranslateConnectivity: 'system:testTranslateConnectivity',
   fileReadAudio: 'file:readAudio',
   fileReadText: 'file:readText',
   taskStatus: 'task:status',
@@ -88,6 +90,20 @@ export interface ProbePiperPayload {
   settings?: Partial<AppSettings>
 }
 
+export interface InstallPiperPayload {
+  settings?: Partial<AppSettings>
+  forceReinstall?: boolean
+}
+
+export interface TestTranslateConnectivityPayload {
+  settings?: Partial<AppSettings>
+}
+
+export interface TranslateConnectivityResult {
+  ok: boolean
+  message: string
+}
+
 export interface PiperProbeCheckResult {
   ok: boolean
   path: string
@@ -100,6 +116,15 @@ export interface PiperProbeResult {
   binary: PiperProbeCheckResult
   model: PiperProbeCheckResult
   config: PiperProbeCheckResult
+}
+
+export interface PiperInstallResult {
+  summary: string
+  releaseTag: string
+  voice: string
+  piperExecutablePath: string
+  piperModelPath: string
+  piperConfigPath: string
 }
 
 export interface TaskDetail {
@@ -238,6 +263,8 @@ export interface RendererAPI {
     openPath(payload: OpenPathPayload): Promise<OpenPathResult>
     exportDiagnostics(payload?: ExportDiagnosticsPayload): Promise<ExportDiagnosticsResult>
     probePiper(payload?: ProbePiperPayload): Promise<PiperProbeResult>
+    installPiper(payload?: InstallPiperPayload): Promise<PiperInstallResult>
+    testTranslateConnectivity(payload?: TestTranslateConnectivityPayload): Promise<TranslateConnectivityResult>
   }
   file: {
     readAudio(filePath: string): Promise<AudioFileResult>

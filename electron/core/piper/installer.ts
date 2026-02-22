@@ -1,0 +1,432 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import type { AppSettings } from '../db/types'
+import { runCommand } from '../task-engine/command'
+
+const PIPER_RELEASE_API = 'https://api.github.com/repos/OHF-Voice/piper1-gpl/releases/latest'
+const PYTHON_STANDALONE_RELEASE_API =
+  'https://api.github.com/repos/indygreg/python-build-standalone/releases/latest'
+const GITHUB_HEADERS = {
+  Accept: 'application/vnd.github+json',
+  'User-Agent': 'ytb-transcription',
+} as const
+
+interface GitHubReleaseAsset {
+  name: string
+  browser_download_url: string
+}
+
+interface GitHubRelease {
+  tag_name?: string
+  assets?: GitHubReleaseAsset[]
+}
+
+export interface InstallPiperRuntimeInput {
+  dataRoot: string
+  settings: AppSettings
+  forceReinstall?: boolean
+}
+
+export interface InstallPiperRuntimeResult {
+  releaseTag: string
+  voice: string
+  piperExecutablePath: string
+  piperModelPath: string
+  piperConfigPath: string
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function fetchRelease(url: string): Promise<GitHubRelease> {
+  const response = await fetch(url, { headers: GITHUB_HEADERS })
+  if (!response.ok) {
+    throw new Error(`请求 GitHub Release 失败: HTTP ${response.status}`)
+  }
+  return (await response.json()) as GitHubRelease
+}
+
+async function downloadFile(url: string, filePath: string): Promise<void> {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`下载失败: HTTP ${response.status} (${url})`)
+  }
+  const content = Buffer.from(await response.arrayBuffer())
+  await fs.writeFile(filePath, content)
+}
+
+function getPiperWheelTokens(): string[] | null {
+  if (process.platform === 'darwin' && process.arch === 'arm64') return ['macosx_11_0_arm64']
+  if (process.platform === 'darwin' && process.arch === 'x64') return ['macosx_10_9_x86_64']
+  if (process.platform === 'linux' && process.arch === 'x64') {
+    return ['manylinux_2_17_x86_64', 'manylinux2014_x86_64']
+  }
+  if (process.platform === 'linux' && process.arch === 'arm64') {
+    return ['manylinux_2_17_aarch64', 'manylinux2014_aarch64']
+  }
+  if (process.platform === 'win32' && process.arch === 'x64') return ['win_amd64']
+  return null
+}
+
+async function resolvePiperWheelAsset(): Promise<{
+  releaseTag: string
+  asset: GitHubReleaseAsset
+}> {
+  const tokens = getPiperWheelTokens()
+  if (!tokens) {
+    throw new Error(`当前平台暂不支持自动安装 Piper: ${process.platform}-${process.arch}`)
+  }
+
+  const release = await fetchRelease(PIPER_RELEASE_API)
+  const assets = release.assets ?? []
+  const wheelAssets = assets.filter((asset) => asset.name.endsWith('.whl'))
+  const matched = wheelAssets.find((asset) => tokens.some((token) => asset.name.includes(token)))
+  if (!matched) {
+    throw new Error(`未找到当前平台对应的 Piper 安装包，平台标识: ${tokens.join(', ')}`)
+  }
+
+  return {
+    releaseTag: release.tag_name ?? 'latest',
+    asset: matched,
+  }
+}
+
+async function getPythonVersion(command: string): Promise<{ major: number; minor: number } | null> {
+  const lines: string[] = []
+  try {
+    await runCommand({
+      command,
+      args: ['-c', 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'],
+      onStdoutLine: (line) => lines.push(line),
+      timeoutMs: 8000,
+    })
+    const raw = lines[lines.length - 1] ?? ''
+    const match = /^(\d+)\.(\d+)$/.exec(raw.trim())
+    if (!match) return null
+    return {
+      major: Number(match[1]),
+      minor: Number(match[2]),
+    }
+  } catch {
+    return null
+  }
+}
+
+async function findSystemPython(): Promise<string | null> {
+  const candidates = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python']
+  for (const candidate of candidates) {
+    const version = await getPythonVersion(candidate)
+    if (version && (version.major > 3 || (version.major === 3 && version.minor >= 9))) {
+      return candidate
+    }
+  }
+  return null
+}
+
+function getPortablePythonArchToken(): string | null {
+  if (process.platform === 'darwin' && process.arch === 'arm64') return 'aarch64-apple-darwin'
+  if (process.platform === 'darwin' && process.arch === 'x64') return 'x86_64-apple-darwin'
+  if (process.platform === 'linux' && process.arch === 'x64') return 'x86_64-unknown-linux-gnu'
+  if (process.platform === 'linux' && process.arch === 'arm64') return 'aarch64-unknown-linux-gnu'
+  if (process.platform === 'win32' && process.arch === 'x64') return 'x86_64-pc-windows-msvc'
+  if (process.platform === 'win32' && process.arch === 'arm64') return 'aarch64-pc-windows-msvc'
+  return null
+}
+
+async function resolvePortablePythonDownloadUrl(): Promise<string> {
+  const archToken = getPortablePythonArchToken()
+  if (!archToken) {
+    throw new Error(`当前平台无法自动安装 Python: ${process.platform}-${process.arch}`)
+  }
+
+  const release = await fetchRelease(PYTHON_STANDALONE_RELEASE_API)
+  const assets = release.assets ?? []
+
+  const preferred = assets.find(
+    (asset) =>
+      asset.name.includes(archToken) &&
+      asset.name.includes('install_only') &&
+      asset.name.endsWith('.tar.gz'),
+  )
+  if (preferred) return preferred.browser_download_url
+
+  const fallback = assets.find(
+    (asset) => asset.name.includes(archToken) && asset.name.endsWith('.tar.gz'),
+  )
+  if (fallback) return fallback.browser_download_url
+
+  throw new Error(`未找到当前平台可用的 Python 安装包: ${archToken}`)
+}
+
+async function extractTarGz(archivePath: string, targetDir: string): Promise<void> {
+  await runCommand({
+    command: 'tar',
+    args: ['-xzf', archivePath, '-C', targetDir],
+    timeoutMs: 10 * 60 * 1000,
+  })
+}
+
+async function findPortablePythonBinary(portableDir: string): Promise<string | null> {
+  const candidates =
+    process.platform === 'win32'
+      ? [
+          path.join(portableDir, 'python.exe'),
+          path.join(portableDir, 'install', 'python.exe'),
+          path.join(portableDir, 'python', 'python.exe'),
+        ]
+      : [
+          path.join(portableDir, 'bin', 'python3'),
+          path.join(portableDir, 'install', 'bin', 'python3'),
+          path.join(portableDir, 'python', 'bin', 'python3'),
+        ]
+
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) {
+      return candidate
+    }
+  }
+  return null
+}
+
+async function installPortablePython(toolsDir: string): Promise<string> {
+  const portableDir = path.join(toolsDir, 'python-portable')
+  await fs.mkdir(portableDir, { recursive: true })
+
+  const existing = await findPortablePythonBinary(portableDir)
+  if (existing) return existing
+
+  const downloadUrl = await resolvePortablePythonDownloadUrl()
+  const archivePath = path.join(toolsDir, 'python-portable.tar.gz')
+  await downloadFile(downloadUrl, archivePath)
+  await extractTarGz(archivePath, portableDir)
+  await fs.rm(archivePath, { force: true })
+
+  const installed = await findPortablePythonBinary(portableDir)
+  if (!installed) {
+    throw new Error('Python 解压完成，但未找到可执行文件')
+  }
+  if (process.platform !== 'win32') {
+    await fs.chmod(installed, 0o755).catch(() => undefined)
+  }
+  return installed
+}
+
+async function ensureBootstrapPython(dataRoot: string): Promise<string> {
+  const systemPython = await findSystemPython()
+  if (systemPython) return systemPython
+  const toolsDir = path.join(dataRoot, 'tools')
+  await fs.mkdir(toolsDir, { recursive: true })
+  return await installPortablePython(toolsDir)
+}
+
+function getVenvPythonPath(venvDir: string): string {
+  if (process.platform === 'win32') {
+    return path.join(venvDir, 'Scripts', 'python.exe')
+  }
+  return path.join(venvDir, 'bin', 'python')
+}
+
+function getPiperExecutablePath(venvDir: string): string {
+  if (process.platform === 'win32') {
+    return path.join(venvDir, 'Scripts', 'piper.exe')
+  }
+  return path.join(venvDir, 'bin', 'piper')
+}
+
+async function ensurePiperVenv(dataRoot: string, bootstrapPython: string): Promise<{
+  venvDir: string
+  venvPython: string
+  piperExecutablePath: string
+}> {
+  const venvDir = path.join(dataRoot, 'piper', 'venv')
+  await fs.mkdir(venvDir, { recursive: true })
+  const venvPython = getVenvPythonPath(venvDir)
+  if (!(await pathExists(venvPython))) {
+    await runCommand({
+      command: bootstrapPython,
+      args: ['-m', 'venv', venvDir],
+      timeoutMs: 10 * 60 * 1000,
+    })
+  }
+
+  const piperExecutablePath = getPiperExecutablePath(venvDir)
+  return {
+    venvDir,
+    venvPython,
+    piperExecutablePath,
+  }
+}
+
+async function installPiperPackage(params: {
+  venvPython: string
+  downloadsDir: string
+  forceReinstall: boolean
+}): Promise<{ releaseTag: string }> {
+  const { releaseTag, asset } = await resolvePiperWheelAsset()
+  await fs.mkdir(params.downloadsDir, { recursive: true })
+  const wheelPath = path.join(params.downloadsDir, asset.name)
+
+  if (params.forceReinstall || !(await pathExists(wheelPath))) {
+    await downloadFile(asset.browser_download_url, wheelPath)
+  }
+
+  await runCommand({
+    command: params.venvPython,
+    args: ['-m', 'pip', 'install', '--upgrade', 'pip'],
+    timeoutMs: 10 * 60 * 1000,
+  })
+
+  const installArgs = params.forceReinstall
+    ? ['-m', 'pip', 'install', '--upgrade', '--force-reinstall', wheelPath]
+    : ['-m', 'pip', 'install', '--upgrade', wheelPath]
+
+  await runCommand({
+    command: params.venvPython,
+    args: installArgs,
+    timeoutMs: 20 * 60 * 1000,
+  })
+
+  const hasPathvalidate = await (async () => {
+    try {
+      await runCommand({
+        command: params.venvPython,
+        args: ['-m', 'pip', 'show', 'pathvalidate'],
+        timeoutMs: 20_000,
+      })
+      return true
+    } catch {
+      return false
+    }
+  })()
+  if (!hasPathvalidate) {
+    await runCommand({
+      command: params.venvPython,
+      args: ['-m', 'pip', 'install', 'pathvalidate'],
+      timeoutMs: 5 * 60 * 1000,
+    })
+  }
+
+  return { releaseTag }
+}
+
+async function listPiperVoices(venvPython: string): Promise<string[]> {
+  const voices: string[] = []
+  await runCommand({
+    command: venvPython,
+    args: ['-m', 'piper.download_voices'],
+    timeoutMs: 2 * 60 * 1000,
+    onStdoutLine: (line) => {
+      if (/^[a-z]{2,3}_[a-z]{2,3}-.+-.+$/i.test(line)) {
+        voices.push(line.trim())
+      }
+    },
+  })
+  return Array.from(new Set(voices)).sort((a, b) => a.localeCompare(b))
+}
+
+function pickVoiceByLanguage(voices: string[], language: AppSettings['defaultTargetLanguage']): string {
+  if (voices.length === 0) {
+    throw new Error('Piper voice 列表为空，无法自动下载模型')
+  }
+
+  const patternGroups: Record<AppSettings['defaultTargetLanguage'], RegExp[]> = {
+    zh: [/^zh_CN-[^-]+-medium$/i, /^zh_CN-/i, /^zh_/i],
+    en: [/^en_US-lessac-medium$/i, /^en_US-[^-]+-medium$/i, /^en_/i],
+    ja: [/^ja_JP-[^-]+-medium$/i, /^ja_JP-/i, /^ja_/i],
+  }
+
+  for (const pattern of patternGroups[language]) {
+    const found = voices.find((voice) => pattern.test(voice))
+    if (found) return found
+  }
+
+  const fallbackPatterns = [/^en_US-lessac-medium$/i, /^en_US-/i, /^en_/i]
+  for (const pattern of fallbackPatterns) {
+    const found = voices.find((voice) => pattern.test(voice))
+    if (found) return found
+  }
+
+  return voices[0]
+}
+
+async function ensureVoiceModel(params: {
+  venvPython: string
+  modelsDir: string
+  settings: AppSettings
+  forceReinstall: boolean
+}): Promise<{ voice: string; modelPath: string; configPath: string }> {
+  await fs.mkdir(params.modelsDir, { recursive: true })
+  const voices = await listPiperVoices(params.venvPython)
+  const voice = pickVoiceByLanguage(voices, params.settings.defaultTargetLanguage)
+  const modelPath = path.join(params.modelsDir, `${voice}.onnx`)
+  const configPath = `${modelPath}.json`
+
+  if (
+    params.forceReinstall ||
+    !(await pathExists(modelPath)) ||
+    !(await pathExists(configPath))
+  ) {
+    const args = ['-m', 'piper.download_voices', '--download-dir', params.modelsDir, voice]
+    if (params.forceReinstall) {
+      args.splice(4, 0, '--force-redownload')
+    }
+    await runCommand({
+      command: params.venvPython,
+      args,
+      timeoutMs: 20 * 60 * 1000,
+    })
+  }
+
+  if (!(await pathExists(modelPath))) {
+    throw new Error(`Piper 模型下载完成后未找到文件: ${modelPath}`)
+  }
+  if (!(await pathExists(configPath))) {
+    throw new Error(`Piper 配置下载完成后未找到文件: ${configPath}`)
+  }
+
+  return { voice, modelPath, configPath }
+}
+
+export async function installPiperRuntime(
+  input: InstallPiperRuntimeInput,
+): Promise<InstallPiperRuntimeResult> {
+  const bootstrapPython = await ensureBootstrapPython(input.dataRoot)
+  const { venvPython, piperExecutablePath } = await ensurePiperVenv(input.dataRoot, bootstrapPython)
+  const downloadsDir = path.join(input.dataRoot, 'piper', 'downloads')
+  const modelsDir = path.join(input.dataRoot, 'piper', 'models')
+
+  const forceReinstall = input.forceReinstall === true
+  const { releaseTag } = await installPiperPackage({
+    venvPython,
+    downloadsDir,
+    forceReinstall,
+  })
+
+  if (!(await pathExists(piperExecutablePath))) {
+    throw new Error(`Piper 安装完成后未找到可执行文件: ${piperExecutablePath}`)
+  }
+  if (process.platform !== 'win32') {
+    await fs.chmod(piperExecutablePath, 0o755).catch(() => undefined)
+  }
+
+  const { voice, modelPath, configPath } = await ensureVoiceModel({
+    venvPython,
+    modelsDir,
+    settings: input.settings,
+    forceReinstall,
+  })
+
+  return {
+    releaseTag,
+    voice,
+    piperExecutablePath,
+    piperModelPath: modelPath,
+    piperConfigPath: configPath,
+  }
+}

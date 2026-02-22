@@ -3,7 +3,7 @@
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.ytbtranscription.app",
   "asar": true,
-  "productName": "YouTube Transcription",
+  "productName": "YTB2Voice",
   "icon": "public/logo.png",
   "directories": {
     "output": "release/${version}"

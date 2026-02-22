@@ -1,7 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../../electron/core/db/types'
-import type { PiperProbeResult } from '../../electron/ipc/channels'
+import type {
+  PiperInstallResult,
+  PiperProbeResult,
+  TranslateConnectivityResult,
+} from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
 import { translateLanguageLabel } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
@@ -14,14 +18,14 @@ const TRANSLATE_PROVIDERS: { value: TranslateProvider; label: string }[] = [
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'glm', label: 'GLM (智谱AI)' },
   { value: 'kimi', label: 'Kimi (Moonshot)' },
-  { value: 'custom', label: '自定义 / Local (LM Studio等)' },
-]
+  { value: 'custom', label: '自定义(OpenAI-compatible)' },
+] 
 
 // TTS provider options
 const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
   { value: 'minimax', label: 'MiniMax' },
   { value: 'glm', label: 'GLM (智谱AI)' },
-  { value: 'piper', label: '内置语音合成（Piper）' },
+  { value: 'piper', label: '本地语音合成（Piper）' },
 ]
 
 // Default base URLs for providers
@@ -57,6 +61,8 @@ interface SettingsPageActions {
   setSettings: Dispatch<SetStateAction<AppSettings>>
   onSave(): Promise<void>
   onProbePiper(settings: AppSettings): Promise<PiperProbeResult>
+  onInstallPiper(settings: AppSettings, forceReinstall?: boolean): Promise<PiperInstallResult>
+  onTestTranslateConnectivity(settings: AppSettings): Promise<TranslateConnectivityResult>
   clearSaveSuccess(): void
   clearSaveError(): void
 }
@@ -73,6 +79,32 @@ export function SettingsPage(props: SettingsPageProps) {
   const [probeLoading, setProbeLoading] = useState(false)
   const [probeResult, setProbeResult] = useState<PiperProbeResult | null>(null)
   const [probeError, setProbeError] = useState('')
+  const [installLoading, setInstallLoading] = useState(false)
+  const [installResult, setInstallResult] = useState<PiperInstallResult | null>(null)
+  const [installError, setInstallError] = useState('')
+  const [installSuccessToastVisible, setInstallSuccessToastVisible] = useState(false)
+  const [installErrorToastVisible, setInstallErrorToastVisible] = useState(false)
+  const [translateTestLoading, setTranslateTestLoading] = useState(false)
+  const [translateTestStatus, setTranslateTestStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const isPiperInstalled = Boolean(settings.piperModelPath.trim()) || probeResult?.ok === true || installResult !== null
+
+  useEffect(() => {
+    setTranslateTestStatus('idle')
+  }, [
+    settings.translateProvider,
+    settings.translateModelId,
+    settings.translateTemperature,
+    settings.minimaxApiKey,
+    settings.minimaxApiBaseUrl,
+    settings.deepseekApiKey,
+    settings.deepseekApiBaseUrl,
+    settings.glmApiKey,
+    settings.glmApiBaseUrl,
+    settings.kimiApiKey,
+    settings.kimiApiBaseUrl,
+    settings.customApiKey,
+    settings.customApiBaseUrl,
+  ])
 
   // Helper to get available models for a provider
   const getTranslateModels = (provider: TranslateProvider): string[] => {
@@ -136,6 +168,52 @@ export function SettingsPage(props: SettingsPageProps) {
       setProbeError(error instanceof Error ? error.message : String(error))
     } finally {
       setProbeLoading(false)
+    }
+  }
+
+  async function handleInstallPiper(forceReinstall = false): Promise<void> {
+    setInstallLoading(true)
+    setInstallError('')
+    setInstallSuccessToastVisible(false)
+    setInstallErrorToastVisible(false)
+    try {
+      const result = await props.actions.onInstallPiper(settings, forceReinstall)
+      setInstallResult(result)
+      const nextSettings: AppSettings = {
+        ...settings,
+        piperExecutablePath: result.piperExecutablePath,
+        piperModelPath: result.piperModelPath,
+        piperConfigPath: result.piperConfigPath,
+      }
+      setSettings((prev) => ({
+        ...prev,
+        piperExecutablePath: result.piperExecutablePath,
+        piperModelPath: result.piperModelPath,
+        piperConfigPath: result.piperConfigPath,
+      }))
+      const probe = await props.actions.onProbePiper(nextSettings)
+      setProbeResult(probe)
+      setProbeError('')
+      setInstallSuccessToastVisible(true)
+    } catch (error) {
+      setInstallResult(null)
+      setInstallError(error instanceof Error ? error.message : String(error))
+      setInstallErrorToastVisible(true)
+    } finally {
+      setInstallLoading(false)
+    }
+  }
+
+  async function handleTestTranslateConnectivity(): Promise<void> {
+    setTranslateTestLoading(true)
+    setTranslateTestStatus('idle')
+    try {
+      const result = await props.actions.onTestTranslateConnectivity(settings)
+      setTranslateTestStatus(result.ok ? 'success' : 'error')
+    } catch {
+      setTranslateTestStatus('error')
+    } finally {
+      setTranslateTestLoading(false)
     }
   }
 
@@ -251,6 +329,31 @@ export function SettingsPage(props: SettingsPageProps) {
               </select>
             )}
           </label>
+
+          <div className="full">
+            <div className="actions settings-connectivity-actions">
+              <button
+                className="btn primary"
+                type="button"
+                onClick={() => void handleTestTranslateConnectivity()}
+                disabled={translateTestLoading}
+              >
+                {translateTestLoading
+                  ? props.t('settings.translateConnectivityTesting')
+                  : props.t('settings.translateConnectivityTest')}
+              </button>
+              {translateTestStatus === 'success' && (
+                <span className="settings-connectivity-status success">
+                  {props.t('settings.translateConnectivityPass')}
+                </span>
+              )}
+              {translateTestStatus === 'error' && (
+                <span className="settings-connectivity-status error">
+                  {props.t('settings.translateConnectivityFail')}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -332,22 +435,9 @@ export function SettingsPage(props: SettingsPageProps) {
             </>
           )}
 
-          {/* TTS Model ID */}
-          <label>
-            {props.t('settings.ttsModelId')}
-            {settings.ttsProvider === 'piper' ? (
-              <input
-                type="text"
-                value={settings.piperModelPath}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    piperModelPath: event.target.value,
-                  }))
-                }
-                placeholder="/path/to/model.onnx"
-              />
-            ) : (
+          {settings.ttsProvider !== 'piper' && (
+            <label>
+              {props.t('settings.ttsModelId')}
               <select
                 value={settings.ttsModelId}
                 onChange={(event) =>
@@ -364,103 +454,7 @@ export function SettingsPage(props: SettingsPageProps) {
                   </option>
                 ))}
               </select>
-            )}
-          </label>
-
-          {settings.ttsProvider === 'piper' && (
-            <>
-              <label>
-                Piper 可执行文件路径
-                <input
-                  type="text"
-                  value={settings.piperExecutablePath}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      piperExecutablePath: event.target.value,
-                    }))
-                  }
-                  placeholder="留空则使用 PATH 中的 piper"
-                />
-              </label>
-              <label>
-                Piper 配置文件路径
-                <input
-                  type="text"
-                  value={settings.piperConfigPath}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      piperConfigPath: event.target.value,
-                    }))
-                  }
-                  placeholder="可选，默认同名 .onnx.json"
-                />
-              </label>
-              <label>
-                Piper Speaker ID
-                <input
-                  type="number"
-                  value={settings.piperSpeakerId}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      piperSpeakerId: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                    }))
-                  }
-                  min={0}
-                  step={1}
-                />
-              </label>
-              <label>
-                Piper Length Scale
-                <input
-                  type="number"
-                  value={settings.piperLengthScale}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      piperLengthScale: Math.max(0.1, Number(event.target.value) || 1),
-                    }))
-                  }
-                  min={0.1}
-                  max={3}
-                  step={0.1}
-                />
-              </label>
-              <label>
-                Piper Noise Scale
-                <input
-                  type="number"
-                  value={settings.piperNoiseScale}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      piperNoiseScale: Math.max(0, Number(event.target.value) || 0),
-                    }))
-                  }
-                  min={0}
-                  max={2}
-                  step={0.01}
-                />
-              </label>
-              <label>
-                Piper Noise W
-                <input
-                  type="number"
-                  value={settings.piperNoiseW}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      piperNoiseW: Math.max(0, Number(event.target.value) || 0),
-                    }))
-                  }
-                  min={0}
-                  max={2}
-                  step={0.01}
-                />
-              </label>
-            </>
+            </label>
           )}
 
           {/* Default Target Language */}
@@ -516,18 +510,35 @@ export function SettingsPage(props: SettingsPageProps) {
           {settings.ttsProvider === 'piper' && (
             <div className="full">
               <p className="hint">Piper 使用本地模型，不依赖云端 API Key/Base URL。</p>
+              <p className="hint">首次使用可一键安装 Piper 运行环境与默认音色模型（自动下载）。</p>
               <div className="actions">
-                <button className="btn" type="button" onClick={() => void handleProbePiper()} disabled={probeLoading}>
+                <button
+                  className="btn primary"
+                  type="button"
+                  onClick={() => void handleInstallPiper(isPiperInstalled)}
+                  disabled={installLoading}
+                >
+                  {installLoading ? '安装中...' : isPiperInstalled ? '重新安装Piper' : '一键安装Piper'}
+                </button>
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => void handleProbePiper()}
+                  disabled={probeLoading}
+                >
                   {probeLoading ? '检测中...' : '检测 Piper 就绪状态'}
                 </button>
+                {probeResult?.ok && <span className="settings-connectivity-status success">检测通过✅</span>}
+                {(probeError || (probeResult && !probeResult.ok)) && (
+                  <span className="settings-connectivity-status error">检测失败，请检查配置</span>
+                )}
               </div>
-              {probeError && <p className="error">{probeError}</p>}
-              {probeResult && (
-                <div className={probeResult.ok ? 'hint' : 'error'}>
-                  <p>{probeResult.summary}</p>
-                  <p>Binary: {probeResult.binary.ok ? 'OK' : 'FAIL'} | {probeResult.binary.path}</p>
-                  <p>Model: {probeResult.model.ok ? 'OK' : 'FAIL'} | {probeResult.model.path}</p>
-                  <p>Config: {probeResult.config.ok ? 'OK' : 'FAIL'} | {probeResult.config.path}</p>
+              {installError && <p className="error">{installError}</p>}
+              {installResult && (
+                <div className="hint">
+                  <p>{installResult.summary}</p>
+                  <p>Release: {installResult.releaseTag}</p>
+                  <p>Voice: {installResult.voice}</p>
                 </div>
               )}
             </div>
@@ -848,6 +859,20 @@ export function SettingsPage(props: SettingsPageProps) {
         message={props.model.settingsSaveErrorMessage || props.t('settings.saveFailed')}
         visible={props.model.settingsSaveError}
         onClose={props.actions.clearSaveError}
+        type="error"
+      />
+      <Toast
+        message={props.t('settings.piperInstallSuccess')}
+        visible={installSuccessToastVisible}
+        onClose={() => setInstallSuccessToastVisible(false)}
+        duration={3000}
+        type="success"
+      />
+      <Toast
+        message={props.t('settings.piperInstallFailed')}
+        visible={installErrorToastVisible}
+        onClose={() => setInstallErrorToastVisible(false)}
+        duration={3000}
         type="error"
       />
     </section>

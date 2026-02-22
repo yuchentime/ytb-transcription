@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TaskStatus } from '../electron/core/db/types'
-import type { PiperProbeResult } from '../electron/ipc/channels'
+import type { PiperInstallResult, PiperProbeResult, TranslateConnectivityResult } from '../electron/ipc/channels'
 import {
   applyHistoryFiltersAction,
   cancelTaskAction,
@@ -231,6 +231,14 @@ function App() {
     return await ipcClient.system.probePiper({ settings })
   }
 
+  async function installPiper(settings: AppSettings, forceReinstall = false): Promise<PiperInstallResult> {
+    return await ipcClient.system.installPiper({ settings, forceReinstall })
+  }
+
+  async function testTranslateConnectivity(settings: AppSettings): Promise<TranslateConnectivityResult> {
+    return await ipcClient.system.testTranslateConnectivity({ settings })
+  }
+
   async function startTask(): Promise<void> {
     await startTaskAction({
       taskForm: taskState.form,
@@ -340,6 +348,8 @@ function App() {
     setSettings: setSettingsData,
     onSave: saveSettings,
     onProbePiper: probePiper,
+    onInstallPiper: installPiper,
+    onTestTranslateConnectivity: testTranslateConnectivity,
     clearSaveSuccess: () =>
       setSettingsState((prev) => ({
         ...prev,

@@ -4,17 +4,23 @@ import path from 'node:path'
 import { app, ipcMain, shell } from 'electron'
 import type { AppSettings, TaskSegmentRecord } from '../../core/db/types'
 import { getDatabaseContext } from '../../core/db'
+import { installPiperRuntime } from '../../core/piper/installer'
 import { getTaskEngine } from '../../core/task-engine'
 import { runCommand } from '../../core/task-engine/command'
+import { minimaxTranslate } from '../../core/task-engine/minimax'
 import {
   IPC_CHANNELS,
   type ExportDiagnosticsPayload,
   type ExportDiagnosticsResult,
+  type InstallPiperPayload,
   type OpenPathPayload,
   type OpenPathResult,
+  type PiperInstallResult,
   type PiperProbeCheckResult,
   type PiperProbeResult,
   type ProbePiperPayload,
+  type TestTranslateConnectivityPayload,
+  type TranslateConnectivityResult,
 } from '../channels'
 
 function assertPathInput(payload: OpenPathPayload): string {
@@ -50,6 +56,20 @@ function sanitizeSettings(
     piperExecutablePath: maskLocalPath(settings.piperExecutablePath),
     piperModelPath: maskLocalPath(settings.piperModelPath),
     piperConfigPath: maskLocalPath(settings.piperConfigPath),
+  }
+}
+
+function mergeSettingsWithPayload(
+  baseSettings: AppSettings,
+  payloadSettings?: Partial<AppSettings>,
+): AppSettings {
+  return {
+    ...baseSettings,
+    ...(payloadSettings ?? {}),
+    retryPolicy: {
+      ...baseSettings.retryPolicy,
+      ...((payloadSettings?.retryPolicy as Partial<AppSettings['retryPolicy']> | undefined) ?? {}),
+    },
   }
 }
 
@@ -108,17 +128,23 @@ async function resolveFirstExisting(candidates: string[]): Promise<string | null
 }
 
 async function verifyCommandRunnable(command: string): Promise<{ ok: boolean; message: string }> {
+  const stderrLines: string[] = []
   try {
     await runCommand({
       command,
       args: ['--help'],
       timeoutMs: 5000,
+      onStderrLine: (line) => {
+        stderrLines.push(line)
+      },
     })
     return { ok: true, message: '可执行（--help 通过）' }
   } catch (error) {
+    const baseMessage = error instanceof Error ? error.message : String(error)
+    const detail = stderrLines.slice(-3).join(' | ')
     return {
       ok: false,
-      message: error instanceof Error ? error.message : String(error),
+      message: detail ? `${baseMessage}; ${detail}` : baseMessage,
     }
   }
 }
@@ -290,6 +316,8 @@ function buildSegmentMetrics(segments: TaskSegmentRecord[]): {
   }
 }
 
+let piperInstallInFlight: Promise<PiperInstallResult> | null = null
+
 export function registerSystemHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.systemOpenPath,
@@ -408,18 +436,92 @@ export function registerSystemHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_CHANNELS.systemInstallPiper,
+    async (_event, payload: InstallPiperPayload = {}): Promise<PiperInstallResult> => {
+      if (piperInstallInFlight) {
+        return await piperInstallInFlight
+      }
+
+      piperInstallInFlight = (async () => {
+        const { settingsDao, dbPath } = getDatabaseContext()
+        const baseSettings = settingsDao.getSettings()
+        const mergedSettings = mergeSettingsWithPayload(baseSettings, payload.settings)
+        const dataRoot = path.dirname(dbPath)
+
+        const installed = await installPiperRuntime({
+          dataRoot,
+          settings: mergedSettings,
+          forceReinstall: payload.forceReinstall === true,
+        })
+
+        settingsDao.upsertSettings({
+          piperExecutablePath: installed.piperExecutablePath,
+          piperModelPath: installed.piperModelPath,
+          piperConfigPath: installed.piperConfigPath,
+        })
+
+        return {
+          summary: `Piper 安装完成（${installed.releaseTag}，音色 ${installed.voice}）`,
+          releaseTag: installed.releaseTag,
+          voice: installed.voice,
+          piperExecutablePath: installed.piperExecutablePath,
+          piperModelPath: installed.piperModelPath,
+          piperConfigPath: installed.piperConfigPath,
+        }
+      })()
+
+      try {
+        return await piperInstallInFlight
+      } finally {
+        piperInstallInFlight = null
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.systemTestTranslateConnectivity,
+    async (
+      _event,
+      payload: TestTranslateConnectivityPayload = {},
+    ): Promise<TranslateConnectivityResult> => {
+      const { settingsDao } = getDatabaseContext()
+      const baseSettings = settingsDao.getSettings()
+      const mergedSettings = mergeSettingsWithPayload(baseSettings, payload.settings)
+      const timeoutMs = Math.max(5000, Math.min(20000, mergedSettings.stageTimeoutMs || 20000))
+
+      try {
+        const translatedText = await minimaxTranslate({
+          settings: mergedSettings as AppSettings & { minimaxApiBaseUrl: string },
+          sourceText: 'This is a connectivity test.',
+          targetLanguage: mergedSettings.defaultTargetLanguage,
+          timeoutMs,
+        })
+        if (!translatedText.trim()) {
+          return {
+            ok: false,
+            message: '翻译服务返回空响应',
+          }
+        }
+        return {
+          ok: true,
+          message: '翻译服务连通测试通过',
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return {
+          ok: false,
+          message: message.trim() || '翻译服务连通测试失败',
+        }
+      }
+    },
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.systemProbePiper,
     async (_event, payload: ProbePiperPayload = {}): Promise<PiperProbeResult> => {
       const { settingsDao } = getDatabaseContext()
       const baseSettings = settingsDao.getSettings()
-      const mergedSettings: AppSettings = {
-        ...baseSettings,
-        ...(payload.settings ?? {}),
-        retryPolicy: {
-          ...baseSettings.retryPolicy,
-          ...((payload.settings?.retryPolicy as Partial<AppSettings['retryPolicy']> | undefined) ?? {}),
-        },
-      }
+      const mergedSettings: AppSettings = mergeSettingsWithPayload(baseSettings, payload.settings)
 
       const roots = getPiperResourceRoots()
       const platform = getPiperPlatformToken()

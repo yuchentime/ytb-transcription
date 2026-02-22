@@ -224,6 +224,32 @@ function selectTranscribeBackend(
   return 'openai-whisper'
 }
 
+const PROXY_ENV_KEYS = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+] as const
+
+function hasProxyEnv(): boolean {
+  return PROXY_ENV_KEYS.some((key) => {
+    const value = process.env[key]
+    return typeof value === 'string' && value.trim().length > 0
+  })
+}
+
+function isLikelyProxyTlsError(stderrLines: string[]): boolean {
+  const joined = stderrLines.join('\n').toLowerCase()
+  return (
+    joined.includes('http_proxy') ||
+    joined.includes('proxyerror') ||
+    joined.includes('connecterror') ||
+    joined.includes('unexpected_eof_while_reading')
+  )
+}
+
 async function downloadToFile(url: string, filePath: string): Promise<void> {
   const response = await fetch(url)
   if (!response.ok) {
@@ -303,6 +329,28 @@ function isSegmentStage(stageName: StepName): stageName is SegmentStageName {
 function parseFailedSegmentIds(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean)
+}
+
+type ArtifactTypeForResume = 'video' | 'audio' | 'transcript' | 'translation' | 'tts'
+
+function stageRequiresArtifact(
+  stageName: StepName,
+): ArtifactTypeForResume | null {
+  if (stageName === 'extracting') return 'video'
+  if (stageName === 'transcribing') return 'audio'
+  if (stageName === 'translating') return 'transcript'
+  if (stageName === 'synthesizing') return 'translation'
+  if (stageName === 'merging') return 'tts'
+  return null
+}
+
+function canResumeAtStage(
+  stageName: StepName,
+  artifactTypes: Set<ArtifactTypeForResume>,
+): boolean {
+  const required = stageRequiresArtifact(stageName)
+  if (!required) return true
+  return artifactTypes.has(required)
 }
 
 function toSafeNumber(
@@ -707,7 +755,20 @@ export class TaskEngine {
   resumeFromCheckpoint(taskId: string): { accepted: boolean; fromStage: string; reason?: string } {
     const snapshot = this.deps.taskRecoveryDao.getLatestSnapshot(taskId)
     if (!snapshot) {
-      return { accepted: false, fromStage: '', reason: 'No checkpoint found' }
+      const fallbackStage = this.resolveFallbackResumeStage(taskId)
+      const retrySet = this.resolveResumeRetrySet(taskId, fallbackStage, [])
+      if (retrySet.size > 0) {
+        this.retrySegmentRequests.set(taskId, retrySet)
+      } else {
+        this.retrySegmentRequests.delete(taskId)
+      }
+      this.resumeFromStageRequests.set(taskId, fallbackStage)
+      const started = this.start(taskId)
+      return {
+        accepted: started.accepted,
+        fromStage: fallbackStage,
+        reason: started.reason,
+      }
     }
 
     const stageName = this.resolveCheckpointStage(snapshot.stageName, snapshot.snapshotJson)
@@ -1621,10 +1682,15 @@ export class TaskEngine {
         'import json',
         'import pathlib',
         'import mlx_whisper',
+        'from huggingface_hub import snapshot_download',
         `audio = ${JSON.stringify(audioPath)}`,
         `repo = ${JSON.stringify(repo)}`,
         `language = ${task.sourceLanguage ? JSON.stringify(task.sourceLanguage) : 'None'}`,
-        'kwargs = {"path_or_hf_repo": repo}',
+        'try:',
+        '    model_ref = snapshot_download(repo_id=repo, local_files_only=True)',
+        'except Exception:',
+        '    model_ref = snapshot_download(repo_id=repo)',
+        'kwargs = {"path_or_hf_repo": model_ref}',
         'if language:',
         '    kwargs["language"] = language',
         'result = mlx_whisper.transcribe(audio, **kwargs)',
@@ -1634,30 +1700,81 @@ export class TaskEngine {
         'json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")',
       ]
 
-      await runCommand({
-        command: toolchain.pythonPath,
-        args: ['-c', scriptLines.join('\n')],
-        cwd: context.taskDir,
-        timeoutMs: settings.stageTimeoutMs,
-        env: {
+      const runMlxCommand = async (disableProxy: boolean): Promise<string[]> => {
+        const stderrLines: string[] = []
+        const env: NodeJS.ProcessEnv = {
           XDG_CACHE_HOME: path.join(this.deps.dataRoot, 'cache'),
           HF_HOME: path.join(this.deps.dataRoot, 'cache', 'hf'),
           HF_HUB_DISABLE_IMPLICIT_TOKEN: '1',
           HF_TOKEN: '',
           HUGGINGFACE_HUB_TOKEN: '',
           HUGGING_FACE_HUB_TOKEN: '',
-        },
-        isCanceled: () => this.cancelRequested.has(context.taskId),
-        onStderrLine: (line) => {
+        }
+        if (disableProxy) {
+          env.HTTP_PROXY = ''
+          env.HTTPS_PROXY = ''
+          env.ALL_PROXY = ''
+          env.http_proxy = ''
+          env.https_proxy = ''
+          env.all_proxy = ''
+          env.NO_PROXY = '*'
+          env.no_proxy = '*'
+        }
+
+        try {
+          await runCommand({
+            command: toolchain.pythonPath,
+            args: ['-c', scriptLines.join('\n')],
+            cwd: context.taskDir,
+            timeoutMs: settings.stageTimeoutMs,
+            env,
+            isCanceled: () => this.cancelRequested.has(context.taskId),
+            onStderrLine: (line) => {
+              stderrLines.push(line)
+              this.emit('log', {
+                taskId: context.taskId,
+                stage: 'transcribing',
+                level: 'info',
+                text: line,
+                timestamp: new Date().toISOString(),
+              })
+            },
+          })
+        } catch (error) {
+          if (error instanceof Error) {
+            const errorWithStderr = error as Error & { stderrLines?: string[] }
+            errorWithStderr.stderrLines = stderrLines
+            throw error
+          }
+          const wrapped = new Error(String(error))
+          const wrappedWithStderr = wrapped as Error & { stderrLines?: string[] }
+          wrappedWithStderr.stderrLines = stderrLines
+          throw wrapped
+        }
+        return stderrLines
+      }
+
+      try {
+        await runMlxCommand(false)
+      } catch (error) {
+        const stderrLines =
+          error instanceof Error &&
+          Array.isArray((error as Error & { stderrLines?: unknown }).stderrLines)
+            ? ((error as Error & { stderrLines?: string[] }).stderrLines ?? [])
+            : []
+        if (hasProxyEnv() && isLikelyProxyTlsError(stderrLines)) {
           this.emit('log', {
             taskId: context.taskId,
             stage: 'transcribing',
-            level: 'info',
-            text: line,
+            level: 'warn',
+            text: 'MLX download hit proxy TLS error, retrying once without proxy env',
             timestamp: new Date().toISOString(),
           })
-        },
-      })
+          await runMlxCommand(true)
+          return
+        }
+        throw error
+      }
     }
 
     const runWithMlx = async (
@@ -2164,6 +2281,36 @@ export class TaskEngine {
       retrySet.add(segmentId)
     }
     return retrySet
+  }
+
+  private resolveFallbackResumeStage(taskId: string): StepName {
+    const artifactTypes = new Set<ArtifactTypeForResume>(
+      this.deps.artifactDao
+        .listArtifacts(taskId)
+        .map((item) => item.artifactType as ArtifactTypeForResume),
+    )
+    const preferred = this.resolvePreferredResumeStage(taskId)
+    const preferredIndex = preferred ? STAGES.indexOf(preferred) : -1
+    const startIndex = preferredIndex >= 0 ? preferredIndex : STAGES.length - 1
+    for (let index = startIndex; index >= 0; index -= 1) {
+      const candidate = STAGES[index]
+      if (canResumeAtStage(candidate, artifactTypes)) {
+        return candidate
+      }
+    }
+    return 'downloading'
+  }
+
+  private resolvePreferredResumeStage(taskId: string): StepName | null {
+    const steps = this.deps.taskStepDao.listSteps(taskId)
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+      const step = steps[index]
+      if (step.status === 'failed' || step.status === 'running') {
+        return step.stepName
+      }
+    }
+    if (steps.length === 0) return null
+    return steps[steps.length - 1]?.stepName ?? null
   }
 
   private assertStageSegmentIntegrity(

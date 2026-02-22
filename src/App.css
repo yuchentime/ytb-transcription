@@ -315,6 +315,23 @@ input:read-only {
   flex-wrap: wrap;
 }
 
+.settings-connectivity-actions {
+  margin-top: 0;
+}
+
+.settings-connectivity-status {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-connectivity-status.success {
+  color: #15803d;
+}
+
+.settings-connectivity-status.error {
+  color: #b91c1c;
+}
+
 .btn {
   padding: 8px 14px;
   font-size: 13px;
