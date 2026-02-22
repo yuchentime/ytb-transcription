@@ -38,6 +38,7 @@ interface TaskPageModel {
   stageProgress: Record<string, number>
   overallProgress: number
   voiceProfiles: VoiceProfile[]
+  isPiperTts: boolean
   taskFormErrors: string[]
   segments: TaskSegmentRecord[]
   output: TaskOutput
@@ -259,25 +260,27 @@ export function TaskPage(props: TaskPageProps) {
             />
           </label>
 
-          <label>
-            音色预设
-            <select
-              value={props.model.taskForm.ttsVoiceId}
-              onChange={(event) =>
-                props.actions.setTaskForm((prev) => ({
-                  ...prev,
-                  ttsVoiceId: event.target.value,
-                }))
-              }
-            >
-              <option value="">请选择音色</option>
-              {props.model.voiceProfiles.map((voice) => (
-                <option key={voice.id} value={voice.id}>
-                  {voice.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
+          {!props.model.isPiperTts && (
+            <label>
+              音色预设
+              <select
+                value={props.model.taskForm.ttsVoiceId}
+                onChange={(event) =>
+                  props.actions.setTaskForm((prev) => ({
+                    ...prev,
+                    ttsVoiceId: event.target.value,
+                  }))
+                }
+              >
+                <option value="">请选择音色</option>
+                {props.model.voiceProfiles.map((voice) => (
+                  <option key={voice.id} value={voice.id}>
+                    {voice.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
 
         {props.model.taskFormErrors.length > 0 && (

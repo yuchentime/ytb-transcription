@@ -33,6 +33,7 @@ export const IPC_CHANNELS = {
   voicesValidateParams: 'voices:validateParams',
   systemOpenPath: 'system:openPath',
   systemExportDiagnostics: 'system:exportDiagnostics',
+  systemProbePiper: 'system:probePiper',
   fileReadAudio: 'file:readAudio',
   fileReadText: 'file:readText',
   taskStatus: 'task:status',
@@ -81,6 +82,24 @@ export interface ExportDiagnosticsPayload {
 
 export interface ExportDiagnosticsResult {
   filePath: string
+}
+
+export interface ProbePiperPayload {
+  settings?: Partial<AppSettings>
+}
+
+export interface PiperProbeCheckResult {
+  ok: boolean
+  path: string
+  message: string
+}
+
+export interface PiperProbeResult {
+  ok: boolean
+  summary: string
+  binary: PiperProbeCheckResult
+  model: PiperProbeCheckResult
+  config: PiperProbeCheckResult
 }
 
 export interface TaskDetail {
@@ -218,6 +237,7 @@ export interface RendererAPI {
   system: {
     openPath(payload: OpenPathPayload): Promise<OpenPathResult>
     exportDiagnostics(payload?: ExportDiagnosticsPayload): Promise<ExportDiagnosticsResult>
+    probePiper(payload?: ProbePiperPayload): Promise<PiperProbeResult>
   }
   file: {
     readAudio(filePath: string): Promise<AudioFileResult>

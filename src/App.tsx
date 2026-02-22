@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TaskStatus } from '../electron/core/db/types'
+import type { PiperProbeResult } from '../electron/ipc/channels'
 import {
   applyHistoryFiltersAction,
   cancelTaskAction,
@@ -71,14 +72,18 @@ function App() {
   const taskFormErrors = useMemo(() => {
     const errors: string[] = []
     const voiceId = taskState.form.ttsVoiceId.trim()
+    const isPiperTts = settingsState.data.ttsProvider === 'piper'
 
     if (!taskState.form.youtubeUrl.trim()) {
       errors.push('请输入有效的 YouTube 链接')
     }
-    if (!settingsState.data.ttsModelId.trim()) {
+    if (!isPiperTts && !settingsState.data.ttsModelId.trim()) {
       errors.push('请先在设置页选择 TTS 模型')
     }
-    if (!voiceId) {
+    if (isPiperTts && !settingsState.data.piperModelPath.trim()) {
+      errors.push('请先在设置页配置 Piper 模型路径')
+    }
+    if (!isPiperTts && !voiceId) {
       errors.push('请选择音色预设')
     }
     if (
@@ -88,7 +93,7 @@ function App() {
       errors.push('按时长分段时，目标时长需在 4 ~ 30 秒')
     }
 
-    if (voiceId && settingsState.voiceProfiles.length > 0) {
+    if (!isPiperTts && voiceId && settingsState.voiceProfiles.length > 0) {
       const selectedVoice = settingsState.voiceProfiles.find((voice) => voice.id === voiceId)
       if (!selectedVoice) {
         errors.push('音色不存在，请重新选择')
@@ -101,7 +106,7 @@ function App() {
     }
 
     return errors
-  }, [settingsState.data.ttsModelId, settingsState.voiceProfiles, taskState.form])
+  }, [settingsState.data.piperModelPath, settingsState.data.ttsModelId, settingsState.data.ttsProvider, settingsState.voiceProfiles, taskState.form])
 
   const isStartDisabled = useMemo(() => {
     return taskState.running || taskFormErrors.length > 0
@@ -222,6 +227,10 @@ function App() {
     })
   }
 
+  async function probePiper(settings: AppSettings): Promise<PiperProbeResult> {
+    return await ipcClient.system.probePiper({ settings })
+  }
+
   async function startTask(): Promise<void> {
     await startTaskAction({
       taskForm: taskState.form,
@@ -330,6 +339,7 @@ function App() {
   const settingsPageActions = {
     setSettings: setSettingsData,
     onSave: saveSettings,
+    onProbePiper: probePiper,
     clearSaveSuccess: () =>
       setSettingsState((prev) => ({
         ...prev,
@@ -374,6 +384,7 @@ function App() {
     stageProgress: taskState.stageProgress,
     overallProgress,
     voiceProfiles: settingsState.voiceProfiles,
+    isPiperTts: settingsState.data.ttsProvider === 'piper',
     taskFormErrors,
     segments: taskState.segments,
     output: taskState.output,

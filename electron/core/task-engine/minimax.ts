@@ -1,4 +1,8 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../db/types'
+import { runCommand } from './command'
 
 interface MiniMaxTextResponse {
   choices?: Array<{
@@ -122,7 +126,7 @@ function getOpenAICompatibleTextEndpoint(
 }
 
 function getOpenAICompatibleTtsEndpoint(
-  provider: Exclude<TtsProvider, 'minimax'>,
+  provider: Exclude<TtsProvider, 'minimax' | 'piper'>,
   baseUrl: string,
 ): string {
   const normalized = normalizeBaseUrl(baseUrl)
@@ -187,15 +191,20 @@ function ensureMiniMaxTtsSettings(settings: AppSettings & { minimaxApiBaseUrl: s
 }
 
 function ensureTtsSettings(settings: AppSettings): void {
+  const provider = settings.ttsProvider ?? 'minimax'
+  if (provider === 'piper') {
+    if (!settings.piperModelPath?.trim()) {
+      throw new Error('piperModelPath is required for Piper TTS')
+    }
+    return
+  }
   if (!settings.ttsModelId) {
     throw new Error('ttsModelId is required')
   }
-  const provider = settings.ttsProvider ?? 'minimax'
   const baseUrl = resolveTtsApiBaseUrl(settings, provider)
   if (!baseUrl.trim()) {
     throw new Error(`${provider} API base URL is required for TTS`)
   }
-  if (provider === 'custom') return
   const key = resolveTtsApiKey(settings, provider)
   if (!key.trim()) {
     throw new Error(`${provider} API key is required for TTS`)
@@ -247,8 +256,8 @@ function resolveTtsApiKey(
       return settings.minimaxApiKey ?? ''
     case 'glm':
       return settings.glmApiKey ?? ''
-    case 'custom':
-      return settings.customApiKey ?? ''
+    case 'piper':
+      return ''
   }
 }
 
@@ -261,8 +270,8 @@ function resolveTtsApiBaseUrl(
       return settings.minimaxApiBaseUrl ?? ''
     case 'glm':
       return settings.glmApiBaseUrl ?? ''
-    case 'custom':
-      return settings.customApiBaseUrl ?? ''
+    case 'piper':
+      return ''
   }
 }
 
@@ -448,7 +457,9 @@ export async function minimaxTranslate(params: {
         'You are a professional translator.',
         'Keep meaning faithful, concise, and natural.',
         'If context is provided, use it only for continuity.',
+        'Never translate PREVIOUS_CONTEXT or NEXT_CONTEXT.',
         'Output only the translation for CURRENT_SEGMENT.',
+        'If output repeats context, remove repeated text before returning.',
         'Do not include explanations, labels, or extra lines.',
       ].join(' '),
     },
@@ -603,7 +614,7 @@ async function resolveDownloadUrl(params: {
 
 async function requestOpenAICompatibleTts(params: {
   settings: AppSettings
-  provider: Exclude<TtsProvider, 'minimax'>
+  provider: Exclude<TtsProvider, 'minimax' | 'piper'>
   text: string
 }): Promise<{ downloadUrl?: string; audioBuffer?: Buffer; extension?: string }> {
   const baseUrl = resolveTtsApiBaseUrl(params.settings, params.provider)
@@ -661,12 +672,162 @@ async function requestOpenAICompatibleTts(params: {
   return { audioBuffer, extension }
 }
 
+async function requestPiperTts(params: {
+  settings: AppSettings
+  text: string
+}): Promise<{ audioBuffer: Buffer; extension: 'wav' }> {
+  const platformToken = (() => {
+    if (process.platform === 'darwin' && process.arch === 'arm64') return 'darwin-arm64'
+    if (process.platform === 'darwin' && process.arch === 'x64') return 'darwin-x64'
+    if (process.platform === 'win32' && process.arch === 'x64') return 'win32-x64'
+    if (process.platform === 'win32' && process.arch === 'arm64') return 'win32-arm64'
+    if (process.platform === 'linux' && process.arch === 'x64') return 'linux-x64'
+    if (process.platform === 'linux' && process.arch === 'arm64') return 'linux-arm64'
+    return null
+  })()
+  const binaryName = process.platform === 'win32' ? 'piper.exe' : 'piper'
+  const resourceRoots = [
+    process.resourcesPath,
+    path.resolve(process.cwd(), 'resources'),
+    process.env.APP_ROOT ? path.join(process.env.APP_ROOT, 'resources') : '',
+  ].filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+
+  const resolveBundledPiperPath = async (): Promise<string | null> => {
+    const candidates: string[] = []
+    for (const root of resourceRoots) {
+      if (platformToken) {
+        candidates.push(path.join(root, 'piper', platformToken, binaryName))
+      }
+      candidates.push(path.join(root, 'piper', binaryName))
+    }
+
+    for (const candidate of candidates) {
+      try {
+        await fs.access(candidate)
+        if (process.platform !== 'win32') {
+          await fs.chmod(candidate, 0o755).catch(() => undefined)
+        }
+        return candidate
+      } catch {
+        // continue
+      }
+    }
+    return null
+  }
+
+  const resolveModelPath = async (): Promise<string> => {
+    const raw = params.settings.piperModelPath.trim()
+    if (!raw) {
+      throw new Error('piperModelPath is required for Piper TTS')
+    }
+
+    const candidates = path.isAbsolute(raw)
+      ? [raw]
+      : [
+          path.resolve(process.cwd(), raw),
+          ...resourceRoots.map((root) => path.join(root, 'piper', 'models', raw)),
+          ...resourceRoots.map((root) => path.join(root, raw)),
+        ]
+    for (const candidate of candidates) {
+      try {
+        await fs.access(candidate)
+        return candidate
+      } catch {
+        // continue
+      }
+    }
+    throw new Error(`Piper model not found: ${raw}`)
+  }
+
+  const configuredCommand = params.settings.piperExecutablePath.trim()
+  const bundledCommand = await resolveBundledPiperPath()
+  const command = configuredCommand || bundledCommand || 'piper'
+  const modelPath = await resolveModelPath()
+  if (!modelPath) {
+    throw new Error('piperModelPath is required for Piper TTS')
+  }
+
+  const configuredConfigPath = params.settings.piperConfigPath.trim()
+  const inferredConfigPath = `${modelPath}.json`
+  const candidateConfigPaths =
+    configuredConfigPath.length > 0
+      ? path.isAbsolute(configuredConfigPath)
+        ? [configuredConfigPath]
+        : [
+            path.resolve(process.cwd(), configuredConfigPath),
+            ...resourceRoots.map((root) => path.join(root, 'piper', 'models', configuredConfigPath)),
+            ...resourceRoots.map((root) => path.join(root, configuredConfigPath)),
+          ]
+      : [inferredConfigPath]
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piper-tts-'))
+  const outputPath = path.join(tempDir, 'segment.wav')
+  const args = ['--model', modelPath, '--output_file', outputPath]
+
+  for (const configPath of candidateConfigPaths) {
+    try {
+      await fs.access(configPath)
+      args.push('--config', configPath)
+      break
+    } catch {
+      // continue
+    }
+  }
+
+  if (Number.isFinite(params.settings.piperSpeakerId) && params.settings.piperSpeakerId >= 0) {
+    args.push('--speaker', String(Math.floor(params.settings.piperSpeakerId)))
+  }
+
+  const lengthScale = Number.isFinite(params.settings.piperLengthScale)
+    ? Math.max(0.1, params.settings.piperLengthScale)
+    : 1
+  const noiseScale = Number.isFinite(params.settings.piperNoiseScale)
+    ? Math.max(0, params.settings.piperNoiseScale)
+    : 0.667
+  const noiseW = Number.isFinite(params.settings.piperNoiseW)
+    ? Math.max(0, params.settings.piperNoiseW)
+    : 0.8
+
+  args.push('--length_scale', String(lengthScale))
+  args.push('--noise_scale', String(noiseScale))
+  args.push('--noise_w', String(noiseW))
+
+  try {
+    await runCommand({
+      command,
+      args,
+      timeoutMs: Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
+      onSpawn: (child) => {
+        const input = params.text.endsWith('\n') ? params.text : `${params.text}\n`
+        child.stdin.write(input)
+        child.stdin.end()
+      },
+    })
+    const audioBuffer = await fs.readFile(outputPath)
+    if (audioBuffer.length === 0) {
+      throw new Error('Piper output is empty')
+    }
+    return { audioBuffer, extension: 'wav' }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Piper tts failed: ${message}`)
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 export async function minimaxSynthesize(params: {
   settings: AppSettings & { minimaxApiBaseUrl: string }
   text: string
 }): Promise<{ downloadUrl?: string; audioBuffer?: Buffer; extension?: string }> {
   ensureTtsSettings(params.settings)
   const provider = params.settings.ttsProvider ?? 'minimax'
+  if (provider === 'piper') {
+    return await requestPiperTts({
+      settings: params.settings,
+      text: params.text,
+    })
+  }
   if (provider !== 'minimax') {
     return await requestOpenAICompatibleTts({
       settings: params.settings,

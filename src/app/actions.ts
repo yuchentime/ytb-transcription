@@ -159,14 +159,17 @@ export async function loadSettingsAction(
   try {
     const result = await ipcClient.settings.get()
     const voiceProfiles = await ipcClient.voices.list().catch(() => [])
-    const voiceValidation = await ipcClient.voices
-      .validateParams({
-        voiceId: result.ttsVoiceId,
-        speed: result.ttsSpeed,
-        pitch: result.ttsPitch,
-        volume: result.ttsVolume,
-      })
-      .catch(() => ({ valid: true, errors: [] }))
+    const voiceValidation =
+      result.ttsProvider === 'piper'
+        ? { valid: true, errors: [] }
+        : await ipcClient.voices
+          .validateParams({
+            voiceId: result.ttsVoiceId,
+            speed: result.ttsSpeed,
+            pitch: result.ttsPitch,
+            volume: result.ttsVolume,
+          })
+          .catch(() => ({ valid: true, errors: [] }))
     if (!isMounted()) return
 
     setSettingsState((prev) => ({
@@ -220,14 +223,17 @@ export async function saveSettingsAction(
 
   try {
     const saved = await ipcClient.settings.update(settings)
-    const voiceValidation = await ipcClient.voices
-      .validateParams({
-        voiceId: saved.ttsVoiceId,
-        speed: saved.ttsSpeed,
-        pitch: saved.ttsPitch,
-        volume: saved.ttsVolume,
-      })
-      .catch(() => ({ valid: true, errors: [] }))
+    const voiceValidation =
+      saved.ttsProvider === 'piper'
+        ? { valid: true, errors: [] }
+        : await ipcClient.voices
+          .validateParams({
+            voiceId: saved.ttsVoiceId,
+            speed: saved.ttsSpeed,
+            pitch: saved.ttsPitch,
+            volume: saved.ttsVolume,
+          })
+          .catch(() => ({ valid: true, errors: [] }))
     setSettingsState((prev) => ({
       ...prev,
       data: saved,
@@ -309,14 +315,16 @@ export async function startTaskAction(
   }))
 
   try {
-    const voiceValidation = await ipcClient.voices.validateParams({
-      voiceId: taskForm.ttsVoiceId,
-      speed: settings.ttsSpeed,
-      pitch: settings.ttsPitch,
-      volume: settings.ttsVolume,
-    })
-    if (!voiceValidation.valid) {
-      throw new Error(voiceValidation.errors.join('；') || 'TTS 参数不合法')
+    if (settings.ttsProvider !== 'piper') {
+      const voiceValidation = await ipcClient.voices.validateParams({
+        voiceId: taskForm.ttsVoiceId,
+        speed: settings.ttsSpeed,
+        pitch: settings.ttsPitch,
+        volume: settings.ttsVolume,
+      })
+      if (!voiceValidation.valid) {
+        throw new Error(voiceValidation.errors.join('；') || 'TTS 参数不合法')
+      }
     }
 
     const task = await ipcClient.task.create({
@@ -356,6 +364,13 @@ export async function startTaskAction(
         ttsSpeed: settings.ttsSpeed,
         ttsPitch: settings.ttsPitch,
         ttsVolume: settings.ttsVolume,
+        piperExecutablePath: settings.piperExecutablePath,
+        piperModelPath: settings.piperModelPath,
+        piperConfigPath: settings.piperConfigPath,
+        piperSpeakerId: settings.piperSpeakerId,
+        piperLengthScale: settings.piperLengthScale,
+        piperNoiseScale: settings.piperNoiseScale,
+        piperNoiseW: settings.piperNoiseW,
       },
     })
 

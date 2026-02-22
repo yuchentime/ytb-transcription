@@ -27,7 +27,7 @@ export const TRANSLATE_MODEL_OPTIONS: Record<Exclude<TranslateProvider, 'custom'
   kimi: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
 }
 
-export const TTS_MODEL_OPTIONS: Record<Exclude<TtsProvider, 'custom'>, string[]> = {
+export const TTS_MODEL_OPTIONS: Record<Exclude<TtsProvider, 'piper'>, string[]> = {
   minimax: ['speech-2.8-hd', 'speech-2.6-hd', 'speech-2.8-turbo', 'speech-2.6-turbo', 'speech-02-hd', 'speech-02-turbo'],
   // GLM TTS models based on bigmodel.cn documentation
   glm: ['glm-4-voice', 'glm-4-voice-realtime'],
@@ -67,6 +67,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Custom/Local provider (e.g., LM Studio with OpenAI-compatible API)
   customApiKey: '',
   customApiBaseUrl: 'http://localhost:1234/v1', // LM Studio OpenAI-compatible API endpoint
+
+  // Built-in Piper local TTS
+  piperExecutablePath: '',
+  piperModelPath: '',
+  piperConfigPath: '',
+  piperSpeakerId: 0,
+  piperLengthScale: 1,
+  piperNoiseScale: 0.667,
+  piperNoiseW: 0.8,
 
   // YouTube download settings
   ytDlpAuthMode: 'none',

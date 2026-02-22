@@ -12,6 +12,15 @@
     "dist",
     "dist-electron"
   ],
+  "extraResources": [
+    {
+      "from": "resources/piper",
+      "to": "piper",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
   "mac": {
     "target": [
       "dmg"

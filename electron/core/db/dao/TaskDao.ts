@@ -12,7 +12,7 @@ interface TaskRow {
   whisperModel: string | null
   provider: 'minimax'
   translateProvider: 'minimax' | 'deepseek' | 'glm' | 'kimi' | 'custom'
-  ttsProvider: 'minimax' | 'glm' | 'custom'
+  ttsProvider: 'minimax' | 'glm' | 'piper'
   translateModelId: string | null
   ttsModelId: string | null
   ttsVoice: string | null
@@ -42,6 +42,13 @@ function sanitizePagination(page?: number, pageSize?: number): { page: number; p
 }
 
 function mapTask(row: TaskRow): TaskRecord {
+  const rawTtsProvider = (row.ttsProvider ?? row.provider ?? 'minimax') as string
+  const normalizedTtsProvider =
+    rawTtsProvider === 'piper' || rawTtsProvider === 'custom'
+      ? 'piper'
+      : rawTtsProvider === 'glm'
+        ? 'glm'
+        : 'minimax'
   return {
     id: row.id,
     youtubeUrl: row.youtubeUrl,
@@ -53,7 +60,7 @@ function mapTask(row: TaskRow): TaskRecord {
     provider: row.provider,
     // Fallback to legacy provider field if new fields are not set
     translateProvider: row.translateProvider ?? row.provider ?? 'minimax',
-    ttsProvider: row.ttsProvider ?? row.provider ?? 'minimax',
+    ttsProvider: normalizedTtsProvider,
     translateModelId: row.translateModelId,
     ttsModelId: row.ttsModelId,
     ttsVoice: row.ttsVoice,

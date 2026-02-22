@@ -43,6 +43,7 @@ const api: RendererAPI = {
   system: {
     openPath: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemOpenPath, payload),
     exportDiagnostics: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemExportDiagnostics, payload),
+    probePiper: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemProbePiper, payload),
   },
   file: {
     readAudio: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.fileReadAudio, filePath),

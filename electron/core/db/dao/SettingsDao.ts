@@ -41,6 +41,15 @@ const DEFAULT_SETTINGS: AppSettings = {
   customApiKey: '',
   customApiBaseUrl: 'http://localhost:1234/v1', // LM Studio OpenAI-compatible API endpoint
 
+  // Built-in Piper local TTS
+  piperExecutablePath: '',
+  piperModelPath: '',
+  piperConfigPath: '',
+  piperSpeakerId: 0,
+  piperLengthScale: 1,
+  piperNoiseScale: 0.667,
+  piperNoiseW: 0.8,
+
   // YouTube download settings
   ytDlpAuthMode: 'none',
   ytDlpCookiesBrowser: 'chrome',
@@ -140,7 +149,7 @@ function assertValidTranslateProvider(
 function assertValidTtsProvider(
   provider: unknown,
 ): asserts provider is AppSettings['ttsProvider'] {
-  if (provider === 'minimax' || provider === 'glm' || provider === 'custom') {
+  if (provider === 'minimax' || provider === 'glm' || provider === 'piper') {
     return
   }
   throw new Error('Invalid ttsProvider')
@@ -189,6 +198,9 @@ export class SettingsDao {
     if (!persisted.ttsProvider && merged.provider) {
       merged.ttsProvider = merged.provider as AppSettings['ttsProvider']
     }
+    if ((merged.ttsProvider as unknown) === 'custom') {
+      merged.ttsProvider = 'piper'
+    }
     return merged
   }
 
@@ -214,11 +226,53 @@ export class SettingsDao {
     if (patch.ttsProvider !== undefined) {
       assertValidTtsProvider(patch.ttsProvider)
     }
+    if (patch.piperExecutablePath !== undefined && typeof patch.piperExecutablePath !== 'string') {
+      throw new Error('piperExecutablePath must be a string')
+    }
+    if (patch.piperModelPath !== undefined && typeof patch.piperModelPath !== 'string') {
+      throw new Error('piperModelPath must be a string')
+    }
+    if (patch.piperConfigPath !== undefined && typeof patch.piperConfigPath !== 'string') {
+      throw new Error('piperConfigPath must be a string')
+    }
+    if (
+      patch.piperSpeakerId !== undefined &&
+      (typeof patch.piperSpeakerId !== 'number' || !Number.isFinite(patch.piperSpeakerId))
+    ) {
+      throw new Error('piperSpeakerId must be a finite number')
+    }
+    if (
+      patch.piperLengthScale !== undefined &&
+      (typeof patch.piperLengthScale !== 'number' || !Number.isFinite(patch.piperLengthScale))
+    ) {
+      throw new Error('piperLengthScale must be a finite number')
+    }
+    if (
+      patch.piperNoiseScale !== undefined &&
+      (typeof patch.piperNoiseScale !== 'number' || !Number.isFinite(patch.piperNoiseScale))
+    ) {
+      throw new Error('piperNoiseScale must be a finite number')
+    }
+    if (
+      patch.piperNoiseW !== undefined &&
+      (typeof patch.piperNoiseW !== 'number' || !Number.isFinite(patch.piperNoiseW))
+    ) {
+      throw new Error('piperNoiseW must be a finite number')
+    }
 
     const normalizedPatch: Partial<AppSettings> = { ...patch }
 
     if (normalizedPatch.ytDlpCookiesFilePath !== undefined) {
       normalizedPatch.ytDlpCookiesFilePath = normalizedPatch.ytDlpCookiesFilePath.trim()
+    }
+    if (normalizedPatch.piperExecutablePath !== undefined) {
+      normalizedPatch.piperExecutablePath = normalizedPatch.piperExecutablePath.trim()
+    }
+    if (normalizedPatch.piperModelPath !== undefined) {
+      normalizedPatch.piperModelPath = normalizedPatch.piperModelPath.trim()
+    }
+    if (normalizedPatch.piperConfigPath !== undefined) {
+      normalizedPatch.piperConfigPath = normalizedPatch.piperConfigPath.trim()
     }
 
     // Trim all base URL fields
@@ -246,6 +300,9 @@ export class SettingsDao {
     }
     if (candidate.ytDlpAuthMode === 'cookies_file' && !candidate.ytDlpCookiesFilePath.trim()) {
       throw new Error('ytDlpCookiesFilePath is required when ytDlpAuthMode=cookies_file')
+    }
+    if (candidate.ttsProvider === 'piper' && !candidate.piperModelPath.trim()) {
+      throw new Error('piperModelPath is required when ttsProvider=piper')
     }
 
     const now = new Date().toISOString()
@@ -304,20 +361,26 @@ export class SettingsDao {
     }
 
     // Validate TTS provider API key/base URL
-    const ttsApiKeyField = this.getApiKeyField(ttsProvider)
-    const ttsBaseUrlField = this.getBaseUrlField(ttsProvider)
-    if (ttsProvider !== 'custom' && !settings[ttsApiKeyField]) {
-      errors.push(`${ttsProvider} API key is required for TTS`)
-    }
-    if (!settings[ttsBaseUrlField]) {
-      errors.push(`${ttsProvider} API base URL is required for TTS`)
+    if (ttsProvider === 'piper') {
+      if (!settings.piperModelPath?.trim()) {
+        errors.push('piperModelPath is required for TTS')
+      }
+    } else {
+      const ttsApiKeyField = this.getApiKeyField(ttsProvider)
+      const ttsBaseUrlField = this.getBaseUrlField(ttsProvider)
+      if (!settings[ttsApiKeyField]) {
+        errors.push(`${ttsProvider} API key is required for TTS`)
+      }
+      if (!settings[ttsBaseUrlField]) {
+        errors.push(`${ttsProvider} API base URL is required for TTS`)
+      }
     }
 
     if (!settings.translateModelId) {
       errors.push('translateModelId is required')
     }
 
-    if (!settings.ttsModelId) {
+    if (ttsProvider !== 'piper' && !settings.ttsModelId) {
       errors.push('ttsModelId is required')
     }
 
@@ -336,6 +399,8 @@ export class SettingsDao {
         return 'kimiApiKey'
       case 'custom':
         return 'customApiKey'
+      case 'piper':
+        return 'customApiKey'
     }
   }
 
@@ -350,6 +415,8 @@ export class SettingsDao {
       case 'kimi':
         return 'kimiApiBaseUrl'
       case 'custom':
+        return 'customApiBaseUrl'
+      case 'piper':
         return 'customApiBaseUrl'
     }
   }

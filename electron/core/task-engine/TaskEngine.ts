@@ -384,6 +384,49 @@ function mergeChunkTranscript(previousText: string, currentText: string): string
   return `${previous}\n${current}`
 }
 
+function mergeTranslatedChunk(previousText: string, currentText: string): { mergedText: string; removedChars: number } {
+  const previous = previousText.trim()
+  const current = currentText.trim()
+  if (!previous) return { mergedText: current, removedChars: 0 }
+  if (!current) return { mergedText: previous, removedChars: 0 }
+
+  const previousLower = previous.toLowerCase()
+  const currentLower = current.toLowerCase()
+  if (previousLower.endsWith(currentLower)) {
+    return { mergedText: previous, removedChars: current.length }
+  }
+
+  const maxOverlap = Math.min(280, previous.length, current.length)
+  for (let overlap = maxOverlap; overlap >= 20; overlap -= 1) {
+    const prevTail = previousLower.slice(-overlap)
+    const currentHead = currentLower.slice(0, overlap)
+    if (prevTail === currentHead) {
+      return {
+        mergedText: `${previous}${current.slice(overlap)}`,
+        removedChars: overlap,
+      }
+    }
+  }
+
+  return { mergedText: `${previous}\n${current}`, removedChars: 0 }
+}
+
+function mergeTranslatedChunks(chunks: string[]): { text: string; removedChars: number } {
+  let merged = ''
+  let removedChars = 0
+
+  for (const chunk of chunks) {
+    const result = mergeTranslatedChunk(merged, chunk)
+    merged = result.mergedText
+    removedChars += result.removedChars
+  }
+
+  return {
+    text: merged.trim(),
+    removedChars,
+  }
+}
+
 function resolveDominantLanguage(candidates: string[]): string | null {
   if (candidates.length === 0) return null
   const counts = new Map<string, number>()
@@ -418,8 +461,8 @@ function resolveTtsApiBaseUrl(settings: AppSettings): string {
       return settings.minimaxApiBaseUrl
     case 'glm':
       return settings.glmApiBaseUrl
-    case 'custom':
-      return settings.customApiBaseUrl
+    case 'piper':
+      return ''
   }
 }
 
@@ -454,15 +497,15 @@ function resolveTranslateApiKeyState(settings: AppSettings): 'set' | 'missing' |
 
 function resolveTtsApiKeyState(settings: AppSettings): 'set' | 'missing' | 'optional-empty' {
   const provider = settings.ttsProvider
+  if (provider === 'piper') {
+    return 'optional-empty'
+  }
   const key =
     provider === 'minimax'
       ? settings.minimaxApiKey
       : provider === 'glm'
         ? settings.glmApiKey
-        : settings.customApiKey
-  if (provider === 'custom' && !key.trim()) {
-    return 'optional-empty'
-  }
+        : ''
   return key.trim() ? 'set' : 'missing'
 }
 
@@ -479,6 +522,9 @@ function buildComparableCheckpointConfig(config: Record<string, unknown>): Recor
     'translateModelId',
     'ttsModelId',
     'ttsVoiceId',
+    'piperExecutablePath',
+    'piperModelPath',
+    'piperConfigPath',
   ] as const
   for (const key of directStringKeys) {
     const value = toComparableString(config[key])
@@ -487,7 +533,16 @@ function buildComparableCheckpointConfig(config: Record<string, unknown>): Recor
     }
   }
 
-  const directNumberKeys = ['ttsSpeed', 'ttsPitch', 'ttsVolume', 'ttsPollingConcurrency'] as const
+  const directNumberKeys = [
+    'ttsSpeed',
+    'ttsPitch',
+    'ttsVolume',
+    'ttsPollingConcurrency',
+    'piperSpeakerId',
+    'piperLengthScale',
+    'piperNoiseScale',
+    'piperNoiseW',
+  ] as const
   for (const key of directNumberKeys) {
     const value = toComparableNumber(config[key])
     if (value !== undefined) {
@@ -814,7 +869,10 @@ export class TaskEngine {
   private emitProviderResolutionLog(taskId: string): void {
     const settings = this.resolveExecutionSettings(taskId)
     const translateEndpoint = normalizeEndpointForLog(resolveTranslateApiBaseUrl(settings))
-    const ttsEndpoint = normalizeEndpointForLog(resolveTtsApiBaseUrl(settings))
+    const ttsEndpoint =
+      settings.ttsProvider === 'piper'
+        ? '(local-piper)'
+        : normalizeEndpointForLog(resolveTtsApiBaseUrl(settings))
     this.emit('log', {
       taskId,
       stage: 'engine',
@@ -1294,7 +1352,7 @@ export class TaskEngine {
             ),
           )
         }
-        return nestedTranslated.join('\n')
+        return mergeTranslatedChunks(nestedTranslated).text
       }
     }
 
@@ -1306,7 +1364,7 @@ export class TaskEngine {
     }
 
     return {
-      text: translatedPieces.join('\n'),
+      text: mergeTranslatedChunks(translatedPieces).text,
       pieceCount: Math.max(translatedPieceCount, translatedPieces.length),
     }
   }
@@ -2018,6 +2076,13 @@ export class TaskEngine {
       ttsSpeed: settings.ttsSpeed,
       ttsPitch: settings.ttsPitch,
       ttsVolume: settings.ttsVolume,
+      piperExecutablePath: settings.piperExecutablePath,
+      piperModelPath: settings.piperModelPath,
+      piperConfigPath: settings.piperConfigPath,
+      piperSpeakerId: settings.piperSpeakerId,
+      piperLengthScale: settings.piperLengthScale,
+      piperNoiseScale: settings.piperNoiseScale,
+      piperNoiseW: settings.piperNoiseW,
       ttsPollingConcurrency,
       translationContextChars,
       translateRequestTimeoutMs,
@@ -2170,9 +2235,10 @@ export class TaskEngine {
     if (
       snapshotTtsProvider === 'minimax' ||
       snapshotTtsProvider === 'glm' ||
+      snapshotTtsProvider === 'piper' ||
       snapshotTtsProvider === 'custom'
     ) {
-      resolved.ttsProvider = snapshotTtsProvider
+      resolved.ttsProvider = snapshotTtsProvider === 'custom' ? 'piper' : snapshotTtsProvider
     }
 
     const patchString = (
@@ -2184,14 +2250,26 @@ export class TaskEngine {
         | 'deepseekApiBaseUrl'
         | 'glmApiBaseUrl'
         | 'kimiApiBaseUrl'
-        | 'customApiBaseUrl',
+        | 'customApiBaseUrl'
+        | 'piperExecutablePath'
+        | 'piperModelPath'
+        | 'piperConfigPath',
     ): void => {
       const value = snapshot[key]
       if (typeof value === 'string') {
         resolved[key] = value
       }
     }
-    const patchNumber = (key: 'ttsSpeed' | 'ttsPitch' | 'ttsVolume'): void => {
+    const patchNumber = (
+      key:
+        | 'ttsSpeed'
+        | 'ttsPitch'
+        | 'ttsVolume'
+        | 'piperSpeakerId'
+        | 'piperLengthScale'
+        | 'piperNoiseScale'
+        | 'piperNoiseW',
+    ): void => {
       const value = snapshot[key]
       if (typeof value === 'number' && Number.isFinite(value)) {
         resolved[key] = value
@@ -2206,9 +2284,16 @@ export class TaskEngine {
     patchString('glmApiBaseUrl')
     patchString('kimiApiBaseUrl')
     patchString('customApiBaseUrl')
+    patchString('piperExecutablePath')
+    patchString('piperModelPath')
+    patchString('piperConfigPath')
     patchNumber('ttsSpeed')
     patchNumber('ttsPitch')
     patchNumber('ttsVolume')
+    patchNumber('piperSpeakerId')
+    patchNumber('piperLengthScale')
+    patchNumber('piperNoiseScale')
+    patchNumber('piperNoiseW')
 
     return resolved
   }
@@ -2432,7 +2517,17 @@ export class TaskEngine {
       throw new Error(`Segment missing translated text: ${missing.id}`)
     }
 
-    let translated = ordered.map((segment) => segment.targetText ?? '').join('\n')
+    const mergedSegments = mergeTranslatedChunks(ordered.map((segment) => segment.targetText ?? ''))
+    let translated = mergedSegments.text
+    if (mergedSegments.removedChars > 0) {
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'translating',
+        level: 'warn',
+        text: `Translation merge removed duplicated overlap chars=${mergedSegments.removedChars}`,
+        timestamp: new Date().toISOString(),
+      })
+    }
     const estimatedLongByDuration =
       typeof context.audioDurationSec === 'number' &&
       Number.isFinite(context.audioDurationSec) &&

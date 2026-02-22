@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import type Database from 'better-sqlite3'
 import { SCHEMA_SQL } from './schema'
 
-const LATEST_SCHEMA_VERSION = 3
+const LATEST_SCHEMA_VERSION = 4
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 function resolveSchemaPath(): string | null {
@@ -101,6 +101,22 @@ function applyVersion3(db: Database.Database): void {
   applyMigration()
 }
 
+function applyVersion4(db: Database.Database): void {
+  const migrationPath = resolveMigrationPath('004_tts_provider_custom_to_piper.sql')
+  if (!migrationPath) {
+    throw new Error('Cannot find migration file: 004_tts_provider_custom_to_piper.sql')
+  }
+  const migrationSql = fs.readFileSync(migrationPath, 'utf-8')
+  const now = new Date().toISOString()
+
+  const applyMigration = db.transaction(() => {
+    db.exec(migrationSql)
+    db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(4, now)
+  })
+
+  applyMigration()
+}
+
 export function runMigrations(db: Database.Database): void {
   ensureMigrationsTable(db)
 
@@ -121,5 +137,9 @@ export function runMigrations(db: Database.Database): void {
 
   if (currentVersion < 3) {
     applyVersion3(db)
+  }
+
+  if (currentVersion < 4) {
+    applyVersion4(db)
   }
 }

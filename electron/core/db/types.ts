@@ -28,8 +28,8 @@ export type YtDlpCookiesBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox' | '
 // Translation providers: MiniMax, DeepSeek, GLM, Kimi, and Custom (for local models like LM Studio)
 export type TranslateProvider = 'minimax' | 'deepseek' | 'glm' | 'kimi' | 'custom'
 
-// TTS providers: MiniMax, GLM, and Custom (for local TTS models)
-export type TtsProvider = 'minimax' | 'glm' | 'custom'
+// TTS providers: MiniMax, GLM, and Piper (built-in local TTS)
+export type TtsProvider = 'minimax' | 'glm' | 'piper'
 export type SegmentStatus = 'pending' | 'running' | 'success' | 'failed'
 export type SegmentStageName = 'translating' | 'synthesizing'
 export type SegmentationStrategy = 'punctuation' | 'sentence' | 'duration'
@@ -224,6 +224,15 @@ export interface AppSettings {
   // Custom/Local provider (e.g., LM Studio)
   customApiKey: string
   customApiBaseUrl: string
+
+  // Built-in Piper local TTS
+  piperExecutablePath: string
+  piperModelPath: string
+  piperConfigPath: string
+  piperSpeakerId: number
+  piperLengthScale: number
+  piperNoiseScale: number
+  piperNoiseW: number
 
   // YouTube download settings
   ytDlpAuthMode: YtDlpAuthMode

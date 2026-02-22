@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../../electron/core/db/types'
+import type { PiperProbeResult } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
 import { translateLanguageLabel } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
@@ -19,16 +21,16 @@ const TRANSLATE_PROVIDERS: { value: TranslateProvider; label: string }[] = [
 const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
   { value: 'minimax', label: 'MiniMax' },
   { value: 'glm', label: 'GLM (智谱AI)' },
-  { value: 'custom', label: '自定义 / Local' },
+  { value: 'piper', label: '内置语音合成（Piper）' },
 ]
 
 // Default base URLs for providers
-const DEFAULT_BASE_URLS: Record<Exclude<TranslateProvider | TtsProvider, 'custom'>, string> = {
+const DEFAULT_BASE_URLS = {
   minimax: 'https://api.minimaxi.com',
   deepseek: 'https://api.deepseek.com',
   glm: 'https://open.bigmodel.cn/api/paas',
   kimi: 'https://api.moonshot.cn',
-}
+} as const
 
 interface SettingsPageModel {
   settings: AppSettings
@@ -54,6 +56,7 @@ interface SettingsPageModel {
 interface SettingsPageActions {
   setSettings: Dispatch<SetStateAction<AppSettings>>
   onSave(): Promise<void>
+  onProbePiper(settings: AppSettings): Promise<PiperProbeResult>
   clearSaveSuccess(): void
   clearSaveError(): void
 }
@@ -67,6 +70,9 @@ interface SettingsPageProps {
 export function SettingsPage(props: SettingsPageProps) {
   const { settings } = props.model
   const { setSettings } = props.actions
+  const [probeLoading, setProbeLoading] = useState(false)
+  const [probeResult, setProbeResult] = useState<PiperProbeResult | null>(null)
+  const [probeError, setProbeError] = useState('')
 
   // Helper to get available models for a provider
   const getTranslateModels = (provider: TranslateProvider): string[] => {
@@ -75,7 +81,7 @@ export function SettingsPage(props: SettingsPageProps) {
   }
 
   const getTtsModels = (provider: TtsProvider): string[] => {
-    if (provider === 'custom') return []
+    if (provider === 'piper') return []
     return TTS_MODEL_OPTIONS[provider] ?? []
   }
 
@@ -92,6 +98,9 @@ export function SettingsPage(props: SettingsPageProps) {
         return 'kimiApiKey'
       case 'custom':
         // For custom/local providers, use a generic custom API key field
+        return 'customApiKey' as keyof AppSettings
+      case 'piper':
+        // Piper does not use API key, keep return type complete for shared helper.
         return 'customApiKey' as keyof AppSettings
     }
   }
@@ -110,6 +119,23 @@ export function SettingsPage(props: SettingsPageProps) {
       case 'custom':
         // For custom/local providers, use a generic custom base URL field
         return 'customApiBaseUrl' as keyof AppSettings
+      case 'piper':
+        // Piper does not use base URL, keep return type complete for shared helper.
+        return 'customApiBaseUrl' as keyof AppSettings
+    }
+  }
+
+  async function handleProbePiper(): Promise<void> {
+    setProbeLoading(true)
+    setProbeError('')
+    try {
+      const result = await props.actions.onProbePiper(settings)
+      setProbeResult(result)
+    } catch (error) {
+      setProbeResult(null)
+      setProbeError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setProbeLoading(false)
     }
   }
 
@@ -242,13 +268,20 @@ export function SettingsPage(props: SettingsPageProps) {
                 const availableModels = getTtsModels(newProvider)
                 const currentModelValid = availableModels.includes(settings.ttsModelId)
                 setSettings((prev) => {
+                  if (newProvider === 'piper') {
+                    return {
+                      ...prev,
+                      ttsProvider: newProvider,
+                      ttsModelId: '',
+                    }
+                  }
                   const baseUrlField = getBaseUrlField(newProvider)
-                  const defaultBaseUrl = newProvider !== 'custom' ? DEFAULT_BASE_URLS[newProvider] : ''
+                  const defaultBaseUrl = DEFAULT_BASE_URLS[newProvider]
                   return {
                     ...prev,
                     ttsProvider: newProvider,
                     // Auto-select first available model if current model is not valid for new provider
-                    ttsModelId: currentModelValid ? prev.ttsModelId : '',
+                    ttsModelId: currentModelValid ? prev.ttsModelId : (availableModels[0] ?? ''),
                     // Auto-set default base URL if empty
                     [baseUrlField]: (prev[baseUrlField] as string) || defaultBaseUrl,
                   }
@@ -263,56 +296,56 @@ export function SettingsPage(props: SettingsPageProps) {
             </select>
           </label>
 
-          {/* TTS Provider API Key */}
-          <label>
-            {props.t('settings.ttsApiKey', { provider: settings.ttsProvider.toUpperCase() })}
-            <input
-              type="password"
-              value={settings[getApiKeyField(settings.ttsProvider)] as string}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  [getApiKeyField(prev.ttsProvider)]: event.target.value,
-                }))
-              }
-              placeholder="sk-..."
-            />
-          </label>
+          {settings.ttsProvider !== 'piper' && (
+            <>
+              {/* TTS Provider API Key */}
+              <label>
+                {props.t('settings.ttsApiKey', { provider: settings.ttsProvider.toUpperCase() })}
+                <input
+                  type="password"
+                  value={settings[getApiKeyField(settings.ttsProvider)] as string}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      [getApiKeyField(prev.ttsProvider)]: event.target.value,
+                    }))
+                  }
+                  placeholder="sk-..."
+                />
+              </label>
 
-          {/* TTS Provider Base URL */}
-          <label>
-            {props.t('settings.ttsBaseUrl', { provider: settings.ttsProvider.toUpperCase() })}
-            <input
-              type="text"
-              value={settings[getBaseUrlField(settings.ttsProvider)] as string}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  [getBaseUrlField(prev.ttsProvider)]: event.target.value.trim(),
-                }))
-              }
-              placeholder={
-                settings.ttsProvider !== 'custom'
-                  ? DEFAULT_BASE_URLS[settings.ttsProvider]
-                  : 'http://localhost:1234/v1 (OpenAI-compatible)'
-              }
-            />
-          </label>
+              {/* TTS Provider Base URL */}
+              <label>
+                {props.t('settings.ttsBaseUrl', { provider: settings.ttsProvider.toUpperCase() })}
+                <input
+                  type="text"
+                  value={settings[getBaseUrlField(settings.ttsProvider)] as string}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      [getBaseUrlField(prev.ttsProvider)]: event.target.value.trim(),
+                    }))
+                  }
+                  placeholder={DEFAULT_BASE_URLS[settings.ttsProvider]}
+                />
+              </label>
+            </>
+          )}
 
           {/* TTS Model ID */}
           <label>
             {props.t('settings.ttsModelId')}
-            {settings.ttsProvider === 'custom' ? (
+            {settings.ttsProvider === 'piper' ? (
               <input
                 type="text"
-                value={settings.ttsModelId}
+                value={settings.piperModelPath}
                 onChange={(event) =>
                   setSettings((prev) => ({
                     ...prev,
-                    ttsModelId: event.target.value,
+                    piperModelPath: event.target.value,
                   }))
                 }
-                placeholder="如：local-tts-model"
+                placeholder="/path/to/model.onnx"
               />
             ) : (
               <select
@@ -334,6 +367,102 @@ export function SettingsPage(props: SettingsPageProps) {
             )}
           </label>
 
+          {settings.ttsProvider === 'piper' && (
+            <>
+              <label>
+                Piper 可执行文件路径
+                <input
+                  type="text"
+                  value={settings.piperExecutablePath}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      piperExecutablePath: event.target.value,
+                    }))
+                  }
+                  placeholder="留空则使用 PATH 中的 piper"
+                />
+              </label>
+              <label>
+                Piper 配置文件路径
+                <input
+                  type="text"
+                  value={settings.piperConfigPath}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      piperConfigPath: event.target.value,
+                    }))
+                  }
+                  placeholder="可选，默认同名 .onnx.json"
+                />
+              </label>
+              <label>
+                Piper Speaker ID
+                <input
+                  type="number"
+                  value={settings.piperSpeakerId}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      piperSpeakerId: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                    }))
+                  }
+                  min={0}
+                  step={1}
+                />
+              </label>
+              <label>
+                Piper Length Scale
+                <input
+                  type="number"
+                  value={settings.piperLengthScale}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      piperLengthScale: Math.max(0.1, Number(event.target.value) || 1),
+                    }))
+                  }
+                  min={0.1}
+                  max={3}
+                  step={0.1}
+                />
+              </label>
+              <label>
+                Piper Noise Scale
+                <input
+                  type="number"
+                  value={settings.piperNoiseScale}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      piperNoiseScale: Math.max(0, Number(event.target.value) || 0),
+                    }))
+                  }
+                  min={0}
+                  max={2}
+                  step={0.01}
+                />
+              </label>
+              <label>
+                Piper Noise W
+                <input
+                  type="number"
+                  value={settings.piperNoiseW}
+                  onChange={(event) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      piperNoiseW: Math.max(0, Number(event.target.value) || 0),
+                    }))
+                  }
+                  min={0}
+                  max={2}
+                  step={0.01}
+                />
+              </label>
+            </>
+          )}
+
           {/* Default Target Language */}
           <label>
             {props.t('settings.defaultTargetLanguage')}
@@ -353,35 +482,56 @@ export function SettingsPage(props: SettingsPageProps) {
           </label>
 
           {/* Voice Preset Panel */}
-          <div className="full">
-            <VoicePresetPanel
-              voiceId={settings.ttsVoiceId}
-              speed={settings.ttsSpeed}
-              pitch={settings.ttsPitch}
-              volume={settings.ttsVolume}
-              voiceProfiles={props.model.voiceProfiles}
-              validationErrors={props.model.voiceValidationErrors}
-              showAdvancedParams={false}
-              setVoiceConfig={(updater) =>
-                setSettings((prev) => {
-                  const base = {
-                    voiceId: prev.ttsVoiceId,
-                    speed: prev.ttsSpeed,
-                    pitch: prev.ttsPitch,
-                    volume: prev.ttsVolume,
-                  }
-                  const next = typeof updater === 'function' ? updater(base) : updater
-                  return {
-                    ...prev,
-                    ttsVoiceId: next.voiceId,
-                    ttsSpeed: next.speed,
-                    ttsPitch: next.pitch,
-                    ttsVolume: next.volume,
-                  }
-                })
-              }
-            />
-          </div>
+          {settings.ttsProvider !== 'piper' && (
+            <div className="full">
+              <VoicePresetPanel
+                voiceId={settings.ttsVoiceId}
+                speed={settings.ttsSpeed}
+                pitch={settings.ttsPitch}
+                volume={settings.ttsVolume}
+                voiceProfiles={props.model.voiceProfiles}
+                validationErrors={props.model.voiceValidationErrors}
+                showAdvancedParams={false}
+                setVoiceConfig={(updater) =>
+                  setSettings((prev) => {
+                    const base = {
+                      voiceId: prev.ttsVoiceId,
+                      speed: prev.ttsSpeed,
+                      pitch: prev.ttsPitch,
+                      volume: prev.ttsVolume,
+                    }
+                    const next = typeof updater === 'function' ? updater(base) : updater
+                    return {
+                      ...prev,
+                      ttsVoiceId: next.voiceId,
+                      ttsSpeed: next.speed,
+                      ttsPitch: next.pitch,
+                      ttsVolume: next.volume,
+                    }
+                  })
+                }
+              />
+            </div>
+          )}
+          {settings.ttsProvider === 'piper' && (
+            <div className="full">
+              <p className="hint">Piper 使用本地模型，不依赖云端 API Key/Base URL。</p>
+              <div className="actions">
+                <button className="btn" type="button" onClick={() => void handleProbePiper()} disabled={probeLoading}>
+                  {probeLoading ? '检测中...' : '检测 Piper 就绪状态'}
+                </button>
+              </div>
+              {probeError && <p className="error">{probeError}</p>}
+              {probeResult && (
+                <div className={probeResult.ok ? 'hint' : 'error'}>
+                  <p>{probeResult.summary}</p>
+                  <p>Binary: {probeResult.binary.ok ? 'OK' : 'FAIL'} | {probeResult.binary.path}</p>
+                  <p>Model: {probeResult.model.ok ? 'OK' : 'FAIL'} | {probeResult.model.path}</p>
+                  <p>Config: {probeResult.config.ok ? 'OK' : 'FAIL'} | {probeResult.config.path}</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
       
