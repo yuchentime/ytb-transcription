@@ -12,6 +12,8 @@ import {
   IPC_CHANNELS,
   type ExportDiagnosticsPayload,
   type ExportDiagnosticsResult,
+  type ExportTaskArtifactsPayload,
+  type ExportTaskArtifactsResult,
   type InstallPiperPayload,
   type OpenPathPayload,
   type OpenPathResult,
@@ -41,6 +43,24 @@ function maskLocalPath(rawPath: string): string {
   if (!trimmed) return ''
   const fileName = path.basename(trimmed)
   return fileName ? `***${fileName}` : '***'
+}
+
+function sanitizeFileNameSegment(value: string): string {
+  return value
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function getLatestArtifactPath(
+  artifacts: Array<{ artifactType: string; filePath: string }>,
+  artifactType: string,
+): string | null {
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const item = artifacts[index]
+    if (item.artifactType === artifactType) return item.filePath
+  }
+  return null
 }
 
 function sanitizeSettings(
@@ -432,6 +452,61 @@ export function registerSystemHandlers(): void {
 
       await fs.writeFile(filePath, JSON.stringify(report, null, 2), 'utf-8')
       return { filePath }
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.systemExportTaskArtifacts,
+    async (_event, payload: ExportTaskArtifactsPayload): Promise<ExportTaskArtifactsResult> => {
+      if (!payload?.taskId || typeof payload.taskId !== 'string') {
+        throw new Error('taskId is required')
+      }
+
+      const { taskDao, artifactDao } = getDatabaseContext()
+      const task = taskDao.getTaskById(payload.taskId)
+      const artifacts = artifactDao.listArtifacts(payload.taskId)
+
+      const ttsPath = getLatestArtifactPath(artifacts, 'tts')
+      const transcriptPath = getLatestArtifactPath(artifacts, 'transcript')
+      const translationPath = getLatestArtifactPath(artifacts, 'translation')
+      if (!ttsPath && !transcriptPath && !translationPath) {
+        throw new Error('No exportable artifacts found for this task')
+      }
+
+      const timestamp = new Date().toISOString().replace(/[.:]/g, '-')
+      const taskLabel = sanitizeFileNameSegment(task.youtubeTitle ?? '') || payload.taskId
+      const exportDir = path.join(app.getPath('downloads'), 'ytb-transcription-exports', `${taskLabel}-${timestamp}`)
+      await fs.mkdir(exportDir, { recursive: true })
+
+      const exportedFiles: string[] = []
+
+      if (ttsPath && (await fileExists(ttsPath))) {
+        const ext = path.extname(ttsPath).toLowerCase() || '.mp3'
+        const targetPath = path.join(exportDir, `${taskLabel}-audio${ext}`)
+        await fs.copyFile(ttsPath, targetPath)
+        exportedFiles.push(targetPath)
+      }
+
+      if (transcriptPath && (await fileExists(transcriptPath))) {
+        const targetPath = path.join(exportDir, `${taskLabel}-transcript.txt`)
+        await fs.copyFile(transcriptPath, targetPath)
+        exportedFiles.push(targetPath)
+      }
+
+      if (translationPath && (await fileExists(translationPath))) {
+        const targetPath = path.join(exportDir, `${taskLabel}-translation.txt`)
+        await fs.copyFile(translationPath, targetPath)
+        exportedFiles.push(targetPath)
+      }
+
+      if (exportedFiles.length === 0) {
+        throw new Error('No exportable files exist on disk for this task')
+      }
+
+      return {
+        exportDir,
+        files: exportedFiles,
+      }
     },
   )
 

@@ -7,7 +7,6 @@ import type {
   TranslateConnectivityResult,
 } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
-import { translateLanguageLabel } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
 import { Toast } from '../components/Toast'
 import { TRANSLATE_MODEL_OPTIONS, TTS_MODEL_OPTIONS } from '../app/utils'
@@ -455,22 +454,6 @@ export function SettingsPage(props: SettingsPageProps) {
               </select>
             </label>
           )}
-
-          {/* Default Target Language */}
-          <label>
-            {props.t('settings.defaultTargetLanguage')}
-            <select
-              value={settings.defaultTargetLanguage}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  defaultTargetLanguage: event.target.value as 'zh',
-                }))
-              }
-            >
-              <option value="zh">中文</option>
-            </select>
-          </label>
 
           {/* Voice Preset Panel */}
           {settings.ttsProvider !== 'piper' && (

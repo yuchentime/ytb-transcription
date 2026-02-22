@@ -54,7 +54,8 @@ function App() {
   const [settingsState, setSettingsState] = useState(createInitialSettingsState)
   const [taskState, setTaskState] = useState<TaskState>(createInitialTaskState)
   const [historyState, setHistoryState] = useState<HistoryState>(createInitialHistoryState)
-  const [playingAudio, setPlayingAudio] = useState<{ taskId: string; url: string } | null>(null)
+  const [playingAudio, setPlayingAudio] = useState<{ taskId: string; url: string; title: string } | null>(null)
+  const playingAudioUrlRef = useRef<string>('')
   const [resumeConfirmDialog, setResumeConfirmDialog] = useState<{
     open: boolean
     runningTaskId: string
@@ -97,13 +98,6 @@ function App() {
     if (!isPiperTts && !voiceId) {
       errors.push('请选择音色预设')
     }
-    if (
-      taskState.form.segmentationStrategy === 'duration' &&
-      (taskState.form.segmentationTargetDurationSec < 4 || taskState.form.segmentationTargetDurationSec > 30)
-    ) {
-      errors.push('按时长分段时，目标时长需在 4 ~ 30 秒')
-    }
-
     if (!isPiperTts && voiceId && settingsState.voiceProfiles.length > 0) {
       const selectedVoice = settingsState.voiceProfiles.find((voice) => voice.id === voiceId)
       if (!selectedVoice) {
@@ -183,6 +177,15 @@ function App() {
     resolver?.(confirmed)
   }, [])
 
+  const stopPlayingAudio = useCallback(() => {
+    setPlayingAudio((prev) => {
+      if (prev?.url) {
+        URL.revokeObjectURL(prev.url)
+      }
+      return null
+    })
+  }, [])
+
   const loadHistory = useCallback(async (query: HistoryQueryState): Promise<void> => {
     await loadHistoryAction({
       ipcClient,
@@ -220,7 +223,14 @@ function App() {
   }, [locale])
 
   useEffect(() => {
+    playingAudioUrlRef.current = playingAudio?.url ?? ''
+  }, [playingAudio?.url])
+
+  useEffect(() => {
     return () => {
+      if (playingAudioUrlRef.current) {
+        URL.revokeObjectURL(playingAudioUrlRef.current)
+      }
       if (resumeConfirmResolverRef.current) {
         resumeConfirmResolverRef.current(false)
         resumeConfirmResolverRef.current = null
@@ -279,11 +289,22 @@ function App() {
   }
 
   async function installPiper(settings: AppSettings, forceReinstall = false): Promise<PiperInstallResult> {
-    return await ipcClient.system.installPiper({ settings, forceReinstall })
+    return await ipcClient.system.installPiper({
+      settings: {
+        ...settings,
+        defaultTargetLanguage: taskState.form.targetLanguage,
+      },
+      forceReinstall,
+    })
   }
 
   async function testTranslateConnectivity(settings: AppSettings): Promise<TranslateConnectivityResult> {
-    return await ipcClient.system.testTranslateConnectivity({ settings })
+    return await ipcClient.system.testTranslateConnectivity({
+      settings: {
+        ...settings,
+        defaultTargetLanguage: taskState.form.targetLanguage,
+      },
+    })
   }
 
   async function startTask(): Promise<void> {
@@ -355,6 +376,39 @@ function App() {
       pushLog,
       t,
     })
+  }
+
+  async function handleDownloadHistoryArtifacts(taskId: string): Promise<void> {
+    setHistoryState((prev) => ({
+      ...prev,
+      busyTaskId: taskId,
+      error: '',
+    }))
+
+    try {
+      const result = await ipcClient.system.exportTaskArtifacts({ taskId })
+      await ipcClient.system.openPath({ path: result.exportDir })
+
+      pushLog({
+        time: new Date().toISOString(),
+        stage: 'history',
+        level: 'info',
+        text: t('log.artifactsExported', { taskId, count: result.files.length }),
+      })
+    } catch (error) {
+      setHistoryState((prev) => ({
+        ...prev,
+        error:
+          error instanceof Error
+            ? t('error.downloadArtifacts', { message: error.message })
+            : t('error.downloadArtifacts', { message: '' }),
+      }))
+    } finally {
+      setHistoryState((prev) => ({
+        ...prev,
+        busyTaskId: '',
+      }))
+    }
   }
 
   async function handleRetryFailedSegments(segmentIds?: string[]): Promise<void> {
@@ -537,7 +591,6 @@ function App() {
       !historyState.recoverableOnly && historyState.query.page < historyTotalPages && !historyState.loading,
     historyRecoverableOnly: historyState.recoverableOnly,
     playingTaskId: playingAudio?.taskId ?? '',
-    playingAudioUrl: playingAudio?.url ?? '',
   }
   const historyPageActions = {
     onHistoryKeywordDraftChange: (value: string) =>
@@ -572,6 +625,7 @@ function App() {
     onApplyFilters: applyHistoryFilters,
     onRefresh: () => loadHistory(historyState.query),
     onResumeTask: handleResumeHistoryTask,
+    onDownloadArtifacts: handleDownloadHistoryArtifacts,
     onDeleteTask: handleDeleteHistoryTask,
     onPlayAudio: async (taskId: string) => {
       const task = historyState.items.find((item) => item.id === taskId)
@@ -586,10 +640,15 @@ function App() {
       if (result) {
         const blob = new Blob([result.data], { type: result.mimeType })
         const url = URL.createObjectURL(blob)
-        setPlayingAudio({ taskId, url })
+        setPlayingAudio((prev) => {
+          if (prev?.url) {
+            URL.revokeObjectURL(prev.url)
+          }
+          return { taskId, url, title: task.youtubeTitle || task.youtubeUrl }
+        })
       }
     },
-    onStopAudio: () => setPlayingAudio(null),
+    onStopAudio: stopPlayingAudio,
     onPrevPage: () =>
       setHistoryState((prev) => ({
         ...prev,
@@ -667,6 +726,24 @@ function App() {
         onCancel={() => resolveResumeOverrideConfirm(false)}
         onConfirm={() => resolveResumeOverrideConfirm(true)}
       />
+      {playingAudio && (
+        <div className="floating-audio-player" role="region" aria-label={t('history.floatingPlayerAriaLabel')}>
+          <div className="floating-audio-header">
+            <p className="floating-audio-title" title={playingAudio.title}>
+              {playingAudio.title}
+            </p>
+            <button
+              className="floating-audio-close"
+              type="button"
+              aria-label={t('history.closePlayer')}
+              onClick={stopPlayingAudio}
+            >
+              ×
+            </button>
+          </div>
+          <audio controls autoPlay src={playingAudio.url} />
+        </div>
+      )}
     </main>
   )
 }

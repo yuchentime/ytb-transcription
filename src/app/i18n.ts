@@ -61,6 +61,7 @@ const zhCNMessages = {
   'history.view': '查看',
   'history.processing': '处理中...',
   'history.retry': '重试',
+  'history.downloadArtifacts': '下载',
   'history.delete': '删除',
   'history.exportDiagnostics': '导出诊断',
   'history.pageInfo': '第 {page} / {totalPages} 页（共 {total} 条）',
@@ -71,6 +72,8 @@ const zhCNMessages = {
   'history.resumeOverrideConfirm':
     '当前任务 {runningTaskId} 正在处理中。继续恢复任务 {taskId} 将中断当前任务，是否继续？',
   'history.resumeOverrideConfirmButton': '中断并恢复',
+  'history.floatingPlayerAriaLabel': '悬浮音频播放器',
+  'history.closePlayer': '关闭播放器',
 
   'settings.title': '设置',
   'settings.loading': '正在加载设置...',
@@ -143,6 +146,7 @@ const zhCNMessages = {
   'runtime.error': '错误',
 
   'lang.all': '全部',
+  'lang.zh': '中文',
   'lang.zhCN': '简体中文',
   'lang.zhTW': '繁体中文',
 
@@ -157,6 +161,8 @@ const zhCNMessages = {
   'error.openPath': '打开路径失败：{message}',
   'error.exportDiagnostics': '导出诊断失败：{message}',
   'error.deleteTask': '删除任务失败',
+  'error.noExportableArtifacts': '未找到可导出的音频、转录或翻译文件',
+  'error.downloadArtifacts': '导出文件失败：{message}',
   'error.retryTask': '重试任务失败',
   'error.taskNotDeleted': '任务未被删除',
   'error.retryNotAccepted': '重试请求未被接受',
@@ -168,6 +174,7 @@ const zhCNMessages = {
   'log.taskCompleted': '任务完成',
   'log.diagnosticsExported': '诊断已导出：{filePath}',
   'log.deletedTask': '已删除任务：{taskId}',
+  'log.artifactsExported': '已导出任务产物：{taskId}（{count} 个文件）',
   'log.retryRequested': '已发起重试：{taskId}',
 
   'common.cancel': '取消',
@@ -234,6 +241,7 @@ const zhTWMessages: Messages = {
   'history.view': '查看',
   'history.processing': '處理中...',
   'history.retry': '重試',
+  'history.downloadArtifacts': '下載',
   'history.delete': '刪除',
   'history.exportDiagnostics': '匯出診斷',
   'history.pageInfo': '第 {page} / {totalPages} 頁（共 {total} 筆）',
@@ -244,6 +252,8 @@ const zhTWMessages: Messages = {
   'history.resumeOverrideConfirm':
     '目前任務 {runningTaskId} 正在處理中。繼續恢復任務 {taskId} 將中斷目前任務，是否繼續？',
   'history.resumeOverrideConfirmButton': '中斷並恢復',
+  'history.floatingPlayerAriaLabel': '懸浮音訊播放器',
+  'history.closePlayer': '關閉播放器',
 
   'settings.title': '設定',
   'settings.loading': '正在載入設定...',
@@ -316,6 +326,7 @@ const zhTWMessages: Messages = {
   'runtime.error': '錯誤',
 
   'lang.all': '全部',
+  'lang.zh': '中文',
   'lang.zhCN': '簡體中文',
   'lang.zhTW': '繁體中文',
 
@@ -330,6 +341,8 @@ const zhTWMessages: Messages = {
   'error.openPath': '開啟路徑失敗：{message}',
   'error.exportDiagnostics': '匯出診斷失敗：{message}',
   'error.deleteTask': '刪除任務失敗',
+  'error.noExportableArtifacts': '未找到可匯出的音訊、轉錄或翻譯檔案',
+  'error.downloadArtifacts': '匯出檔案失敗：{message}',
   'error.retryTask': '重試任務失敗',
   'error.taskNotDeleted': '任務未被刪除',
   'error.retryNotAccepted': '重試請求未被接受',
@@ -341,6 +354,7 @@ const zhTWMessages: Messages = {
   'log.taskCompleted': '任務完成',
   'log.diagnosticsExported': '診斷已匯出：{filePath}',
   'log.deletedTask': '已刪除任務：{taskId}',
+  'log.artifactsExported': '已匯出任務產物：{taskId}（{count} 個檔案）',
   'log.retryRequested': '已發起重試：{taskId}',
 
   'common.cancel': '取消',
@@ -467,7 +481,7 @@ export function translateLanguageLabel(language: string, t: TranslateFn): string
     case 'zh-TW':
       return t('lang.zhTW')
     case 'zh':
-      return t('lang.zhCN')
+      return t('lang.zh')
     case 'en':
       return 'English'
     case 'ja':

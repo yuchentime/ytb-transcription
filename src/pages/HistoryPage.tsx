@@ -20,7 +20,6 @@ interface HistoryPageModel {
   canNextPage: boolean
   historyRecoverableOnly: boolean
   playingTaskId: string
-  playingAudioUrl: string
 }
 
 interface HistoryPageActions {
@@ -32,6 +31,7 @@ interface HistoryPageActions {
   onApplyFilters(): void
   onRefresh(): Promise<void>
   onResumeTask(taskId: string): Promise<void>
+  onDownloadArtifacts(taskId: string): Promise<void>
   onDeleteTask(taskId: string): Promise<void>
   onPlayAudio(taskId: string): Promise<void>
   onStopAudio(): void
@@ -123,6 +123,14 @@ export function HistoryPage(props: HistoryPageProps) {
 
                     <button
                       className="btn small"
+                      disabled={item.status !== 'completed' || !!props.model.historyBusyTaskId}
+                      onClick={() => void props.actions.onDownloadArtifacts(item.id)}
+                    >
+                      {props.t('history.downloadArtifacts')}
+                    </button>
+
+                    <button
+                      className="btn small"
                       disabled={
                         !isRecoverableTaskStatus(item.status) ||
                         props.model.historyRunningTaskId === item.id ||
@@ -134,18 +142,13 @@ export function HistoryPage(props: HistoryPageProps) {
                     </button>
 
                     <button
-                      className="btn small"
+                      className="btn small danger"
                       disabled={!!props.model.historyBusyTaskId}
                       onClick={() => void props.actions.onDeleteTask(item.id)}
                     >
                       {props.t('history.delete')}
                     </button>
                   </div>
-                  {props.model.playingTaskId === item.id && props.model.playingAudioUrl && (
-                    <div className="history-audio-player">
-                      <audio controls autoPlay src={props.model.playingAudioUrl} />
-                    </div>
-                  )}
                 </td>
               </tr>
             ))}

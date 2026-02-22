@@ -267,7 +267,6 @@ async function installPiperPackage(params: {
   venvPython: string
   downloadsDir: string
   forceReinstall: boolean
-  targetLanguage: AppSettings['defaultTargetLanguage']
 }): Promise<{ releaseTag: string }> {
   const { releaseTag, asset } = await resolvePiperWheelAsset()
   await fs.mkdir(params.downloadsDir, { recursive: true })
@@ -313,23 +312,21 @@ async function installPiperPackage(params: {
     })
   }
 
-  if (params.targetLanguage === 'zh') {
-    await runCommand({
-      command: params.venvPython,
-      args: [
-        '-m',
-        'pip',
-        'install',
-        '--upgrade',
-        'g2pw',
-        'sentence-stream',
-        'unicode-rbnf',
-        'requests',
-        'torch',
-      ],
-      timeoutMs: 30 * 60 * 1000,
-    })
-  }
+  await runCommand({
+    command: params.venvPython,
+    args: [
+      '-m',
+      'pip',
+      'install',
+      '--upgrade',
+      'g2pw',
+      'sentence-stream',
+      'unicode-rbnf',
+      'requests',
+      'torch',
+    ],
+    timeoutMs: 30 * 60 * 1000,
+  })
 
   return { releaseTag }
 }
@@ -347,6 +344,11 @@ async function listPiperVoices(venvPython: string): Promise<string[]> {
     },
   })
   return Array.from(new Set(voices)).sort((a, b) => a.localeCompare(b))
+}
+
+function deriveVoiceFromModelPath(modelPath: string): string {
+  const ext = path.extname(modelPath)
+  return ext ? path.basename(modelPath, ext) : path.basename(modelPath)
 }
 
 function pickVoiceByLanguage(voices: string[], language: AppSettings['defaultTargetLanguage']): string {
@@ -378,6 +380,19 @@ async function ensureVoiceModel(params: {
   forceReinstall: boolean
 }): Promise<{ voice: string; modelPath: string; configPath: string }> {
   await fs.mkdir(params.modelsDir, { recursive: true })
+  const configuredModelPath = params.settings.piperModelPath.trim()
+  if (configuredModelPath) {
+    const configuredConfigPathRaw = params.settings.piperConfigPath.trim()
+    const configuredConfigPath = configuredConfigPathRaw || `${configuredModelPath}.json`
+    if ((await pathExists(configuredModelPath)) && (await pathExists(configuredConfigPath))) {
+      return {
+        voice: deriveVoiceFromModelPath(configuredModelPath),
+        modelPath: configuredModelPath,
+        configPath: configuredConfigPath,
+      }
+    }
+  }
+
   const voices = await listPiperVoices(params.venvPython)
   const voice = pickVoiceByLanguage(voices, params.settings.defaultTargetLanguage)
   const modelPath = path.join(params.modelsDir, `${voice}.onnx`)
@@ -422,7 +437,6 @@ export async function installPiperRuntime(
     venvPython,
     downloadsDir,
     forceReinstall,
-    targetLanguage: input.settings.defaultTargetLanguage,
   })
 
   if (!(await pathExists(piperExecutablePath))) {
@@ -435,7 +449,10 @@ export async function installPiperRuntime(
   const { voice, modelPath, configPath } = await ensureVoiceModel({
     venvPython,
     modelsDir,
-    settings: input.settings,
+    settings: {
+      ...input.settings,
+      defaultTargetLanguage: 'zh',
+    },
     forceReinstall,
   })
 

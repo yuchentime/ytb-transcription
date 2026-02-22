@@ -855,8 +855,8 @@ input:read-only {
 /* Actions - fixed width to prevent squeezing */
 .history-table th:nth-child(5),
 .history-table td:nth-child(5) {
-  width: 200px;
-  min-width: 200px;
+  width: 260px;
+  min-width: 260px;
 }
 
 .history-table th {
@@ -940,14 +940,15 @@ input:read-only {
   cursor: not-allowed;
 }
 
-.history-audio-player {
-  margin-top: 8px;
-  width: 100%;
+.table-actions .btn.danger {
+  border-color: #dc2626;
+  color: #dc2626;
 }
 
-.history-audio-player audio {
-  width: 100%;
-  height: 32px;
+.table-actions .btn.danger:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
 }
 
 .pagination {
@@ -1025,6 +1026,67 @@ input:read-only {
   margin-top: 18px;
 }
 
+.floating-audio-player {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1500;
+  width: min(420px, calc(100vw - 48px));
+  border: 1px solid #d8dee8;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow:
+    0 16px 36px rgba(15, 23, 42, 0.2),
+    0 2px 6px rgba(15, 23, 42, 0.08);
+  padding: 12px;
+}
+
+.floating-audio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.floating-audio-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.floating-audio-close {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #d0d7e2;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  line-height: 1;
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.floating-audio-close:hover {
+  border-color: #000;
+  color: #000;
+}
+
+.floating-audio-close:focus-visible {
+  outline: 2px solid #000;
+  outline-offset: 2px;
+}
+
+.floating-audio-player audio {
+  width: 100%;
+  height: 36px;
+}
+
 @keyframes confirmOverlayIn {
   from {
     opacity: 0;
@@ -1096,8 +1158,8 @@ input:read-only {
 
   .history-table th:nth-child(5),
   .history-table td:nth-child(5) {
-    width: 180px;
-    min-width: 180px;
+    width: 240px;
+    min-width: 240px;
   }
 
   .confirm-dialog {
@@ -1116,6 +1178,12 @@ input:read-only {
     flex-direction: column;
     gap: 4px;
   }
+
+  .floating-audio-player {
+    right: 16px;
+    bottom: 16px;
+    width: min(380px, calc(100vw - 32px));
+  }
 }
 
 @media (max-width: 640px) {
@@ -1129,8 +1197,8 @@ input:read-only {
 
   .history-table th:nth-child(5),
   .history-table td:nth-child(5) {
-    width: 160px;
-    min-width: 160px;
+    width: 220px;
+    min-width: 220px;
   }
 
   .table-actions .btn.small {

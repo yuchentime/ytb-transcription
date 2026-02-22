@@ -3,13 +3,10 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { TaskSegmentRecord, TaskStatus, VoiceProfile } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
 import { translateTaskStatus } from '../app/i18n'
-import { SegmentationConfigPanel } from '../components/SegmentationConfigPanel'
 
 interface TaskFormState {
   youtubeUrl: string
   targetLanguage: 'zh' | 'en' | 'ja'
-  segmentationStrategy: 'punctuation' | 'sentence' | 'duration'
-  segmentationTargetDurationSec: number
   ttsVoiceId: string
 }
 
@@ -245,21 +242,12 @@ export function TaskPage(props: TaskPageProps) {
               onChange={(event) =>
                 props.actions.setTaskForm((prev) => ({
                   ...prev,
-                  targetLanguage: event.target.value as 'zh' | 'en' | 'ja',
+                  targetLanguage: event.target.value as 'zh',
                 }))
               }
             >
-              <option value="zh">{props.t('lang.zhCN')}</option>
-              <option value="en">English</option>
-              <option value="ja">日本語</option>
+              <option value="zh">{props.t('lang.zh')}</option>
             </select>
-          </label>
-
-          <label className="full">
-            <SegmentationConfigPanel
-              taskForm={props.model.taskForm}
-              setTaskForm={props.actions.setTaskForm}
-            />
           </label>
 
           {!props.model.isPiperTts && (

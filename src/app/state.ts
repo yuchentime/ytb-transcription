@@ -1,7 +1,6 @@
 import type {
   AppSettings,
   RecoveryAction,
-  SegmentationStrategy,
   TaskRecord,
   TaskSegmentRecord,
   TaskStatus,
@@ -12,8 +11,6 @@ import { DEFAULT_SETTINGS } from './utils'
 export interface TaskFormState {
   youtubeUrl: string
   targetLanguage: 'zh' | 'en' | 'ja'
-  segmentationStrategy: SegmentationStrategy
-  segmentationTargetDurationSec: number
   ttsVoiceId: string
 }
 
@@ -102,8 +99,6 @@ export function createInitialTaskState(): TaskState {
     form: {
       youtubeUrl: '',
       targetLanguage: 'zh',
-      segmentationStrategy: 'punctuation',
-      segmentationTargetDurationSec: 8,
       ttsVoiceId: '',
     },
     activeTaskId: '',

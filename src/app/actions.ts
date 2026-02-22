@@ -186,7 +186,6 @@ export async function loadSettingsAction(
       ...prev,
       form: {
         ...prev.form,
-        targetLanguage: result.defaultTargetLanguage,
         ttsVoiceId: result.ttsVoiceId,
       },
     }))
@@ -248,7 +247,6 @@ export async function saveSettingsAction(
       ...prev,
       form: {
         ...prev.form,
-        targetLanguage: saved.defaultTargetLanguage,
         ttsVoiceId: saved.ttsVoiceId,
       },
     }))
@@ -349,10 +347,9 @@ export async function startTaskAction(
         glmApiBaseUrl: settings.glmApiBaseUrl,
         kimiApiBaseUrl: settings.kimiApiBaseUrl,
         customApiBaseUrl: settings.customApiBaseUrl,
-        segmentationStrategy: taskForm.segmentationStrategy,
+        segmentationStrategy: 'punctuation',
         segmentationOptions: {
           maxCharsPerSegment: 900,
-          targetDurationSec: taskForm.segmentationTargetDurationSec,
         },
         translationContextChars: 160,
         translateRequestTimeoutMs: 120000,

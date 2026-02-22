@@ -34,6 +34,7 @@ export const IPC_CHANNELS = {
   voicesValidateParams: 'voices:validateParams',
   systemOpenPath: 'system:openPath',
   systemExportDiagnostics: 'system:exportDiagnostics',
+  systemExportTaskArtifacts: 'system:exportTaskArtifacts',
   systemProbePiper: 'system:probePiper',
   systemInstallPiper: 'system:installPiper',
   systemTestTranslateConnectivity: 'system:testTranslateConnectivity',
@@ -85,6 +86,15 @@ export interface ExportDiagnosticsPayload {
 
 export interface ExportDiagnosticsResult {
   filePath: string
+}
+
+export interface ExportTaskArtifactsPayload {
+  taskId: string
+}
+
+export interface ExportTaskArtifactsResult {
+  exportDir: string
+  files: string[]
 }
 
 export interface ProbePiperPayload {
@@ -266,6 +276,7 @@ export interface RendererAPI {
   system: {
     openPath(payload: OpenPathPayload): Promise<OpenPathResult>
     exportDiagnostics(payload?: ExportDiagnosticsPayload): Promise<ExportDiagnosticsResult>
+    exportTaskArtifacts(payload: ExportTaskArtifactsPayload): Promise<ExportTaskArtifactsResult>
     probePiper(payload?: ProbePiperPayload): Promise<PiperProbeResult>
     installPiper(payload?: InstallPiperPayload): Promise<PiperInstallResult>
     testTranslateConnectivity(payload?: TestTranslateConnectivityPayload): Promise<TranslateConnectivityResult>
