@@ -24,7 +24,6 @@ const TRANSLATE_PROVIDERS: { value: TranslateProvider; label: string }[] = [
 // TTS provider options
 const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
   { value: 'minimax', label: 'MiniMax' },
-  { value: 'glm', label: 'GLM (智谱AI)' },
   { value: 'piper', label: '本地语音合成（Piper）' },
 ]
 

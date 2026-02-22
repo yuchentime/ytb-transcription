@@ -489,60 +489,6 @@ export async function translateText(params: {
   })
 }
 
-export async function polishTranslation(params: {
-  settings: AppSettings
-  sourceText: string
-  targetLanguage: string
-  timeoutMs?: number
-  context?: {
-    previousText?: string
-    nextText?: string
-  }
-}): Promise<string> {
-  ensureTranslateSettings(params.settings)
-  const provider = params.settings.translateProvider ?? 'minimax'
-  const previousText = params.context?.previousText?.trim() ?? ''
-  const nextText = params.context?.nextText?.trim() ?? ''
-  const messages = [
-    {
-      role: 'system' as const,
-      content: [
-        'You are a translation editor.',
-        'Polish the CURRENT_SEGMENT in the same target language for coherence and readability.',
-        'Keep original meaning, names, numbers, and terminology.',
-        'Use context only for continuity.',
-        'Output only polished CURRENT_SEGMENT text.',
-      ].join(' '),
-    },
-    {
-      role: 'user' as const,
-      content: [
-        `Target language: ${params.targetLanguage}`,
-        previousText ? `PREVIOUS_CONTEXT:\n${previousText}` : '',
-        `CURRENT_SEGMENT:\n${params.sourceText}`,
-        nextText ? `NEXT_CONTEXT:\n${nextText}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-    },
-  ]
-
-  if (provider === 'minimax') {
-    return await requestMiniMaxText({
-      settings: params.settings,
-      timeoutMs: params.timeoutMs,
-      messages,
-      action: 'polish',
-    })
-  }
-  return await requestOpenAICompatibleText({
-    settings: params.settings,
-    provider,
-    timeoutMs: params.timeoutMs,
-    messages,
-  })
-}
-
 async function queryTtsUntilReady(params: {
   settings: AppSettings
   taskId: string

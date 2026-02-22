@@ -24,7 +24,7 @@ import type {
   TaskStatus,
 } from '../db/types'
 import { runCommand } from './command'
-import { polishTranslation, synthesizeSpeech, translateText } from './modelProvider'
+import { synthesizeSpeech, translateText } from './modelProvider'
 import { CheckpointStore } from './recovery/CheckpointStore'
 import { RecoveryPlanner, classifyError } from './recovery/RecoveryPlanner'
 import { assertSegmentIntegrity, segment, type TextSegment } from './segmentation'
@@ -1619,108 +1619,6 @@ export class TaskEngine {
     return null
   }
 
-  /**
-   * 分段润色翻译结果
-   * @param params 
-   * @returns 
-   */
-  private async polishTranslationText(params: {
-    taskId: string
-    targetLanguage: string
-    settings: AppSettings
-    text: string
-    contextChars: number
-    targetSegmentLength: number
-    requestTimeoutMs: number
-  }): Promise<string> {
-    const polishSegments = segment(params.text, 'sentence', {
-      targetSegmentLength: params.targetSegmentLength,
-      maxCharsPerSegment: params.targetSegmentLength,
-    })
-    if (polishSegments.length === 0) return params.text
-
-    const polishedChunks: string[] = []
-    const maxAttempts = Math.max(1, Math.min(2, params.settings.retryPolicy.translate + 1))
-    const polishTimeoutMs = Math.max(15_000, Math.min(params.requestTimeoutMs, 45_000))
-    for (let index = 0; index < polishSegments.length; index += 1) {
-      const item = polishSegments[index]
-      const previousText =
-        index > 0
-          ? trimContextWindow(polishSegments[index - 1].text, params.contextChars, true)
-          : ''
-      const nextText =
-        index < polishSegments.length - 1
-          ? trimContextWindow(polishSegments[index + 1].text, params.contextChars, false)
-          : ''
-
-      let polished = ''
-      let lastError: unknown = null
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        const attemptStartedAt = Date.now()
-        this.emit('log', {
-          taskId: params.taskId,
-          stage: 'translating',
-          level: 'info',
-          text: `Polish segment #${index + 1}/${polishSegments.length} attempt ${attempt}/${maxAttempts} (chars=${item.text.length}, timeoutMs=${polishTimeoutMs})`,
-          timestamp: new Date().toISOString(),
-        })
-        try {
-          polished = await polishTranslation({
-            settings: params.settings,
-            sourceText: item.text,
-            targetLanguage: params.targetLanguage,
-            timeoutMs: polishTimeoutMs,
-            context: {
-              previousText,
-              nextText,
-            },
-          })
-          this.emit('log', {
-            taskId: params.taskId,
-            stage: 'translating',
-            level: 'info',
-            text: `Polish segment #${index + 1}/${polishSegments.length} attempt ${attempt} succeeded in ${
-              Date.now() - attemptStartedAt
-            }ms`,
-            timestamp: new Date().toISOString(),
-          })
-          break
-        } catch (error) {
-          lastError = error
-          const message = error instanceof Error ? error.message : String(error)
-          this.emit('log', {
-            taskId: params.taskId,
-            stage: 'translating',
-            level: 'warn',
-            text: `Polish segment #${index + 1}/${polishSegments.length} attempt ${attempt} failed in ${
-              Date.now() - attemptStartedAt
-            }ms: ${message}`,
-            timestamp: new Date().toISOString(),
-          })
-          const kind = classifyError('E_POLISH_SEGMENT', message)
-          if (kind !== 'retryable' || attempt >= maxAttempts) {
-            break
-          }
-          await sleep(Math.min(2_000, 1000 * (2 ** (attempt - 1))))
-        }
-      }
-      if (!polished.trim()) {
-        this.emit('log', {
-          taskId: params.taskId,
-          stage: 'translating',
-          level: 'warn',
-          text: `Polish segment fallback to original (#${index + 1}): ${
-            lastError instanceof Error ? lastError.message : 'unknown error'
-          }`,
-          timestamp: new Date().toISOString(),
-        })
-        polishedChunks.push(item.text)
-      } else {
-        polishedChunks.push(polished)
-      }
-    }
-    return polishedChunks.join('\n')
-  }
 
   private async executeTranscribing(context: TaskExecutionContext): Promise<void> {
     if (!context.audioPath) throw new Error('audioPath is missing')
@@ -2739,20 +2637,38 @@ export class TaskEngine {
     if (!context.toolchain) throw new Error('toolchain is not ready')
     const settings = this.resolveExecutionSettings(context.taskId)
     const translationText = await fs.readFile(context.translationPath, 'utf-8')
-    const ttsSegmentation = this.resolveTtsSegmentationConfig(context.taskId)
-    const baseSegments = this.buildTtsSegments({
-      sourceText: translationText,
-      splitThresholdChars: ttsSegmentation.splitThresholdChars,
-      targetSegmentChars: ttsSegmentation.targetSegmentChars,
-    })
-    assertSegmentIntegrity(translationText, baseSegments)
-    this.emit('log', {
-      taskId: context.taskId,
-      stage: 'synthesizing',
-      level: 'info',
-      text: `TTS segmentation policy: sourceChars=${translationText.trim().length}, splitThresholdChars=${ttsSegmentation.splitThresholdChars}, targetSegmentChars=${ttsSegmentation.targetSegmentChars}, segments=${baseSegments.length}`,
-      timestamp: new Date().toISOString(),
-    })
+    const normalizedTranslation = translationText.trim()
+    const usePiperSegmentation = settings.ttsProvider === 'piper'
+    let baseSegments: TextSegment[]
+
+    if (usePiperSegmentation) {
+      const ttsSegmentation = this.resolveTtsSegmentationConfig(context.taskId)
+      baseSegments = this.buildTtsSegments({
+        sourceText: normalizedTranslation,
+        splitThresholdChars: ttsSegmentation.splitThresholdChars,
+        targetSegmentChars: ttsSegmentation.targetSegmentChars,
+      })
+      assertSegmentIntegrity(translationText, baseSegments)
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'synthesizing',
+        level: 'info',
+        text: `TTS segmentation policy: sourceChars=${normalizedTranslation.length}, splitThresholdChars=${ttsSegmentation.splitThresholdChars}, targetSegmentChars=${ttsSegmentation.targetSegmentChars}, segments=${baseSegments.length}`,
+        timestamp: new Date().toISOString(),
+      })
+    } else {
+      baseSegments = normalizedTranslation
+        ? buildSegmentsFromChunkTexts([normalizedTranslation])
+        : []
+      assertSegmentIntegrity(translationText, baseSegments)
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'synthesizing',
+        level: 'info',
+        text: `TTS full-text mode enabled for provider=${settings.ttsProvider}: sourceChars=${normalizedTranslation.length}, segments=${baseSegments.length}`,
+        timestamp: new Date().toISOString(),
+      })
+    }
 
     const stageSegments = await this.ensureStageSegments(context.taskId, 'synthesizing', baseSegments)
     const retrySet = this.resolveRetrySet(context.taskId)
