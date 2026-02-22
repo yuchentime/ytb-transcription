@@ -464,13 +464,11 @@ export function SettingsPage(props: SettingsPageProps) {
               onChange={(event) =>
                 setSettings((prev) => ({
                   ...prev,
-                  defaultTargetLanguage: event.target.value as 'zh' | 'en' | 'ja',
+                  defaultTargetLanguage: event.target.value as 'zh',
                 }))
               }
             >
-              <option value="zh">{translateLanguageLabel('zh', props.t)}</option>
-              <option value="en">{translateLanguageLabel('en', props.t)}</option>
-              <option value="ja">{translateLanguageLabel('ja', props.t)}</option>
+              <option value="zh">中文</option>
             </select>
           </label>
 
