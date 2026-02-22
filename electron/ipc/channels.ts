@@ -146,6 +146,8 @@ export interface TaskProgressEventPayload {
   stage: string
   percent: number
   message: string
+  /** 下载速度（格式化的字符串，如 "2.5 MB/s"） */
+  speed?: string
 }
 
 export interface TaskSegmentProgressEventPayload {

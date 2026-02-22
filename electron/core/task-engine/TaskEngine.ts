@@ -89,6 +89,8 @@ interface TaskEngineEvents {
     stage: StepName | 'queued'
     percent: number
     message: string
+    /** 下载速度（格式化的字符串，如 "2.5 MB/s"） */
+    speed?: string
   }
   segmentProgress: {
     taskId: string
@@ -180,6 +182,19 @@ function parsePercent(line: string): number | null {
   const value = Number(match[1])
   if (Number.isNaN(value)) return null
   return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+/**
+ * 从 yt-dlp 输出中解析下载速度
+ * 匹配格式如: "at 2.5MiB/s" 或 "at  24KB/s" 或 "at 3.2 MB/s"
+ */
+function parseDownloadSpeed(line: string): string | null {
+  // 匹配各种速度格式: at  2.5MiB/s, at  24KB/s, at 3.2 MB/s 等
+  const match = line.match(/at\s+(\d+\.?\d*)\s*(KiB|MiB|KB|MB|GiB|GB)\/s/i)
+  if (!match) return null
+  const value = match[1]
+  const unit = match[2]
+  return `${value} ${unit}/s`
 }
 
 function parseWhisperDetectedLanguage(jsonContent: string): string | null {
@@ -1154,6 +1169,7 @@ export class TaskEngine {
 
     const runDownload = async (args: string[]): Promise<void> => {
       const stderrLines: string[] = []
+      let lastSpeed = ''
       await runCommand({
         command: toolchain.ytDlpPath,
         args,
@@ -1162,11 +1178,17 @@ export class TaskEngine {
         onStdoutLine: (line) => {
           const percent = parsePercent(line)
           if (percent !== null) {
+            // 解析下载速度
+            const speed = parseDownloadSpeed(line)
+            if (speed) {
+              lastSpeed = speed
+            }
             this.emit('progress', {
               taskId: context.taskId,
               stage: 'downloading',
               percent,
               message: line,
+              speed: lastSpeed || undefined,
             })
           }
         },
@@ -1597,6 +1619,11 @@ export class TaskEngine {
     return null
   }
 
+  /**
+   * 分段润色翻译结果
+   * @param params 
+   * @returns 
+   */
   private async polishTranslationText(params: {
     taskId: string
     targetLanguage: string
@@ -2689,15 +2716,6 @@ export class TaskEngine {
           context.audioDurationSec ?? 'unknown'
         })`,
         timestamp: new Date().toISOString(),
-      })
-      translated = await this.polishTranslationText({
-        taskId: context.taskId,
-        targetLanguage: task.targetLanguage,
-        settings,
-        text: translated,
-        contextChars: polishConfig.contextChars,
-        targetSegmentLength: polishConfig.targetSegmentLength,
-        requestTimeoutMs: translateRequestTimeoutMs,
       })
     }
 

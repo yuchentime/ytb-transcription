@@ -46,6 +46,8 @@ interface TaskPageModel {
   logs: LogItem[]
   transcriptContent?: string
   translationContent?: string
+  /** 当前下载速度（仅在 downloading 阶段有效） */
+  downloadSpeed?: string
 }
 
 interface TaskPageActions {
@@ -332,6 +334,10 @@ export function TaskPage(props: TaskPageProps) {
             <div className="progress-wrap">
               <span className="progress-current">
                 {translateTaskStatus(props.model.activeStatus || 'idle', props.t)}
+                {/* 在下载阶段显示下载速度 */}
+                {props.model.activeStatus === 'downloading' && props.model.downloadSpeed && (
+                  <span className="download-speed">{props.model.downloadSpeed}</span>
+                )}
               </span>
               <div className="progress-track">
                 <div className="progress-fill" style={{ width: `${props.model.overallProgress}%` }} />

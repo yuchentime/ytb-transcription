@@ -402,6 +402,7 @@ function App() {
     logs: taskState.logs,
     transcriptContent: taskState.transcriptContent,
     translationContent: taskState.translationContent,
+    downloadSpeed: taskState.downloadSpeed,
   }
   const taskPageActions = {
     setTaskForm: setTaskFormData,

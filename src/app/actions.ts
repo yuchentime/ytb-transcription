@@ -312,6 +312,7 @@ export async function startTaskAction(
     logs: [],
     transcriptContent: undefined,
     translationContent: undefined,
+    downloadSpeed: undefined,
   }))
 
   try {
@@ -799,6 +800,7 @@ export async function handleRetryHistoryTaskAction(
       logs: [],
       transcriptContent: undefined,
       translationContent: undefined,
+      downloadSpeed: undefined,
     }))
     setActiveRoute('task')
 

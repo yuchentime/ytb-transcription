@@ -76,6 +76,8 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
           ...prev.stageProgress,
           [payload.stage]: payload.percent,
         },
+        // 更新下载速度（仅在 downloading 阶段）
+        downloadSpeed: payload.stage === 'downloading' ? payload.speed : prev.downloadSpeed,
       }))
     })
 

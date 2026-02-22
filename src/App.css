@@ -424,6 +424,13 @@ input:read-only {
   text-transform: capitalize;
 }
 
+.download-speed {
+  margin-left: 8px;
+  font-size: 11px;
+  color: #999;
+  font-weight: 400;
+}
+
 .progress-track {
   flex: 1;
   height: 6px;

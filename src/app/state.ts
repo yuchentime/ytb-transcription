@@ -65,6 +65,8 @@ export interface TaskState {
   ttsAudioUrl: string
   transcriptContent?: string
   translationContent?: string
+  /** 当前下载速度（仅在 downloading 阶段有效） */
+  downloadSpeed?: string
 }
 
 export interface HistoryState {
