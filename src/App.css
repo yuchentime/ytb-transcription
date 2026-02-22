@@ -844,7 +844,7 @@ input:read-only {
 
 .history-table th:nth-child(3),
 .history-table td:nth-child(3) {
-  width: 60px;
+  width: 80px;
 } /* Target */
 
 .history-table th:nth-child(4),
@@ -877,7 +877,10 @@ input:read-only {
 }
 
 .url-cell {
-  max-width: 280px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
