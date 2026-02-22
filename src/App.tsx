@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TaskStatus } from '../electron/core/db/types'
 import type { PiperInstallResult, PiperProbeResult, TranslateConnectivityResult } from '../electron/ipc/channels'
@@ -40,6 +40,7 @@ import { DEFAULT_SETTINGS, STAGES, formatDateTime, isRecoverableTaskStatus } fro
 import { useTaskAudio } from './app/hooks/useTaskAudio'
 import { useTaskEvents } from './app/hooks/useTaskEvents'
 import { SidebarMenu } from './components/SidebarMenu'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { AboutPage } from './pages/AboutPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -54,6 +55,16 @@ function App() {
   const [taskState, setTaskState] = useState<TaskState>(createInitialTaskState)
   const [historyState, setHistoryState] = useState<HistoryState>(createInitialHistoryState)
   const [playingAudio, setPlayingAudio] = useState<{ taskId: string; url: string } | null>(null)
+  const [resumeConfirmDialog, setResumeConfirmDialog] = useState<{
+    open: boolean
+    runningTaskId: string
+    targetTaskId: string
+  }>({
+    open: false,
+    runningTaskId: '',
+    targetTaskId: '',
+  })
+  const resumeConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null)
   const t = useMemo(() => createTranslator(locale), [locale])
 
   const filteredHistoryItems = useMemo(() => {
@@ -145,6 +156,33 @@ function App() {
     }))
   }, [])
 
+  const requestResumeOverrideConfirm = useCallback(
+    async (runningTaskId: string, targetTaskId: string): Promise<boolean> => {
+      return await new Promise<boolean>((resolve) => {
+        if (resumeConfirmResolverRef.current) {
+          resumeConfirmResolverRef.current(false)
+        }
+        resumeConfirmResolverRef.current = resolve
+        setResumeConfirmDialog({
+          open: true,
+          runningTaskId,
+          targetTaskId,
+        })
+      })
+    },
+    [],
+  )
+
+  const resolveResumeOverrideConfirm = useCallback((confirmed: boolean): void => {
+    const resolver = resumeConfirmResolverRef.current
+    resumeConfirmResolverRef.current = null
+    setResumeConfirmDialog((prev) => ({
+      ...prev,
+      open: false,
+    }))
+    resolver?.(confirmed)
+  }, [])
+
   const loadHistory = useCallback(async (query: HistoryQueryState): Promise<void> => {
     await loadHistoryAction({
       ipcClient,
@@ -180,6 +218,15 @@ function App() {
   useEffect(() => {
     saveLocale(locale)
   }, [locale])
+
+  useEffect(() => {
+    return () => {
+      if (resumeConfirmResolverRef.current) {
+        resumeConfirmResolverRef.current(false)
+        resumeConfirmResolverRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -354,9 +401,7 @@ function App() {
     try {
       const runningTask = await ipcClient.task.getRunning().catch(() => null)
       if (runningTask && runningTask.id !== taskId) {
-        const shouldOverride = window.confirm(
-          t('history.resumeOverrideConfirm', { runningTaskId: runningTask.id, taskId }),
-        )
+        const shouldOverride = await requestResumeOverrideConfirm(runningTask.id, taskId)
         if (!shouldOverride) return
         const cancelResult = await ipcClient.task.cancel({ taskId: runningTask.id })
         if (!cancelResult.canceled) {
@@ -608,6 +653,20 @@ function App() {
           {activeRoute === 'about' && <AboutPage t={t} />}
         </div>
       </div>
+      <ConfirmDialog
+        open={resumeConfirmDialog.open}
+        title={t('history.resumeOverrideTitle')}
+        description={
+          t('history.resumeOverrideConfirm', {
+            runningTaskId: resumeConfirmDialog.runningTaskId,
+            taskId: resumeConfirmDialog.targetTaskId,
+          })
+        }
+        confirmLabel={t('history.resumeOverrideConfirmButton')}
+        cancelLabel={t('common.cancel')}
+        onCancel={() => resolveResumeOverrideConfirm(false)}
+        onConfirm={() => resolveResumeOverrideConfirm(true)}
+      />
     </main>
   )
 }

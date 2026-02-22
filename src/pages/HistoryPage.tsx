@@ -123,7 +123,11 @@ export function HistoryPage(props: HistoryPageProps) {
 
                     <button
                       className="btn small"
-                      disabled={!isRecoverableTaskStatus(item.status) || !!props.model.historyBusyTaskId}
+                      disabled={
+                        !isRecoverableTaskStatus(item.status) ||
+                        props.model.historyRunningTaskId === item.id ||
+                        !!props.model.historyBusyTaskId
+                      }
                       onClick={() => void props.actions.onResumeTask(item.id)}
                     >
                       恢复

@@ -67,8 +67,10 @@ const zhCNMessages = {
   'history.prev': '上一页',
   'history.next': '下一页',
   'history.deleteConfirm': '确定删除任务 {taskId}？这会移除数据库记录和本地产物。',
+  'history.resumeOverrideTitle': '切换正在执行的任务？',
   'history.resumeOverrideConfirm':
     '当前任务 {runningTaskId} 正在处理中。继续恢复任务 {taskId} 将中断当前任务，是否继续？',
+  'history.resumeOverrideConfirmButton': '中断并恢复',
 
   'settings.title': '设置',
   'settings.loading': '正在加载设置...',
@@ -168,6 +170,7 @@ const zhCNMessages = {
   'log.deletedTask': '已删除任务：{taskId}',
   'log.retryRequested': '已发起重试：{taskId}',
 
+  'common.cancel': '取消',
   'common.hyphen': '-',
 } as const
 
@@ -237,8 +240,10 @@ const zhTWMessages: Messages = {
   'history.prev': '上一頁',
   'history.next': '下一頁',
   'history.deleteConfirm': '確定刪除任務 {taskId}？這會移除資料庫記錄和本地產物。',
+  'history.resumeOverrideTitle': '切換正在執行的任務？',
   'history.resumeOverrideConfirm':
     '目前任務 {runningTaskId} 正在處理中。繼續恢復任務 {taskId} 將中斷目前任務，是否繼續？',
+  'history.resumeOverrideConfirmButton': '中斷並恢復',
 
   'settings.title': '設定',
   'settings.loading': '正在載入設定...',
@@ -338,6 +343,7 @@ const zhTWMessages: Messages = {
   'log.deletedTask': '已刪除任務：{taskId}',
   'log.retryRequested': '已發起重試：{taskId}',
 
+  'common.cancel': '取消',
   'common.hyphen': '-',
 }
 
