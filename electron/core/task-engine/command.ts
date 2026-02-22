@@ -38,8 +38,24 @@ export async function runCommand(options: RunCommandOptions): Promise<{ code: nu
 
   options.onSpawn?.(child)
 
-  const pushStdout = createLineBuffer(options.onStdoutLine)
-  const pushStderr = createLineBuffer(options.onStderrLine)
+  const stdoutExcerpt: string[] = []
+  const stderrExcerpt: string[] = []
+  const appendExcerpt = (target: string[], line: string): void => {
+    if (!line) return
+    target.push(line)
+    if (target.length > 8) {
+      target.shift()
+    }
+  }
+
+  const pushStdout = createLineBuffer((line) => {
+    appendExcerpt(stdoutExcerpt, line)
+    options.onStdoutLine?.(line)
+  })
+  const pushStderr = createLineBuffer((line) => {
+    appendExcerpt(stderrExcerpt, line)
+    options.onStderrLine?.(line)
+  })
 
   child.stdout.on('data', (chunk: Buffer) => pushStdout(chunk.toString()))
   child.stderr.on('data', (chunk: Buffer) => pushStderr(chunk.toString()))
@@ -79,7 +95,13 @@ export async function runCommand(options: RunCommandOptions): Promise<{ code: nu
         return
       }
       if (code !== 0) {
-        reject(new Error(`Command failed with code ${code}: ${options.command} ${options.args.join(' ')}`))
+        const stderrDetail = stderrExcerpt.length > 0 ? `\nstderr: ${stderrExcerpt.join(' | ')}` : ''
+        const stdoutDetail = stdoutExcerpt.length > 0 ? `\nstdout: ${stdoutExcerpt.join(' | ')}` : ''
+        reject(
+          new Error(
+            `Command failed with code ${code}: ${options.command} ${options.args.join(' ')}${stderrDetail}${stdoutDetail}`,
+          ),
+        )
         return
       }
       resolve({ code: code ?? 0 })

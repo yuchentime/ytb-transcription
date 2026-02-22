@@ -267,6 +267,7 @@ async function installPiperPackage(params: {
   venvPython: string
   downloadsDir: string
   forceReinstall: boolean
+  targetLanguage: AppSettings['defaultTargetLanguage']
 }): Promise<{ releaseTag: string }> {
   const { releaseTag, asset } = await resolvePiperWheelAsset()
   await fs.mkdir(params.downloadsDir, { recursive: true })
@@ -312,6 +313,24 @@ async function installPiperPackage(params: {
     })
   }
 
+  if (params.targetLanguage === 'zh') {
+    await runCommand({
+      command: params.venvPython,
+      args: [
+        '-m',
+        'pip',
+        'install',
+        '--upgrade',
+        'g2pw',
+        'sentence-stream',
+        'unicode-rbnf',
+        'requests',
+        'torch',
+      ],
+      timeoutMs: 30 * 60 * 1000,
+    })
+  }
+
   return { releaseTag }
 }
 
@@ -346,13 +365,10 @@ function pickVoiceByLanguage(voices: string[], language: AppSettings['defaultTar
     if (found) return found
   }
 
-  const fallbackPatterns = [/^en_US-lessac-medium$/i, /^en_US-/i, /^en_/i]
-  for (const pattern of fallbackPatterns) {
-    const found = voices.find((voice) => pattern.test(voice))
-    if (found) return found
-  }
-
-  return voices[0]
+  const availableSamples = voices.slice(0, 8).join(', ')
+  throw new Error(
+    `未找到支持语言 "${language}" 的 Piper 音色，请先下载对应语言模型。当前可用音色: ${availableSamples}`,
+  )
 }
 
 async function ensureVoiceModel(params: {
@@ -406,6 +422,7 @@ export async function installPiperRuntime(
     venvPython,
     downloadsDir,
     forceReinstall,
+    targetLanguage: input.settings.defaultTargetLanguage,
   })
 
   if (!(await pathExists(piperExecutablePath))) {

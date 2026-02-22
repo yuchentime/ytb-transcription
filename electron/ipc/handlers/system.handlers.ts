@@ -7,7 +7,7 @@ import { getDatabaseContext } from '../../core/db'
 import { installPiperRuntime } from '../../core/piper/installer'
 import { getTaskEngine } from '../../core/task-engine'
 import { runCommand } from '../../core/task-engine/command'
-import { minimaxTranslate } from '../../core/task-engine/minimax'
+import { translateText } from '../../core/task-engine/modelProvider'
 import {
   IPC_CHANNELS,
   type ExportDiagnosticsPayload,
@@ -490,8 +490,8 @@ export function registerSystemHandlers(): void {
       const timeoutMs = Math.max(5000, Math.min(20000, mergedSettings.stageTimeoutMs || 20000))
 
       try {
-        const translatedText = await minimaxTranslate({
-          settings: mergedSettings as AppSettings & { minimaxApiBaseUrl: string },
+        const translatedText = await translateText({
+          settings: mergedSettings,
           sourceText: 'This is a connectivity test.',
           targetLanguage: mergedSettings.defaultTargetLanguage,
           timeoutMs,

@@ -24,7 +24,7 @@ import type {
   TaskStatus,
 } from '../db/types'
 import { runCommand } from './command'
-import { minimaxPolish, minimaxSynthesize, minimaxTranslate } from './minimax'
+import { polishTranslation, synthesizeSpeech, translateText } from './modelProvider'
 import { CheckpointStore } from './recovery/CheckpointStore'
 import { RecoveryPlanner, classifyError } from './recovery/RecoveryPlanner'
 import { assertSegmentIntegrity, segment, type TextSegment } from './segmentation'
@@ -61,11 +61,14 @@ const MLX_MODEL_REPOS: Record<string, string[]> = {
 
 const DEFAULT_TRANSLATION_CONTEXT_CHARS = 160
 const DEFAULT_TRANSLATE_REQUEST_TIMEOUT_MS = 120 * 1000
-const DEFAULT_TRANSLATE_TIMEOUT_SPLIT_THRESHOLD_CHARS = 240
-const DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MAX_CHARS = 450
-const DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_CONTEXT_CHARS = 120
-const DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MIN_CHARS = 80
-const DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MAX_DEPTH = 2
+const DEFAULT_TRANSLATE_CONTEXT_WINDOW_TOKENS = 256_000
+const DEFAULT_TRANSLATE_SPLIT_THRESHOLD_RATIO = 0.7
+const DEFAULT_TRANSLATE_SPLIT_THRESHOLD_TOKENS = Math.floor(
+  DEFAULT_TRANSLATE_CONTEXT_WINDOW_TOKENS * DEFAULT_TRANSLATE_SPLIT_THRESHOLD_RATIO,
+)
+const DEFAULT_TRANSLATE_MIN_CHUNK_CHARS = 1_200
+const DEFAULT_TTS_SPLIT_THRESHOLD_CHARS = 3_000
+const DEFAULT_TTS_TARGET_SEGMENT_CHARS = 900
 const DEFAULT_POLISH_CONTEXT_CHARS = 180
 const DEFAULT_POLISH_TARGET_SEGMENT_LENGTH = 900
 const DEFAULT_POLISH_MIN_DURATION_SEC = 10 * 60
@@ -251,7 +254,19 @@ function isLikelyProxyTlsError(stderrLines: string[]): boolean {
 }
 
 async function downloadToFile(url: string, filePath: string): Promise<void> {
-  const response = await fetch(url)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 60_000)
+  let response: Response
+  try {
+    response = await fetch(url, { signal: controller.signal })
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Download timeout after 60000ms')
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
   if (!response.ok) {
     throw new Error(`Download failed: HTTP ${response.status}`)
   }
@@ -380,6 +395,29 @@ function trimContextWindow(text: string, limit: number, fromEnd: boolean): strin
   return fromEnd ? normalized.slice(-limit) : normalized.slice(0, limit)
 }
 
+function estimateTokenCount(text: string): number {
+  const normalized = text.trim()
+  if (!normalized) return 0
+  const cjkMatches = normalized.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/gu)
+  const cjkChars = cjkMatches?.length ?? 0
+  const otherChars = Math.max(0, normalized.length - cjkChars)
+  return cjkChars + Math.ceil(otherChars / 4)
+}
+
+function resolveCharBudgetByTokenBudget(text: string, tokenBudget: number): number {
+  if (tokenBudget <= 0) return DEFAULT_TRANSLATE_MIN_CHUNK_CHARS
+  const estimatedTokens = estimateTokenCount(text)
+  if (estimatedTokens <= 0) {
+    return Math.max(DEFAULT_TRANSLATE_MIN_CHUNK_CHARS, tokenBudget * 2)
+  }
+  const charsPerToken = text.length / estimatedTokens
+  const safeCharsPerToken = Math.max(1, Math.min(4, charsPerToken * 0.9))
+  return Math.max(
+    DEFAULT_TRANSLATE_MIN_CHUNK_CHARS,
+    Math.floor(tokenBudget * safeCharsPerToken),
+  )
+}
+
 function splitTextByHardLimit(text: string, maxChars: number): string[] {
   const normalized = text.trim()
   if (!normalized) return []
@@ -415,6 +453,44 @@ function splitTextByHardLimit(text: string, maxChars: number): string[] {
   return chunks.map((item) => item.trim()).filter(Boolean)
 }
 
+function splitTextByTokenBudget(
+  text: string,
+  tokenBudget: number,
+  depth = 0,
+): string[] {
+  const normalized = text.trim()
+  if (!normalized) return []
+  if (estimateTokenCount(normalized) <= tokenBudget) return [normalized]
+  if (depth >= 8) {
+    const half = Math.floor(normalized.length / 2)
+    if (half <= 0 || half >= normalized.length) return [normalized]
+    const left = normalized.slice(0, half).trim()
+    const right = normalized.slice(half).trim()
+    return [left, right].filter(Boolean)
+  }
+
+  const charBudget = resolveCharBudgetByTokenBudget(normalized, tokenBudget)
+  let pieces = splitTextByHardLimit(normalized, charBudget)
+  if (pieces.length <= 1) {
+    const fallbackHalf = Math.floor(normalized.length / 2)
+    if (fallbackHalf <= 0 || fallbackHalf >= normalized.length) return [normalized]
+    pieces = [
+      normalized.slice(0, fallbackHalf).trim(),
+      normalized.slice(fallbackHalf).trim(),
+    ].filter(Boolean)
+  }
+  return pieces.flatMap((piece) => splitTextByTokenBudget(piece, tokenBudget, depth + 1))
+}
+
+function buildSegmentsFromChunkTexts(chunks: string[]): TextSegment[] {
+  return chunks.map((chunk, index) => ({
+    id: randomUUID(),
+    index,
+    text: chunk,
+    estimatedDurationSec: Math.max(1, Math.ceil(chunk.length / 4)),
+  }))
+}
+
 function mergeChunkTranscript(previousText: string, currentText: string): string {
   const previous = previousText.trim()
   const current = currentText.trim()
@@ -432,47 +508,8 @@ function mergeChunkTranscript(previousText: string, currentText: string): string
   return `${previous}\n${current}`
 }
 
-function mergeTranslatedChunk(previousText: string, currentText: string): { mergedText: string; removedChars: number } {
-  const previous = previousText.trim()
-  const current = currentText.trim()
-  if (!previous) return { mergedText: current, removedChars: 0 }
-  if (!current) return { mergedText: previous, removedChars: 0 }
-
-  const previousLower = previous.toLowerCase()
-  const currentLower = current.toLowerCase()
-  if (previousLower.endsWith(currentLower)) {
-    return { mergedText: previous, removedChars: current.length }
-  }
-
-  const maxOverlap = Math.min(280, previous.length, current.length)
-  for (let overlap = maxOverlap; overlap >= 20; overlap -= 1) {
-    const prevTail = previousLower.slice(-overlap)
-    const currentHead = currentLower.slice(0, overlap)
-    if (prevTail === currentHead) {
-      return {
-        mergedText: `${previous}${current.slice(overlap)}`,
-        removedChars: overlap,
-      }
-    }
-  }
-
-  return { mergedText: `${previous}\n${current}`, removedChars: 0 }
-}
-
-function mergeTranslatedChunks(chunks: string[]): { text: string; removedChars: number } {
-  let merged = ''
-  let removedChars = 0
-
-  for (const chunk of chunks) {
-    const result = mergeTranslatedChunk(merged, chunk)
-    merged = result.mergedText
-    removedChars += result.removedChars
-  }
-
-  return {
-    text: merged.trim(),
-    removedChars,
-  }
+function joinTranslatedChunks(chunks: string[]): string {
+  return chunks.map((chunk) => chunk.trim()).filter(Boolean).join('\n')
 }
 
 function resolveDominantLanguage(candidates: string[]): string | null {
@@ -607,6 +644,7 @@ function buildComparableCheckpointConfig(config: Record<string, unknown>): Recor
   const extraNumberKeys = [
     'translationContextChars',
     'translateRequestTimeoutMs',
+    'translateSplitThresholdTokens',
     'polishMinDurationSec',
     'polishContextChars',
     'polishTargetSegmentLength',
@@ -1314,120 +1352,44 @@ export class TaskEngine {
     )
   }
 
-  private isTranslateTimeoutError(errorMessage: string): boolean {
-    const normalized = errorMessage.toLowerCase()
-    return normalized.includes('timeout') || normalized.includes('abort')
+  private resolveTranslateSplitThresholdTokens(taskId: string): number {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    return Math.floor(
+      toSafeNumber(
+        snapshot.translateSplitThresholdTokens,
+        DEFAULT_TRANSLATE_SPLIT_THRESHOLD_TOKENS,
+        8_000,
+        DEFAULT_TRANSLATE_CONTEXT_WINDOW_TOKENS,
+      ),
+    )
   }
 
-  private getMiniMaxMissingContentCode(errorMessage: string): string | null {
+  private getMissingContentCode(errorMessage: string): string | null {
     const matched = errorMessage.match(/missing content\s*\(([^)]+)\)/i)
     if (!matched) return null
     return matched[1]?.trim() ?? null
   }
 
-  private isMiniMaxMissingContentError(errorMessage: string): boolean {
-    return this.getMiniMaxMissingContentCode(errorMessage) !== null
+  private isMissingContentError(errorMessage: string): boolean {
+    return this.getMissingContentCode(errorMessage) !== null
   }
 
-  private shouldUseTranslateSplitFallback(errorMessage: string, sourceText: string): boolean {
-    if (!this.isTranslateTimeoutError(errorMessage)) return false
-    return sourceText.trim().length >= DEFAULT_TRANSLATE_TIMEOUT_SPLIT_THRESHOLD_CHARS
+  private shouldSplitTranslationByContextWindow(sourceText: string, splitThresholdTokens: number): boolean {
+    return estimateTokenCount(sourceText) > splitThresholdTokens
   }
 
-  private async translateWithSplitFallback(params: {
-    settings: AppSettings
+  private buildTranslationSegments(params: {
     sourceText: string
-    targetLanguage: string
-    timeoutMs: number
-    contextChars: number
-    previousContextText: string
-    nextContextText: string
-  }): Promise<{ text: string; pieceCount: number }> {
-    const safeMaxChars = Math.max(
-      240,
-      Math.min(
-        DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MAX_CHARS,
-        Math.floor(params.sourceText.trim().length / 2),
-      ),
-    )
-    const pieces = splitTextByHardLimit(params.sourceText, safeMaxChars)
-    if (pieces.length <= 1) {
-      throw new Error('Translate split fallback skipped: source cannot be split further')
+    splitThresholdTokens: number
+  }): TextSegment[] {
+    const normalized = params.sourceText.trim()
+    if (!normalized) return []
+    if (!this.shouldSplitTranslationByContextWindow(normalized, params.splitThresholdTokens)) {
+      return buildSegmentsFromChunkTexts([normalized])
     }
-
-    const safeContextChars = Math.max(
-      0,
-      Math.min(params.contextChars, DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_CONTEXT_CHARS),
-    )
-    const fallbackTimeoutMs = Math.max(15_000, Math.min(params.timeoutMs, 45_000))
-    let translatedPieceCount = 0
-    const translateRecursively = async (
-      pieceText: string,
-      depth: number,
-      previousContextText: string,
-      nextContextText: string,
-    ): Promise<string> => {
-      try {
-        const translated = await minimaxTranslate({
-          settings: params.settings,
-          sourceText: pieceText,
-          targetLanguage: params.targetLanguage,
-          timeoutMs: fallbackTimeoutMs,
-          context: {
-            previousText: trimContextWindow(previousContextText, safeContextChars, true),
-            nextText: trimContextWindow(nextContextText, safeContextChars, false),
-          },
-        })
-        translatedPieceCount += 1
-        return translated
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const canSplitDeeper =
-          this.isTranslateTimeoutError(message) &&
-          depth < DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MAX_DEPTH &&
-          pieceText.trim().length >= DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MIN_CHARS * 2
-        if (!canSplitDeeper) {
-          throw error
-        }
-
-        const nextMaxChars = Math.max(
-          DEFAULT_TRANSLATE_TIMEOUT_FALLBACK_MIN_CHARS,
-          Math.floor(pieceText.trim().length / 2),
-        )
-        const nestedPieces = splitTextByHardLimit(pieceText, nextMaxChars)
-        if (nestedPieces.length <= 1) {
-          throw error
-        }
-        const nestedTranslated: string[] = []
-        for (let index = 0; index < nestedPieces.length; index += 1) {
-          const nestedPrevious =
-            index > 0 ? nestedPieces[index - 1] ?? '' : previousContextText
-          const nestedNext =
-            index < nestedPieces.length - 1 ? nestedPieces[index + 1] ?? '' : nextContextText
-          nestedTranslated.push(
-            await translateRecursively(
-              nestedPieces[index] ?? '',
-              depth + 1,
-              nestedPrevious,
-              nestedNext,
-            ),
-          )
-        }
-        return mergeTranslatedChunks(nestedTranslated).text
-      }
-    }
-
-    const translatedPieces: string[] = []
-    for (let index = 0; index < pieces.length; index += 1) {
-      const previousText = index > 0 ? pieces[index - 1] ?? '' : params.previousContextText
-      const nextText = index < pieces.length - 1 ? pieces[index + 1] ?? '' : params.nextContextText
-      translatedPieces.push(await translateRecursively(pieces[index] ?? '', 0, previousText, nextText))
-    }
-
-    return {
-      text: mergeTranslatedChunks(translatedPieces).text,
-      pieceCount: Math.max(translatedPieceCount, translatedPieces.length),
-    }
+    const chunkTexts = splitTextByTokenBudget(normalized, params.splitThresholdTokens)
+    return buildSegmentsFromChunkTexts(chunkTexts)
   }
 
   private resolvePolishConfig(taskId: string): {
@@ -1588,7 +1550,7 @@ export class TaskEngine {
           timestamp: new Date().toISOString(),
         })
         try {
-          polished = await minimaxPolish({
+          polished = await polishTranslation({
             settings: params.settings,
             sourceText: item.text,
             targetLanguage: params.targetLanguage,
@@ -2173,6 +2135,7 @@ export class TaskEngine {
     const transcribeChunk = this.resolveTranscribeChunkConfig(taskId)
     const translationContextChars = this.resolveTranslationContextChars(taskId)
     const translateRequestTimeoutMs = this.resolveTranslateRequestTimeoutMs(taskId)
+    const translateSplitThresholdTokens = this.resolveTranslateSplitThresholdTokens(taskId)
     const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
     const ttsPollingConcurrency =
       typeof snapshot.ttsPollingConcurrency === 'number' && Number.isFinite(snapshot.ttsPollingConcurrency)
@@ -2203,6 +2166,7 @@ export class TaskEngine {
       ttsPollingConcurrency,
       translationContextChars,
       translateRequestTimeoutMs,
+      translateSplitThresholdTokens,
       autoPolishLongText: polish.autoPolishLongText,
       polishMinDurationSec: polish.minDurationSec,
       polishContextChars: polish.contextChars,
@@ -2452,10 +2416,22 @@ export class TaskEngine {
     const translationContextChars = this.resolveTranslationContextChars(context.taskId)
     const translateRequestTimeoutMs = this.resolveTranslateRequestTimeoutMs(context.taskId)
     const polishConfig = this.resolvePolishConfig(context.taskId)
+    const translateSplitThresholdTokens = this.resolveTranslateSplitThresholdTokens(context.taskId)
     const sourceText = await fs.readFile(context.transcriptPath, 'utf-8')
     const segmentation = this.resolveSegmentationConfig(context.taskId)
-    const segments = segment(sourceText, segmentation.strategy, segmentation.options)
+    const segments = this.buildTranslationSegments({
+      sourceText,
+      splitThresholdTokens: translateSplitThresholdTokens,
+    })
     assertSegmentIntegrity(sourceText, segments)
+    const sourceTokenCount = estimateTokenCount(sourceText)
+    this.emit('log', {
+      taskId: context.taskId,
+      stage: 'translating',
+      level: 'info',
+      text: `Translation window policy: sourceTokens=${sourceTokenCount}, splitThresholdTokens=${translateSplitThresholdTokens}, segments=${segments.length}`,
+      timestamp: new Date().toISOString(),
+    })
 
     const retrySet = this.resolveRetrySet(context.taskId)
     const stageSegments = await this.ensureStageSegments(context.taskId, 'translating', segments)
@@ -2483,11 +2459,6 @@ export class TaskEngine {
         segment.segmentIndex > 0
           ? stageSegments[segment.segmentIndex - 1]?.sourceText ?? ''
           : ''
-      const nextSegmentText =
-        segment.segmentIndex < total - 1
-          ? stageSegments[segment.segmentIndex + 1]?.sourceText ?? ''
-          : ''
-      let splitFallbackAttempted = false
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         const attemptStartedAt = Date.now()
@@ -2499,14 +2470,13 @@ export class TaskEngine {
           timestamp: new Date().toISOString(),
         })
         try {
-          translatedText = await minimaxTranslate({
+          translatedText = await translateText({
             settings,
             sourceText: segmentSourceText,
             targetLanguage: task.targetLanguage,
             timeoutMs: translateRequestTimeoutMs,
             context: {
               previousText: trimContextWindow(previousSegmentText, translationContextChars, true),
-              nextText: trimContextWindow(nextSegmentText, translationContextChars, false),
               segmentIndex: segment.segmentIndex,
               totalSegments: total,
             },
@@ -2523,7 +2493,7 @@ export class TaskEngine {
           break
         } catch (error) {
           lastError = error
-          let message = error instanceof Error ? error.message : String(error)
+          const message = error instanceof Error ? error.message : String(error)
           this.emit('log', {
             taskId: context.taskId,
             stage: 'translating',
@@ -2534,62 +2504,11 @@ export class TaskEngine {
             timestamp: new Date().toISOString(),
           })
 
-          if (
-            !splitFallbackAttempted &&
-            this.shouldUseTranslateSplitFallback(message, segmentSourceText)
-          ) {
-            splitFallbackAttempted = true
-            const fallbackStartedAt = Date.now()
-            try {
-              this.emit('log', {
-                taskId: context.taskId,
-                stage: 'translating',
-                level: 'info',
-                text: `Translate segment #${segment.segmentIndex + 1}/${total} switching to split fallback`,
-                timestamp: new Date().toISOString(),
-              })
-              const fallbackResult = await this.translateWithSplitFallback({
-                settings,
-                sourceText: segmentSourceText,
-                targetLanguage: task.targetLanguage,
-                timeoutMs: translateRequestTimeoutMs,
-                contextChars: translationContextChars,
-                previousContextText: previousSegmentText,
-                nextContextText: nextSegmentText,
-              })
-              translatedText = fallbackResult.text
-              this.emit('log', {
-                taskId: context.taskId,
-                stage: 'translating',
-                level: 'info',
-                text: `Translate segment #${segment.segmentIndex + 1}/${total} split fallback succeeded in ${
-                  Date.now() - fallbackStartedAt
-                }ms (pieces=${fallbackResult.pieceCount})`,
-                timestamp: new Date().toISOString(),
-              })
-              break
-            } catch (fallbackError) {
-              lastError = fallbackError
-              const fallbackMessage =
-                fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
-              message = fallbackMessage
-              this.emit('log', {
-                taskId: context.taskId,
-                stage: 'translating',
-                level: 'warn',
-                text: `Translate segment #${segment.segmentIndex + 1}/${total} split fallback failed in ${
-                  Date.now() - fallbackStartedAt
-                }ms: ${fallbackMessage}`,
-                timestamp: new Date().toISOString(),
-              })
-            }
-          }
-
           const kind = classifyError('E_TRANSLATE_SEGMENT', message)
           if (kind !== 'retryable' || attempt >= maxAttempts) {
             break
           }
-          const isMissingContent = this.isMiniMaxMissingContentError(message)
+          const isMissingContent = this.isMissingContentError(message)
           if (isMissingContent) {
             await sleep(Math.min(60_000, 15_000 * attempt))
             continue
@@ -2617,10 +2536,10 @@ export class TaskEngine {
         failedSegmentErrors.push(
           `#${segment.segmentIndex + 1}:${message}`,
         )
-        if (this.isMiniMaxMissingContentError(message)) {
-          const code = this.getMiniMaxMissingContentCode(message) ?? 'unknown'
+        if (this.isMissingContentError(message)) {
+          const code = this.getMissingContentCode(message) ?? 'unknown'
           throw new Error(
-            `MiniMax returned empty content (${code}) on segment #${segment.segmentIndex + 1}. Stop early to avoid cascading failures; retry later.`,
+            `Translation provider returned empty content (${code}) on segment #${segment.segmentIndex + 1}. Stop early to avoid cascading failures; retry later.`,
           )
         }
         continue
@@ -2664,17 +2583,7 @@ export class TaskEngine {
       throw new Error(`Segment missing translated text: ${missing.id}`)
     }
 
-    const mergedSegments = mergeTranslatedChunks(ordered.map((segment) => segment.targetText ?? ''))
-    let translated = mergedSegments.text
-    if (mergedSegments.removedChars > 0) {
-      this.emit('log', {
-        taskId: context.taskId,
-        stage: 'translating',
-        level: 'warn',
-        text: `Translation merge removed duplicated overlap chars=${mergedSegments.removedChars}`,
-        timestamp: new Date().toISOString(),
-      })
-    }
+    let translated = joinTranslatedChunks(ordered.map((segment) => segment.targetText ?? ''))
     const estimatedLongByDuration =
       typeof context.audioDurationSec === 'number' &&
       Number.isFinite(context.audioDurationSec) &&
@@ -2759,7 +2668,7 @@ export class TaskEngine {
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-          const synth = await minimaxSynthesize({
+          const synth = await synthesizeSpeech({
             settings,
             text: segment.sourceText ?? '',
           })

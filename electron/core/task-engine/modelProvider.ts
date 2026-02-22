@@ -175,7 +175,7 @@ function ensureTranslateSettings(settings: AppSettings): void {
   }
 }
 
-function ensureMiniMaxTtsSettings(settings: AppSettings & { minimaxApiBaseUrl: string }): void {
+function ensureMiniMaxTtsSettings(settings: AppSettings): void {
   if (settings.ttsProvider && settings.ttsProvider !== 'minimax') {
     throw new Error(`TTS provider "${settings.ttsProvider}" is not supported by current task engine`)
   }
@@ -432,14 +432,13 @@ async function requestOpenAICompatibleText(params: {
   return content
 }
 
-export async function minimaxTranslate(params: {
-  settings: AppSettings & { minimaxApiBaseUrl: string }
+export async function translateText(params: {
+  settings: AppSettings
   sourceText: string
   targetLanguage: string
   timeoutMs?: number
   context?: {
     previousText?: string
-    nextText?: string
     segmentIndex?: number
     totalSegments?: number
   }
@@ -447,35 +446,30 @@ export async function minimaxTranslate(params: {
   ensureTranslateSettings(params.settings)
   const provider = params.settings.translateProvider ?? 'minimax'
   const previousText = params.context?.previousText?.trim() ?? ''
-  const nextText = params.context?.nextText?.trim() ?? ''
   const segmentIndex = params.context?.segmentIndex
   const totalSegments = params.context?.totalSegments
+  const segmentPosition =
+    typeof segmentIndex === 'number' && typeof totalSegments === 'number'
+      ? `${segmentIndex + 1}/${totalSegments}`
+      : null
   const messages = [
     {
       role: 'system' as const,
       content: [
         'You are a professional translator.',
+        `Translate into ${params.targetLanguage}.`,
+        segmentPosition ? `Current segment position: ${segmentPosition}.` : '',
         'Keep meaning faithful, concise, and natural.',
-        'If context is provided, use it only for continuity.',
-        'Never translate PREVIOUS_CONTEXT or NEXT_CONTEXT.',
-        'Output only the translation for CURRENT_SEGMENT.',
-        'If output repeats context, remove repeated text before returning.',
+        'If previous context is provided, use it only for continuity.',
+        'Never translate or repeat previous context.',
+        'Output only the translation for the user message.',
         'Do not include explanations, labels, or extra lines.',
+        previousText ? `Previous segment tail for context only:\n${previousText}` : '',
       ].join(' '),
     },
     {
       role: 'user' as const,
-      content: [
-        `Target language: ${params.targetLanguage}`,
-        typeof segmentIndex === 'number' && typeof totalSegments === 'number'
-          ? `Segment position: ${segmentIndex + 1}/${totalSegments}`
-          : '',
-        previousText ? `PREVIOUS_CONTEXT:\n${previousText}` : '',
-        `CURRENT_SEGMENT:\n${params.sourceText}`,
-        nextText ? `NEXT_CONTEXT:\n${nextText}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
+      content: params.sourceText,
     },
   ]
 
@@ -495,8 +489,8 @@ export async function minimaxTranslate(params: {
   })
 }
 
-export async function minimaxPolish(params: {
-  settings: AppSettings & { minimaxApiBaseUrl: string }
+export async function polishTranslation(params: {
+  settings: AppSettings
   sourceText: string
   targetLanguage: string
   timeoutMs?: number
@@ -550,7 +544,7 @@ export async function minimaxPolish(params: {
 }
 
 async function queryTtsUntilReady(params: {
-  settings: AppSettings & { minimaxApiBaseUrl: string }
+  settings: AppSettings
   taskId: string
   timeoutMs: number
 }): Promise<{ fileId?: string | number; audioUrl?: string }> {
@@ -558,10 +552,15 @@ async function queryTtsUntilReady(params: {
   while (Date.now() - start < params.timeoutMs) {
     const url = new URL(getTtsQueryEndpoint(params.settings.minimaxApiBaseUrl))
     url.searchParams.set('task_id', params.taskId)
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: buildHeaders(params.settings.minimaxApiKey),
-    })
+    const remainingMs = Math.max(5_000, params.timeoutMs - (Date.now() - start))
+    const response = await fetchWithTimeout(
+      url.toString(),
+      {
+        method: 'GET',
+        headers: buildHeaders(params.settings.minimaxApiKey),
+      },
+      Math.min(30_000, remainingMs),
+    )
 
     if (!response.ok) {
       throw new Error(`MiniMax tts query failed: HTTP ${response.status}`)
@@ -590,15 +589,19 @@ async function queryTtsUntilReady(params: {
 }
 
 async function resolveDownloadUrl(params: {
-  settings: AppSettings & { minimaxApiBaseUrl: string }
+  settings: AppSettings
   fileId: string | number
 }): Promise<string> {
   const url = new URL(getFileRetrieveEndpoint(params.settings.minimaxApiBaseUrl))
   url.searchParams.set('file_id', String(params.fileId))
-  const response = await fetch(url.toString(), {
-    method: 'GET',
-    headers: buildHeaders(params.settings.minimaxApiKey),
-  })
+  const response = await fetchWithTimeout(
+    url.toString(),
+    {
+      method: 'GET',
+      headers: buildHeaders(params.settings.minimaxApiKey),
+    },
+    30_000,
+  )
 
   if (!response.ok) {
     throw new Error(`MiniMax file retrieve failed: HTTP ${response.status}`)
@@ -762,6 +765,8 @@ async function requestPiperTts(params: {
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piper-tts-'))
   const outputPath = path.join(tempDir, 'segment.wav')
+  const dataDir = path.join(path.dirname(modelPath), '.piper-data')
+  await fs.mkdir(dataDir, { recursive: true }).catch(() => undefined)
   const args = ['--model', modelPath, '--output_file', outputPath]
 
   for (const configPath of candidateConfigPaths) {
@@ -791,6 +796,7 @@ async function requestPiperTts(params: {
   args.push('--length_scale', String(lengthScale))
   args.push('--noise_scale', String(noiseScale))
   args.push('--noise_w', String(noiseW))
+  args.push('--data-dir', dataDir)
 
   try {
     await runCommand({
@@ -810,14 +816,30 @@ async function requestPiperTts(params: {
     return { audioBuffer, extension: 'wav' }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    const missingModuleMatch = message.match(/No module named '([^']+)'/)
+    if (missingModuleMatch && missingModuleMatch[1]) {
+      const missingModule = missingModuleMatch[1]
+      const suggestedPython =
+        command.includes(path.sep) && command.endsWith(process.platform === 'win32' ? 'piper.exe' : 'piper')
+          ? path.join(
+              path.dirname(command),
+              process.platform === 'win32' ? 'python.exe' : 'python',
+            )
+          : process.platform === 'win32'
+            ? 'python'
+            : 'python3'
+      throw new Error(
+        `Piper tts failed: missing Python module "${missingModule}". Reinstall Piper runtime in Settings -> 本地语音合成（Piper） or run "${suggestedPython} -m pip install ${missingModule}" and retry.`,
+      )
+    }
     throw new Error(`Piper tts failed: ${message}`)
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 
-export async function minimaxSynthesize(params: {
-  settings: AppSettings & { minimaxApiBaseUrl: string }
+export async function synthesizeSpeech(params: {
+  settings: AppSettings
   text: string
 }): Promise<{ downloadUrl?: string; audioBuffer?: Buffer; extension?: string }> {
   ensureTtsSettings(params.settings)
@@ -837,25 +859,29 @@ export async function minimaxSynthesize(params: {
   }
 
   ensureMiniMaxTtsSettings(params.settings)
-  const createResponse = await fetch(getTtsCreateEndpoint(params.settings.minimaxApiBaseUrl), {
-    method: 'POST',
-    headers: buildHeaders(params.settings.minimaxApiKey),
-    body: JSON.stringify({
-      model: params.settings.ttsModelId,
-      text: params.text,
-      voice_setting: {
-        voice_id: params.settings.ttsVoiceId,
-        speed: params.settings.ttsSpeed ?? 1,
-        pitch: params.settings.ttsPitch ?? 0,
-        vol: params.settings.ttsVolume ?? 1,
-      },
-      audio_setting: {
-        audio_sample_rate: 32000,
-        bitrate: 128000,
-        format: 'mp3',
-      },
-    }),
-  })
+  const createResponse = await fetchWithTimeout(
+    getTtsCreateEndpoint(params.settings.minimaxApiBaseUrl),
+    {
+      method: 'POST',
+      headers: buildHeaders(params.settings.minimaxApiKey),
+      body: JSON.stringify({
+        model: params.settings.ttsModelId,
+        text: params.text,
+        voice_setting: {
+          voice_id: params.settings.ttsVoiceId,
+          speed: params.settings.ttsSpeed ?? 1,
+          pitch: params.settings.ttsPitch ?? 0,
+          vol: params.settings.ttsVolume ?? 1,
+        },
+        audio_setting: {
+          audio_sample_rate: 32000,
+          bitrate: 128000,
+          format: 'mp3',
+        },
+      }),
+    },
+    Math.min(120_000, Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000)),
+  )
 
   if (!createResponse.ok) {
     throw new Error(`MiniMax tts create failed: HTTP ${createResponse.status}`)
