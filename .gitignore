@@ -47,3 +47,6 @@ coverage/
 *.temp
 .cache/
 .tmp-smoke/
+
+# Project specific
+g2pW/

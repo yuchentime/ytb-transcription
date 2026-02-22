@@ -9,6 +9,66 @@
 - 文本翻译（可配置 Provider）
 - 文本转语音（TTS）
 
+## 翻译与 TTS 分段策略（最新）
+
+### 1) 翻译分段（按上下文窗口阈值触发）
+
+- 默认按大模型上下文窗口 `256k token` 估算，采用 `70%` 阈值触发分段（默认 `179200 token`）。
+- 若转写全文估算 token 不超过阈值：**整段一次翻译**（不分段）。
+- 若超过阈值：按 token 预算切成多个翻译片段，再按顺序逐段翻译。
+
+默认行为要点：
+
+- `user prompt` 仅放当前待翻译文本（当前分段原文）。
+- `system prompt` 除基础翻译指令外，会附带“前一分段的尾部上下文”（用于连贯，不可重复翻译）。
+- 合并翻译结果时，按顺序直接拼接（`\n` 连接）。
+
+可配置项（任务快照 `modelConfigSnapshot`）：
+
+- `translateSplitThresholdTokens`：翻译分段阈值（token）。
+- `translationContextChars`：传给下一段的前文尾部上下文字符数。
+
+### 2) TTS 分段（按标点切分，避免句子被硬截断）
+
+- TTS 与翻译分段解耦，使用独立策略。
+- 若翻译文本长度不超过阈值（默认 `3000` 字符）：**整段一次合成**。
+- 若超过阈值：先按标点切成“句子单元”，再把句子单元聚合为目标长度片段（默认约 `900` 字符）。
+- 聚合过程只在标点边界切分，**不强行按固定长度截断句子**，以降低句子不连贯问题。
+
+可配置项（任务快照 `modelConfigSnapshot`）：
+
+- `ttsSplitThresholdChars`：TTS 触发分段阈值（字符数）。
+- `ttsTargetSegmentChars`：TTS 分段目标长度（字符数）。
+
+说明：
+
+- 为兼容历史参数，`ttsTargetSegmentChars` 未设置时，会优先参考 `segmentationOptions.maxCharsPerSegment / targetSegmentLength`，再回落到默认值。
+- TTS 分段后仍会在合成阶段按段并发执行，并在最后自动拼接音频。
+
+### 3) 调参建议（实践）
+
+以下建议优先保证“稳定完成任务”，再优化“自然度/速度”。
+
+按语言建议（`ttsTargetSegmentChars`）：
+
+- 中文（`zh`）：建议 `700 ~ 1000`（默认 `900` 通常够用）。
+- 英文（`en`）：建议 `900 ~ 1300`（词间空格多，可适当放大）。
+- 日文（`ja`）：建议 `650 ~ 950`（句式更紧凑，适当保守更稳）。
+
+按症状调参：
+
+- 症状：TTS 偶发超时/失败  
+  调整：先下调 `ttsTargetSegmentChars`（每次降 `100 ~ 200`），必要时下调 `ttsSplitThresholdChars` 让其更早分段。
+- 症状：任务能成功，但语句衔接略生硬  
+  调整：小幅上调 `ttsTargetSegmentChars`（每次升 `100` 左右），减少分段数量。
+- 症状：短文本也被切得太碎  
+  调整：上调 `ttsSplitThresholdChars`（例如从 `3000` 调到 `4000` 或更高）。
+
+翻译侧建议：
+
+- `translateSplitThresholdTokens` 一般保持默认（`179200`）即可。
+- 仅当使用上下文窗口较小的模型时，再下调该值（例如到 `80k ~ 120k`）以提前分段，提升成功率。
+
 ## 近期更新（用户视角）
 
 ### 1. TTS Provider 支持「内置语音合成（Piper）」

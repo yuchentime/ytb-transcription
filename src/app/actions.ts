@@ -360,6 +360,8 @@ export async function startTaskAction(
         transcribeChunkDurationSec: 240,
         transcribeChunkOverlapSec: 1.2,
         transcribeConcurrency: 2,
+        ttsSplitThresholdChars: 3000,
+        ttsTargetSegmentChars: 900,
         ttsVoiceId: taskForm.ttsVoiceId,
         ttsSpeed: settings.ttsSpeed,
         ttsPitch: settings.ttsPitch,

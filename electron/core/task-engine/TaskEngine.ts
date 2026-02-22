@@ -482,6 +482,39 @@ function splitTextByTokenBudget(
   return pieces.flatMap((piece) => splitTextByTokenBudget(piece, tokenBudget, depth + 1))
 }
 
+function splitTextByPunctuationUnits(text: string): string[] {
+  const normalized = text.trim()
+  if (!normalized) return []
+  const matched = normalized.match(/[^。！？!?；;，,、\n]+[。！？!?；;，,、\n]*/g)
+  if (!matched) return [normalized]
+  return matched.map((item) => item.trim()).filter(Boolean)
+}
+
+function splitTextByPunctuationForTts(text: string, targetChars: number): string[] {
+  const units = splitTextByPunctuationUnits(text)
+  if (units.length === 0) return []
+  if (targetChars <= 0) return units
+
+  const chunks: string[] = []
+  let buffer = ''
+  for (const unit of units) {
+    if (!buffer) {
+      buffer = unit
+      continue
+    }
+    if ((buffer + unit).length <= targetChars) {
+      buffer += unit
+      continue
+    }
+    chunks.push(buffer.trim())
+    buffer = unit
+  }
+  if (buffer.trim()) {
+    chunks.push(buffer.trim())
+  }
+  return chunks
+}
+
 function buildSegmentsFromChunkTexts(chunks: string[]): TextSegment[] {
   return chunks.map((chunk, index) => ({
     id: randomUUID(),
@@ -651,6 +684,8 @@ function buildComparableCheckpointConfig(config: Record<string, unknown>): Recor
     'transcribeChunkMinDurationSec',
     'transcribeChunkDurationSec',
     'transcribeChunkOverlapSec',
+    'ttsSplitThresholdChars',
+    'ttsTargetSegmentChars',
   ] as const
   for (const key of extraNumberKeys) {
     const value = toComparableNumber(config[key])
@@ -1365,6 +1400,42 @@ export class TaskEngine {
     )
   }
 
+  private resolveTtsSegmentationConfig(taskId: string): {
+    splitThresholdChars: number
+    targetSegmentChars: number
+  } {
+    const task = this.deps.taskDao.getTaskById(taskId)
+    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
+    const segmentationOptions =
+      snapshot.segmentationOptions && typeof snapshot.segmentationOptions === 'object'
+        ? (snapshot.segmentationOptions as Record<string, unknown>)
+        : {}
+    const targetFromSegmentation =
+      typeof segmentationOptions.maxCharsPerSegment === 'number'
+        ? segmentationOptions.maxCharsPerSegment
+        : typeof segmentationOptions.targetSegmentLength === 'number'
+          ? segmentationOptions.targetSegmentLength
+          : DEFAULT_TTS_TARGET_SEGMENT_CHARS
+    return {
+      splitThresholdChars: Math.floor(
+        toSafeNumber(
+          snapshot.ttsSplitThresholdChars,
+          DEFAULT_TTS_SPLIT_THRESHOLD_CHARS,
+          400,
+          20_000,
+        ),
+      ),
+      targetSegmentChars: Math.floor(
+        toSafeNumber(
+          snapshot.ttsTargetSegmentChars,
+          targetFromSegmentation,
+          120,
+          3_000,
+        ),
+      ),
+    }
+  }
+
   private getMissingContentCode(errorMessage: string): string | null {
     const matched = errorMessage.match(/missing content\s*\(([^)]+)\)/i)
     if (!matched) return null
@@ -1389,6 +1460,23 @@ export class TaskEngine {
       return buildSegmentsFromChunkTexts([normalized])
     }
     const chunkTexts = splitTextByTokenBudget(normalized, params.splitThresholdTokens)
+    return buildSegmentsFromChunkTexts(chunkTexts)
+  }
+
+  private buildTtsSegments(params: {
+    sourceText: string
+    splitThresholdChars: number
+    targetSegmentChars: number
+  }): TextSegment[] {
+    const normalized = params.sourceText.trim()
+    if (!normalized) return []
+    if (normalized.length <= params.splitThresholdChars) {
+      return buildSegmentsFromChunkTexts([normalized])
+    }
+    const chunkTexts = splitTextByPunctuationForTts(normalized, params.targetSegmentChars)
+    if (chunkTexts.length <= 1) {
+      return buildSegmentsFromChunkTexts([normalized])
+    }
     return buildSegmentsFromChunkTexts(chunkTexts)
   }
 
@@ -2133,6 +2221,7 @@ export class TaskEngine {
     const segmentation = this.resolveSegmentationConfig(taskId)
     const polish = this.resolvePolishConfig(taskId)
     const transcribeChunk = this.resolveTranscribeChunkConfig(taskId)
+    const ttsSegmentation = this.resolveTtsSegmentationConfig(taskId)
     const translationContextChars = this.resolveTranslationContextChars(taskId)
     const translateRequestTimeoutMs = this.resolveTranslateRequestTimeoutMs(taskId)
     const translateSplitThresholdTokens = this.resolveTranslateSplitThresholdTokens(taskId)
@@ -2175,6 +2264,8 @@ export class TaskEngine {
       transcribeChunkMinDurationSec: transcribeChunk.minDurationSec,
       transcribeChunkDurationSec: transcribeChunk.chunkDurationSec,
       transcribeChunkOverlapSec: transcribeChunk.overlapSec,
+      ttsSplitThresholdChars: ttsSegmentation.splitThresholdChars,
+      ttsTargetSegmentChars: ttsSegmentation.targetSegmentChars,
     }
   }
 
@@ -2630,13 +2721,20 @@ export class TaskEngine {
     if (!context.toolchain) throw new Error('toolchain is not ready')
     const settings = this.resolveExecutionSettings(context.taskId)
     const translationText = await fs.readFile(context.translationPath, 'utf-8')
-    const segmentation = this.resolveSegmentationConfig(context.taskId)
-
-    const baseSegments =
-      context.translationSegments && context.translationSegments.length > 0
-        ? context.translationSegments
-        : segment(translationText, segmentation.strategy, segmentation.options)
+    const ttsSegmentation = this.resolveTtsSegmentationConfig(context.taskId)
+    const baseSegments = this.buildTtsSegments({
+      sourceText: translationText,
+      splitThresholdChars: ttsSegmentation.splitThresholdChars,
+      targetSegmentChars: ttsSegmentation.targetSegmentChars,
+    })
     assertSegmentIntegrity(translationText, baseSegments)
+    this.emit('log', {
+      taskId: context.taskId,
+      stage: 'synthesizing',
+      level: 'info',
+      text: `TTS segmentation policy: sourceChars=${translationText.trim().length}, splitThresholdChars=${ttsSegmentation.splitThresholdChars}, targetSegmentChars=${ttsSegmentation.targetSegmentChars}, segments=${baseSegments.length}`,
+      timestamp: new Date().toISOString(),
+    })
 
     const stageSegments = await this.ensureStageSegments(context.taskId, 'synthesizing', baseSegments)
     const retrySet = this.resolveRetrySet(context.taskId)
