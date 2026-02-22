@@ -320,6 +320,9 @@ function App() {
     settingsLoading: settingsState.loading,
     settingsSaving: settingsState.saving,
     settingsError: settingsState.error,
+    settingsSaveSuccess: settingsState.saveSuccess,
+    settingsSaveError: settingsState.saveError,
+    settingsSaveErrorMessage: settingsState.saveErrorMessage,
     defaultStageTimeoutMs: DEFAULT_SETTINGS.stageTimeoutMs,
     voiceProfiles: settingsState.voiceProfiles,
     voiceValidationErrors: settingsState.voiceValidationErrors,
@@ -327,6 +330,17 @@ function App() {
   const settingsPageActions = {
     setSettings: setSettingsData,
     onSave: saveSettings,
+    clearSaveSuccess: () =>
+      setSettingsState((prev) => ({
+        ...prev,
+        saveSuccess: false,
+      })),
+    clearSaveError: () =>
+      setSettingsState((prev) => ({
+        ...prev,
+        saveError: false,
+        saveErrorMessage: '',
+      })),
   }
 
   // Calculate overall progress based on active status and stage progress
@@ -359,7 +373,6 @@ function App() {
     activeStatus: taskState.activeStatus,
     stageProgress: taskState.stageProgress,
     overallProgress,
-    runtimeItems: taskState.runtimeItems,
     voiceProfiles: settingsState.voiceProfiles,
     taskFormErrors,
     segments: taskState.segments,

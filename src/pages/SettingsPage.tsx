@@ -3,6 +3,7 @@ import type { AppSettings, TranslateProvider, TtsProvider } from '../../electron
 import type { TranslateFn } from '../app/i18n'
 import { translateLanguageLabel } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
+import { Toast } from '../components/Toast'
 import { TRANSLATE_MODEL_OPTIONS, TTS_MODEL_OPTIONS } from '../app/utils'
 
 // Translation provider options
@@ -34,6 +35,9 @@ interface SettingsPageModel {
   settingsLoading: boolean
   settingsSaving: boolean
   settingsError: string
+  settingsSaveSuccess: boolean
+  settingsSaveError: boolean
+  settingsSaveErrorMessage: string
   defaultStageTimeoutMs: number
   voiceProfiles: Array<{
     id: string
@@ -50,6 +54,8 @@ interface SettingsPageModel {
 interface SettingsPageActions {
   setSettings: Dispatch<SetStateAction<AppSettings>>
   onSave(): Promise<void>
+  clearSaveSuccess(): void
+  clearSaveError(): void
 }
 
 interface SettingsPageProps {
@@ -679,8 +685,21 @@ export function SettingsPage(props: SettingsPageProps) {
         >
           {props.model.settingsSaving ? props.t('settings.saving') : props.t('settings.save')}
         </button>
-        {props.model.settingsError && <span className="error">{props.model.settingsError}</span>}
       </div>
+
+      {/* Toast 通知 */}
+      <Toast
+        message={props.t('settings.saveSuccess')}
+        visible={props.model.settingsSaveSuccess}
+        onClose={props.actions.clearSaveSuccess}
+        type="success"
+      />
+      <Toast
+        message={props.model.settingsSaveErrorMessage || props.t('settings.saveFailed')}
+        visible={props.model.settingsSaveError}
+        onClose={props.actions.clearSaveError}
+        type="error"
+      />
     </section>
   )
 }

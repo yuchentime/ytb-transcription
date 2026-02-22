@@ -31,13 +31,6 @@ export interface LogItem {
   text: string
 }
 
-export interface RuntimeItem {
-  component: 'yt-dlp' | 'ffmpeg' | 'python' | 'whisper' | 'deno' | 'engine'
-  status: 'checking' | 'downloading' | 'installing' | 'ready' | 'error'
-  message: string
-  timestamp: string
-}
-
 export interface HistoryQueryState {
   page: number
   pageSize: number
@@ -51,6 +44,9 @@ export interface SettingsState {
   loading: boolean
   saving: boolean
   error: string
+  saveSuccess: boolean
+  saveError: boolean
+  saveErrorMessage: string
   voiceProfiles: VoiceProfile[]
   voiceValidationErrors: string[]
 }
@@ -60,7 +56,6 @@ export interface TaskState {
   activeTaskId: string
   activeStatus: TaskStatus | ''
   stageProgress: Record<string, number>
-  runtimeItems: Record<RuntimeItem['component'], RuntimeItem | undefined>
   segments: TaskSegmentRecord[]
   recoveryActions: RecoveryAction[]
   logs: LogItem[]
@@ -91,19 +86,11 @@ export function createInitialSettingsState(): SettingsState {
     loading: true,
     saving: false,
     error: '',
+    saveSuccess: false,
+    saveError: false,
+    saveErrorMessage: '',
     voiceProfiles: [],
     voiceValidationErrors: [],
-  }
-}
-
-export function createEmptyRuntimeItems(): Record<RuntimeItem['component'], RuntimeItem | undefined> {
-  return {
-    'yt-dlp': undefined,
-    ffmpeg: undefined,
-    python: undefined,
-    whisper: undefined,
-    deno: undefined,
-    engine: undefined,
   }
 }
 
@@ -119,7 +106,6 @@ export function createInitialTaskState(): TaskState {
     activeTaskId: '',
     activeStatus: '',
     stageProgress: {},
-    runtimeItems: createEmptyRuntimeItems(),
     segments: [],
     recoveryActions: [],
     logs: [],

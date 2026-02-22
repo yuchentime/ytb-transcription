@@ -1,4 +1,4 @@
-import type { AppSettings } from '../db/types'
+import type { AppSettings, TranslateProvider, TtsProvider } from '../db/types'
 
 interface MiniMaxTextResponse {
   choices?: Array<{
@@ -10,6 +10,26 @@ interface MiniMaxTextResponse {
     status_code?: number
     status_msg?: string
   }
+}
+
+interface OpenAIChatResponse {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>
+    }
+  }>
+  error?: {
+    message?: string
+    type?: string
+    code?: string | number
+  }
+}
+
+interface OpenAITtsResponse {
+  audio_url?: string
+  download_url?: string
+  url?: string
+  data?: string
 }
 
 interface MiniMaxTtsCreateResponse {
@@ -62,15 +82,65 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '')
 }
 
-function buildHeaders(apiKey: string): HeadersInit {
-  return {
+function buildHeaders(apiKey?: string): HeadersInit {
+  const headers: HeadersInit = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${apiKey}`,
   }
+  if (typeof apiKey === 'string' && apiKey.trim()) {
+    return {
+      ...headers,
+      Authorization: `Bearer ${apiKey.trim()}`,
+    }
+  }
+  return headers
 }
 
 function getTextEndpoint(baseUrl: string): string {
   return `${normalizeBaseUrl(baseUrl)}/v1/text/chatcompletion_v2`
+}
+
+function getOpenAICompatibleTextEndpoint(
+  provider: Exclude<TranslateProvider, 'minimax'>,
+  baseUrl: string,
+): string {
+  const normalized = normalizeBaseUrl(baseUrl)
+  if (normalized.endsWith('/chat/completions')) {
+    return normalized
+  }
+  if (provider === 'glm') {
+    if (normalized.endsWith('/v4')) {
+      return `${normalized}/chat/completions`
+    }
+    if (normalized.endsWith('/api/paas')) {
+      return `${normalized}/v4/chat/completions`
+    }
+  }
+  if (/\/v\d+$/i.test(normalized)) {
+    return `${normalized}/chat/completions`
+  }
+  return `${normalized}/v1/chat/completions`
+}
+
+function getOpenAICompatibleTtsEndpoint(
+  provider: Exclude<TtsProvider, 'minimax'>,
+  baseUrl: string,
+): string {
+  const normalized = normalizeBaseUrl(baseUrl)
+  if (normalized.endsWith('/audio/speech')) {
+    return normalized
+  }
+  if (provider === 'glm') {
+    if (normalized.endsWith('/v4')) {
+      return `${normalized}/audio/speech`
+    }
+    if (normalized.endsWith('/api/paas')) {
+      return `${normalized}/v4/audio/speech`
+    }
+  }
+  if (/\/v\d+$/i.test(normalized)) {
+    return `${normalized}/audio/speech`
+  }
+  return `${normalized}/v1/audio/speech`
 }
 
 function getTtsCreateEndpoint(baseUrl: string): string {
@@ -85,16 +155,126 @@ function getFileRetrieveEndpoint(baseUrl: string): string {
   return `${normalizeBaseUrl(baseUrl)}/v1/files/retrieve`
 }
 
-function ensureApiSettings(settings: AppSettings & { minimaxApiBaseUrl: string }): void {
+function ensureTranslateSettings(settings: AppSettings): void {
+  if (!settings.translateModelId) {
+    throw new Error('translateModelId is required')
+  }
+  const provider = settings.translateProvider ?? 'minimax'
+  const baseUrl = resolveTranslateApiBaseUrl(settings, provider)
+  if (!baseUrl.trim()) {
+    throw new Error(`${provider} API base URL is required for translation`)
+  }
+  if (provider === 'custom') return
+  const key = resolveTranslateApiKey(settings, provider)
+  if (!key.trim()) {
+    throw new Error(`${provider} API key is required for translation`)
+  }
+}
+
+function ensureMiniMaxTtsSettings(settings: AppSettings & { minimaxApiBaseUrl: string }): void {
+  if (settings.ttsProvider && settings.ttsProvider !== 'minimax') {
+    throw new Error(`TTS provider "${settings.ttsProvider}" is not supported by current task engine`)
+  }
   if (!settings.minimaxApiKey) {
     throw new Error('MiniMax API key is required')
   }
-  if (!settings.translateModelId) {
-    throw new Error('translateModelId is required')
+  if (!settings.minimaxApiBaseUrl?.trim()) {
+    throw new Error('MiniMax API base URL is required')
   }
   if (!settings.ttsModelId) {
     throw new Error('ttsModelId is required')
   }
+}
+
+function ensureTtsSettings(settings: AppSettings): void {
+  if (!settings.ttsModelId) {
+    throw new Error('ttsModelId is required')
+  }
+  const provider = settings.ttsProvider ?? 'minimax'
+  const baseUrl = resolveTtsApiBaseUrl(settings, provider)
+  if (!baseUrl.trim()) {
+    throw new Error(`${provider} API base URL is required for TTS`)
+  }
+  if (provider === 'custom') return
+  const key = resolveTtsApiKey(settings, provider)
+  if (!key.trim()) {
+    throw new Error(`${provider} API key is required for TTS`)
+  }
+}
+
+function resolveTranslateApiKey(
+  settings: AppSettings,
+  provider: TranslateProvider,
+): string {
+  switch (provider) {
+    case 'minimax':
+      return settings.minimaxApiKey ?? ''
+    case 'deepseek':
+      return settings.deepseekApiKey ?? ''
+    case 'glm':
+      return settings.glmApiKey ?? ''
+    case 'kimi':
+      return settings.kimiApiKey ?? ''
+    case 'custom':
+      return settings.customApiKey ?? ''
+  }
+}
+
+function resolveTranslateApiBaseUrl(
+  settings: AppSettings,
+  provider: TranslateProvider,
+): string {
+  switch (provider) {
+    case 'minimax':
+      return settings.minimaxApiBaseUrl ?? ''
+    case 'deepseek':
+      return settings.deepseekApiBaseUrl ?? ''
+    case 'glm':
+      return settings.glmApiBaseUrl ?? ''
+    case 'kimi':
+      return settings.kimiApiBaseUrl ?? ''
+    case 'custom':
+      return settings.customApiBaseUrl ?? ''
+  }
+}
+
+function resolveTtsApiKey(
+  settings: AppSettings,
+  provider: TtsProvider,
+): string {
+  switch (provider) {
+    case 'minimax':
+      return settings.minimaxApiKey ?? ''
+    case 'glm':
+      return settings.glmApiKey ?? ''
+    case 'custom':
+      return settings.customApiKey ?? ''
+  }
+}
+
+function resolveTtsApiBaseUrl(
+  settings: AppSettings,
+  provider: TtsProvider,
+): string {
+  switch (provider) {
+    case 'minimax':
+      return settings.minimaxApiBaseUrl ?? ''
+    case 'glm':
+      return settings.glmApiBaseUrl ?? ''
+    case 'custom':
+      return settings.customApiBaseUrl ?? ''
+  }
+}
+
+function extractOpenAIChoiceContent(
+  content: string | Array<{ type?: string; text?: string }> | undefined,
+): string {
+  if (typeof content === 'string') return content.trim()
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((item) => (item?.type === 'text' ? item.text ?? '' : item?.text ?? ''))
+    .join('')
+    .trim()
 }
 
 async function fetchWithTimeout(
@@ -119,7 +299,7 @@ async function fetchWithTimeout(
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timeoutHandle = setTimeout(() => {
       controller.abort()
-      reject(new Error(`MiniMax text request timeout after ${timeout}ms`))
+      reject(new Error(`Text request timeout after ${timeout}ms`))
     }, timeout)
   })
 
@@ -127,7 +307,7 @@ async function fetchWithTimeout(
     return await Promise.race([fetchPromise, timeoutPromise])
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`MiniMax text request timeout after ${timeout}ms`)
+      throw new Error(`Text request timeout after ${timeout}ms`)
     }
     throw error
   } finally {
@@ -151,7 +331,7 @@ async function readJsonWithTimeout<T>(
 
   return await new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`MiniMax text response timeout after ${timeout}ms`))
+      reject(new Error(`Text response timeout after ${timeout}ms`))
     }, timeout)
 
     response
@@ -160,6 +340,87 @@ async function readJsonWithTimeout<T>(
       .catch((error) => reject(error))
       .finally(() => clearTimeout(timer))
   })
+}
+
+async function requestMiniMaxText(params: {
+  settings: AppSettings
+  timeoutMs?: number
+  messages: Array<{ role: 'system' | 'user'; content: string }>
+  action: 'translate' | 'polish'
+}): Promise<string> {
+  const response = await fetchWithTimeout(
+    getTextEndpoint(params.settings.minimaxApiBaseUrl),
+    {
+      method: 'POST',
+      headers: buildHeaders(params.settings.minimaxApiKey),
+      body: JSON.stringify({
+        model: params.settings.translateModelId,
+        temperature:
+          params.action === 'polish'
+            ? Math.min(0.4, params.settings.translateTemperature ?? 0.3)
+            : params.settings.translateTemperature ?? 0.3,
+        messages: params.messages,
+      }),
+    },
+    params.timeoutMs,
+  )
+
+  if (!response.ok) {
+    throw new Error(`MiniMax text request failed: HTTP ${response.status}`)
+  }
+
+  const data = await readJsonWithTimeout<MiniMaxTextResponse>(response, params.timeoutMs)
+  const content = data.choices?.[0]?.message?.content?.trim()
+  if (!content) {
+    const code = data.base_resp?.status_code ?? 'unknown'
+    const statusMsg = data.base_resp?.status_msg?.trim()
+    throw new Error(
+      statusMsg
+        ? `MiniMax text response missing content (${code}): ${statusMsg}`
+        : `MiniMax text response missing content (${code})`,
+    )
+  }
+  return content
+}
+
+async function requestOpenAICompatibleText(params: {
+  settings: AppSettings
+  provider: Exclude<TranslateProvider, 'minimax'>
+  timeoutMs?: number
+  messages: Array<{ role: 'system' | 'user'; content: string }>
+}): Promise<string> {
+  const baseUrl = resolveTranslateApiBaseUrl(params.settings, params.provider)
+  if (!baseUrl.trim()) {
+    throw new Error(`${params.provider} API base URL is required for translation`)
+  }
+  const response = await fetchWithTimeout(
+    getOpenAICompatibleTextEndpoint(params.provider, baseUrl),
+    {
+      method: 'POST',
+      headers: buildHeaders(resolveTranslateApiKey(params.settings, params.provider)),
+      body: JSON.stringify({
+        model: params.settings.translateModelId,
+        temperature: params.settings.translateTemperature ?? 0.3,
+        messages: params.messages,
+      }),
+    },
+    params.timeoutMs,
+  )
+  if (!response.ok) {
+    throw new Error(`${params.provider} text request failed: HTTP ${response.status}`)
+  }
+
+  const data = await readJsonWithTimeout<OpenAIChatResponse>(response, params.timeoutMs)
+  const content = extractOpenAIChoiceContent(data.choices?.[0]?.message?.content)
+  if (!content) {
+    const detail =
+      data.error?.message?.trim() ||
+      data.error?.code?.toString().trim() ||
+      data.error?.type?.trim() ||
+      'unknown'
+    throw new Error(`${params.provider} text response missing content (${detail})`)
+  }
+  return content
 }
 
 export async function minimaxTranslate(params: {
@@ -174,64 +435,53 @@ export async function minimaxTranslate(params: {
     totalSegments?: number
   }
 }): Promise<string> {
-  ensureApiSettings(params.settings)
+  ensureTranslateSettings(params.settings)
+  const provider = params.settings.translateProvider ?? 'minimax'
   const previousText = params.context?.previousText?.trim() ?? ''
   const nextText = params.context?.nextText?.trim() ?? ''
   const segmentIndex = params.context?.segmentIndex
   const totalSegments = params.context?.totalSegments
-
-  const response = await fetchWithTimeout(
-    getTextEndpoint(params.settings.minimaxApiBaseUrl),
+  const messages = [
     {
-    method: 'POST',
-    headers: buildHeaders(params.settings.minimaxApiKey),
-    body: JSON.stringify({
-      model: params.settings.translateModelId,
-      temperature: params.settings.translateTemperature ?? 0.3,
-      messages: [
-        {
-          role: 'system',
-          content:
-            [
-              'You are a professional translator.',
-              'Keep meaning faithful, concise, and natural.',
-              'If context is provided, use it only for continuity.',
-              'Output only the translation for CURRENT_SEGMENT.',
-              'Do not include explanations, labels, or extra lines.',
-            ].join(' '),
-        },
-        {
-          role: 'user',
-          content: [
-            `Target language: ${params.targetLanguage}`,
-            typeof segmentIndex === 'number' && typeof totalSegments === 'number'
-              ? `Segment position: ${segmentIndex + 1}/${totalSegments}`
-              : '',
-            previousText ? `PREVIOUS_CONTEXT:\n${previousText}` : '',
-            `CURRENT_SEGMENT:\n${params.sourceText}`,
-            nextText ? `NEXT_CONTEXT:\n${nextText}` : '',
-          ]
-            .filter(Boolean)
-            .join('\n\n'),
-        },
-      ],
-    }),
+      role: 'system' as const,
+      content: [
+        'You are a professional translator.',
+        'Keep meaning faithful, concise, and natural.',
+        'If context is provided, use it only for continuity.',
+        'Output only the translation for CURRENT_SEGMENT.',
+        'Do not include explanations, labels, or extra lines.',
+      ].join(' '),
     },
-    params.timeoutMs,
-  )
+    {
+      role: 'user' as const,
+      content: [
+        `Target language: ${params.targetLanguage}`,
+        typeof segmentIndex === 'number' && typeof totalSegments === 'number'
+          ? `Segment position: ${segmentIndex + 1}/${totalSegments}`
+          : '',
+        previousText ? `PREVIOUS_CONTEXT:\n${previousText}` : '',
+        `CURRENT_SEGMENT:\n${params.sourceText}`,
+        nextText ? `NEXT_CONTEXT:\n${nextText}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+    },
+  ]
 
-  if (!response.ok) {
-    throw new Error(`MiniMax text request failed: HTTP ${response.status}`)
+  if (provider === 'minimax') {
+    return await requestMiniMaxText({
+      settings: params.settings,
+      timeoutMs: params.timeoutMs,
+      messages,
+      action: 'translate',
+    })
   }
-
-  const data = await readJsonWithTimeout<MiniMaxTextResponse>(response, params.timeoutMs)
-  const content = data.choices?.[0]?.message?.content?.trim()
-  if (!content) {
-    throw new Error(
-      `MiniMax text response missing content (${data.base_resp?.status_code ?? 'unknown'})`,
-    )
-  }
-  return content
+  return await requestOpenAICompatibleText({
+    settings: params.settings,
+    provider,
+    timeoutMs: params.timeoutMs,
+    messages,
+  })
 }
 
 export async function minimaxPolish(params: {
@@ -244,57 +494,48 @@ export async function minimaxPolish(params: {
     nextText?: string
   }
 }): Promise<string> {
-  ensureApiSettings(params.settings)
+  ensureTranslateSettings(params.settings)
+  const provider = params.settings.translateProvider ?? 'minimax'
   const previousText = params.context?.previousText?.trim() ?? ''
   const nextText = params.context?.nextText?.trim() ?? ''
-  const response = await fetchWithTimeout(
-    getTextEndpoint(params.settings.minimaxApiBaseUrl),
+  const messages = [
     {
-    method: 'POST',
-    headers: buildHeaders(params.settings.minimaxApiKey),
-    body: JSON.stringify({
-      model: params.settings.translateModelId,
-      temperature: Math.min(0.4, params.settings.translateTemperature ?? 0.3),
-      messages: [
-        {
-          role: 'system',
-          content: [
-            'You are a translation editor.',
-            'Polish the CURRENT_SEGMENT in the same target language for coherence and readability.',
-            'Keep original meaning, names, numbers, and terminology.',
-            'Use context only for continuity.',
-            'Output only polished CURRENT_SEGMENT text.',
-          ].join(' '),
-        },
-        {
-          role: 'user',
-          content: [
-            `Target language: ${params.targetLanguage}`,
-            previousText ? `PREVIOUS_CONTEXT:\n${previousText}` : '',
-            `CURRENT_SEGMENT:\n${params.sourceText}`,
-            nextText ? `NEXT_CONTEXT:\n${nextText}` : '',
-          ]
-            .filter(Boolean)
-            .join('\n\n'),
-        },
-      ],
-    }),
+      role: 'system' as const,
+      content: [
+        'You are a translation editor.',
+        'Polish the CURRENT_SEGMENT in the same target language for coherence and readability.',
+        'Keep original meaning, names, numbers, and terminology.',
+        'Use context only for continuity.',
+        'Output only polished CURRENT_SEGMENT text.',
+      ].join(' '),
     },
-    params.timeoutMs,
-  )
+    {
+      role: 'user' as const,
+      content: [
+        `Target language: ${params.targetLanguage}`,
+        previousText ? `PREVIOUS_CONTEXT:\n${previousText}` : '',
+        `CURRENT_SEGMENT:\n${params.sourceText}`,
+        nextText ? `NEXT_CONTEXT:\n${nextText}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+    },
+  ]
 
-  if (!response.ok) {
-    throw new Error(`MiniMax polish request failed: HTTP ${response.status}`)
+  if (provider === 'minimax') {
+    return await requestMiniMaxText({
+      settings: params.settings,
+      timeoutMs: params.timeoutMs,
+      messages,
+      action: 'polish',
+    })
   }
-
-  const data = await readJsonWithTimeout<MiniMaxTextResponse>(response, params.timeoutMs)
-  const content = data.choices?.[0]?.message?.content?.trim()
-  if (!content) {
-    throw new Error(
-      `MiniMax polish response missing content (${data.base_resp?.status_code ?? 'unknown'})`,
-    )
-  }
-  return content
+  return await requestOpenAICompatibleText({
+    settings: params.settings,
+    provider,
+    timeoutMs: params.timeoutMs,
+    messages,
+  })
 }
 
 async function queryTtsUntilReady(params: {
@@ -360,11 +601,81 @@ async function resolveDownloadUrl(params: {
   return downloadUrl
 }
 
+async function requestOpenAICompatibleTts(params: {
+  settings: AppSettings
+  provider: Exclude<TtsProvider, 'minimax'>
+  text: string
+}): Promise<{ downloadUrl?: string; audioBuffer?: Buffer; extension?: string }> {
+  const baseUrl = resolveTtsApiBaseUrl(params.settings, params.provider)
+  if (!baseUrl.trim()) {
+    throw new Error(`${params.provider} API base URL is required for TTS`)
+  }
+  const response = await fetchWithTimeout(
+    getOpenAICompatibleTtsEndpoint(params.provider, baseUrl),
+    {
+      method: 'POST',
+      headers: buildHeaders(resolveTtsApiKey(params.settings, params.provider)),
+      body: JSON.stringify({
+        model: params.settings.ttsModelId,
+        input: params.text,
+        voice: params.settings.ttsVoiceId || 'alloy',
+        speed: params.settings.ttsSpeed ?? 1,
+        response_format: 'mp3',
+      }),
+    },
+    Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
+  )
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(
+      `${params.provider} tts request failed: HTTP ${response.status}${detail ? ` ${detail.slice(0, 200)}` : ''}`,
+    )
+  }
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  if (contentType.includes('application/json')) {
+    const data = (await response.json()) as OpenAITtsResponse
+    const downloadUrl = data.audio_url ?? data.download_url ?? data.url
+    if (downloadUrl) {
+      return { downloadUrl }
+    }
+    if (typeof data.data === 'string' && data.data.trim()) {
+      try {
+        const decoded = Buffer.from(data.data.trim(), 'base64')
+        if (decoded.length > 0) {
+          return { audioBuffer: decoded, extension: 'mp3' }
+        }
+      } catch {
+        // noop
+      }
+    }
+    throw new Error(`${params.provider} tts response missing audio payload`)
+  }
+
+  const audioBuffer = Buffer.from(await response.arrayBuffer())
+  if (audioBuffer.length === 0) {
+    throw new Error(`${params.provider} tts response is empty`)
+  }
+  const extension = contentType.includes('wav') ? 'wav' : contentType.includes('mpeg') ? 'mp3' : 'mp3'
+  return { audioBuffer, extension }
+}
+
 export async function minimaxSynthesize(params: {
   settings: AppSettings & { minimaxApiBaseUrl: string }
   text: string
-}): Promise<{ downloadUrl: string }> {
-  ensureApiSettings(params.settings)
+}): Promise<{ downloadUrl?: string; audioBuffer?: Buffer; extension?: string }> {
+  ensureTtsSettings(params.settings)
+  const provider = params.settings.ttsProvider ?? 'minimax'
+  if (provider !== 'minimax') {
+    return await requestOpenAICompatibleTts({
+      settings: params.settings,
+      provider,
+      text: params.text,
+    })
+  }
+
+  ensureMiniMaxTtsSettings(params.settings)
   const createResponse = await fetch(getTtsCreateEndpoint(params.settings.minimaxApiBaseUrl), {
     method: 'POST',
     headers: buildHeaders(params.settings.minimaxApiKey),

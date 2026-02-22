@@ -293,16 +293,24 @@ export class SettingsDao {
     const translateProvider = settings.translateProvider ?? 'minimax'
     const ttsProvider = settings.ttsProvider ?? 'minimax'
 
-    // Validate translate provider API key is set
+    // Validate translate provider API key/base URL
     const translateApiKeyField = this.getApiKeyField(translateProvider)
-    if (!settings[translateApiKeyField]) {
+    const translateBaseUrlField = this.getBaseUrlField(translateProvider)
+    if (translateProvider !== 'custom' && !settings[translateApiKeyField]) {
       errors.push(`${translateProvider} API key is required for translation`)
     }
+    if (!settings[translateBaseUrlField]) {
+      errors.push(`${translateProvider} API base URL is required for translation`)
+    }
 
-    // Validate TTS provider API key is set
+    // Validate TTS provider API key/base URL
     const ttsApiKeyField = this.getApiKeyField(ttsProvider)
-    if (!settings[ttsApiKeyField]) {
+    const ttsBaseUrlField = this.getBaseUrlField(ttsProvider)
+    if (ttsProvider !== 'custom' && !settings[ttsApiKeyField]) {
       errors.push(`${ttsProvider} API key is required for TTS`)
+    }
+    if (!settings[ttsBaseUrlField]) {
+      errors.push(`${ttsProvider} API base URL is required for TTS`)
     }
 
     if (!settings.translateModelId) {
@@ -328,6 +336,21 @@ export class SettingsDao {
         return 'kimiApiKey'
       case 'custom':
         return 'customApiKey'
+    }
+  }
+
+  private getBaseUrlField(provider: AppSettings['translateProvider'] | AppSettings['ttsProvider']): keyof AppSettings {
+    switch (provider) {
+      case 'minimax':
+        return 'minimaxApiBaseUrl'
+      case 'deepseek':
+        return 'deepseekApiBaseUrl'
+      case 'glm':
+        return 'glmApiBaseUrl'
+      case 'kimi':
+        return 'kimiApiBaseUrl'
+      case 'custom':
+        return 'customApiBaseUrl'
     }
   }
 }

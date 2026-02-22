@@ -397,12 +397,85 @@ function resolveDominantLanguage(candidates: string[]): string | null {
   return best
 }
 
+function resolveTranslateApiBaseUrl(settings: AppSettings): string {
+  switch (settings.translateProvider) {
+    case 'minimax':
+      return settings.minimaxApiBaseUrl
+    case 'deepseek':
+      return settings.deepseekApiBaseUrl
+    case 'glm':
+      return settings.glmApiBaseUrl
+    case 'kimi':
+      return settings.kimiApiBaseUrl
+    case 'custom':
+      return settings.customApiBaseUrl
+  }
+}
+
+function resolveTtsApiBaseUrl(settings: AppSettings): string {
+  switch (settings.ttsProvider) {
+    case 'minimax':
+      return settings.minimaxApiBaseUrl
+    case 'glm':
+      return settings.glmApiBaseUrl
+    case 'custom':
+      return settings.customApiBaseUrl
+  }
+}
+
+function normalizeEndpointForLog(rawUrl: string): string {
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return '(empty)'
+  try {
+    const parsed = new URL(trimmed)
+    return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '')
+  } catch {
+    return trimmed
+  }
+}
+
+function resolveTranslateApiKeyState(settings: AppSettings): 'set' | 'missing' | 'optional-empty' {
+  const provider = settings.translateProvider
+  const key =
+    provider === 'minimax'
+      ? settings.minimaxApiKey
+      : provider === 'deepseek'
+        ? settings.deepseekApiKey
+        : provider === 'glm'
+          ? settings.glmApiKey
+          : provider === 'kimi'
+            ? settings.kimiApiKey
+            : settings.customApiKey
+  if (provider === 'custom' && !key.trim()) {
+    return 'optional-empty'
+  }
+  return key.trim() ? 'set' : 'missing'
+}
+
+function resolveTtsApiKeyState(settings: AppSettings): 'set' | 'missing' | 'optional-empty' {
+  const provider = settings.ttsProvider
+  const key =
+    provider === 'minimax'
+      ? settings.minimaxApiKey
+      : provider === 'glm'
+        ? settings.glmApiKey
+        : settings.customApiKey
+  if (provider === 'custom' && !key.trim()) {
+    return 'optional-empty'
+  }
+  return key.trim() ? 'set' : 'missing'
+}
+
 function buildComparableCheckpointConfig(config: Record<string, unknown>): Record<string, CheckpointComparableValue> {
   const comparable: Record<string, CheckpointComparableValue> = {}
 
   const directStringKeys = [
     'targetLanguage',
     'segmentationStrategy',
+    'translateProvider',
+    'ttsProvider',
+    'translateApiBaseUrl',
+    'ttsApiBaseUrl',
     'translateModelId',
     'ttsModelId',
     'ttsVoiceId',
@@ -642,6 +715,7 @@ export class TaskEngine {
       await fs.mkdir(context.taskDir, { recursive: true })
       this.hydrateContextFromArtifacts(context)
       await this.ensureResources(context)
+      this.emitProviderResolutionLog(taskId)
 
       const resumeStage = this.resumeFromStageRequests.get(taskId)
       const startStageIndex = resumeStage ? Math.max(0, STAGES.indexOf(resumeStage)) : 0
@@ -733,6 +807,26 @@ export class TaskEngine {
       stage: 'engine',
       level: 'info',
       text: 'Runtime resources are ready',
+      timestamp: new Date().toISOString(),
+    })
+  }
+
+  private emitProviderResolutionLog(taskId: string): void {
+    const settings = this.resolveExecutionSettings(taskId)
+    const translateEndpoint = normalizeEndpointForLog(resolveTranslateApiBaseUrl(settings))
+    const ttsEndpoint = normalizeEndpointForLog(resolveTtsApiBaseUrl(settings))
+    this.emit('log', {
+      taskId,
+      stage: 'engine',
+      level: 'info',
+      text: `Resolved translation provider=${settings.translateProvider}, model=${settings.translateModelId || '(empty)'}, baseUrl=${translateEndpoint}, apiKey=${resolveTranslateApiKeyState(settings)}`,
+      timestamp: new Date().toISOString(),
+    })
+    this.emit('log', {
+      taskId,
+      stage: 'engine',
+      level: 'info',
+      text: `Resolved tts provider=${settings.ttsProvider}, model=${settings.ttsModelId || '(empty)'}, baseUrl=${ttsEndpoint}, apiKey=${resolveTtsApiKeyState(settings)}`,
       timestamp: new Date().toISOString(),
     })
   }
@@ -1106,9 +1200,14 @@ export class TaskEngine {
     return normalized.includes('timeout') || normalized.includes('abort')
   }
 
+  private getMiniMaxMissingContentCode(errorMessage: string): string | null {
+    const matched = errorMessage.match(/missing content\s*\(([^)]+)\)/i)
+    if (!matched) return null
+    return matched[1]?.trim() ?? null
+  }
+
   private isMiniMaxMissingContentError(errorMessage: string): boolean {
-    const normalized = errorMessage.toLowerCase()
-    return normalized.includes('missing content') && normalized.includes('1008')
+    return this.getMiniMaxMissingContentCode(errorMessage) !== null
   }
 
   private shouldUseTranslateSplitFallback(errorMessage: string, sourceText: string): boolean {
@@ -1909,6 +2008,10 @@ export class TaskEngine {
       targetLanguage: task.targetLanguage,
       segmentationStrategy: segmentation.strategy,
       segmentationOptions: segmentation.options,
+      translateProvider: settings.translateProvider,
+      ttsProvider: settings.ttsProvider,
+      translateApiBaseUrl: resolveTranslateApiBaseUrl(settings),
+      ttsApiBaseUrl: resolveTtsApiBaseUrl(settings),
       translateModelId: settings.translateModelId,
       ttsModelId: settings.ttsModelId,
       ttsVoiceId: settings.ttsVoiceId,
@@ -2050,7 +2153,39 @@ export class TaskEngine {
     const resolved: AppSettings = {
       ...base,
     }
-    const patchString = (key: 'translateModelId' | 'ttsModelId' | 'ttsVoiceId'): void => {
+    resolved.translateProvider = task.translateProvider ?? resolved.translateProvider
+    resolved.ttsProvider = task.ttsProvider ?? resolved.ttsProvider
+
+    const snapshotTranslateProvider = snapshot.translateProvider
+    if (
+      snapshotTranslateProvider === 'minimax' ||
+      snapshotTranslateProvider === 'deepseek' ||
+      snapshotTranslateProvider === 'glm' ||
+      snapshotTranslateProvider === 'kimi' ||
+      snapshotTranslateProvider === 'custom'
+    ) {
+      resolved.translateProvider = snapshotTranslateProvider
+    }
+    const snapshotTtsProvider = snapshot.ttsProvider
+    if (
+      snapshotTtsProvider === 'minimax' ||
+      snapshotTtsProvider === 'glm' ||
+      snapshotTtsProvider === 'custom'
+    ) {
+      resolved.ttsProvider = snapshotTtsProvider
+    }
+
+    const patchString = (
+      key:
+        | 'translateModelId'
+        | 'ttsModelId'
+        | 'ttsVoiceId'
+        | 'minimaxApiBaseUrl'
+        | 'deepseekApiBaseUrl'
+        | 'glmApiBaseUrl'
+        | 'kimiApiBaseUrl'
+        | 'customApiBaseUrl',
+    ): void => {
       const value = snapshot[key]
       if (typeof value === 'string') {
         resolved[key] = value
@@ -2066,6 +2201,11 @@ export class TaskEngine {
     patchString('translateModelId')
     patchString('ttsModelId')
     patchString('ttsVoiceId')
+    patchString('minimaxApiBaseUrl')
+    patchString('deepseekApiBaseUrl')
+    patchString('glmApiBaseUrl')
+    patchString('kimiApiBaseUrl')
+    patchString('customApiBaseUrl')
     patchNumber('ttsSpeed')
     patchNumber('ttsPitch')
     patchNumber('ttsVolume')
@@ -2219,7 +2359,7 @@ export class TaskEngine {
           }
           const isMissingContent = this.isMiniMaxMissingContentError(message)
           if (isMissingContent) {
-            await sleep(Math.min(30_000, 10_000 * attempt))
+            await sleep(Math.min(60_000, 15_000 * attempt))
             continue
           }
           await sleep(Math.min(4_000, 1000 * (2 ** (attempt - 1))))
@@ -2246,8 +2386,9 @@ export class TaskEngine {
           `#${segment.segmentIndex + 1}:${message}`,
         )
         if (this.isMiniMaxMissingContentError(message)) {
+          const code = this.getMiniMaxMissingContentCode(message) ?? 'unknown'
           throw new Error(
-            `MiniMax returned empty content (1008) on segment #${segment.segmentIndex + 1}. Stop early to avoid cascading failures; retry later.`,
+            `MiniMax returned empty content (${code}) on segment #${segment.segmentIndex + 1}. Stop early to avoid cascading failures; retry later.`,
           )
         }
         continue
@@ -2383,9 +2524,15 @@ export class TaskEngine {
           const targetPath = this.buildUniqueFilePath(
             segmentDir,
             `tts-segment-${segment.segmentIndex.toString().padStart(4, '0')}`,
-            'mp3',
+            synth.extension ?? 'mp3',
           )
-          await downloadToFile(synth.downloadUrl, targetPath)
+          if (synth.audioBuffer && synth.audioBuffer.length > 0) {
+            await fs.writeFile(targetPath, synth.audioBuffer)
+          } else if (synth.downloadUrl) {
+            await downloadToFile(synth.downloadUrl, targetPath)
+          } else {
+            throw new Error('TTS response missing audio payload')
+          }
           outputPath = targetPath
           break
         } catch (error) {

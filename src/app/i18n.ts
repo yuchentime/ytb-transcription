@@ -108,6 +108,8 @@ const zhCNMessages = {
   'settings.paramRanges': '参数范围：语速 0.5-2.0，音调 -10~10，音量 0~10。',
   'settings.saving': '保存中...',
   'settings.save': '保存设置',
+  'settings.saveSuccess': '设置已保存',
+  'settings.saveFailed': '保存失败',
 
   'status.all': '全部',
   'status.idle': '空闲',
@@ -266,6 +268,8 @@ const zhTWMessages: Messages = {
   'settings.paramRanges': '參數範圍：語速 0.5-2.0，音調 -10~10，音量 0~10。',
   'settings.saving': '儲存中...',
   'settings.save': '儲存設定',
+  'settings.saveSuccess': '設定已儲存',
+  'settings.saveFailed': '儲存失敗',
 
   'status.all': '全部',
   'status.idle': '閒置',

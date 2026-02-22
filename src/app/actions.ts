@@ -12,7 +12,6 @@ import type {
   TaskState,
 } from './state'
 import type { AppRoute } from './router'
-import { createEmptyRuntimeItems } from './state'
 import { findLatestArtifactPath, isRunningStatus } from './utils'
 
 interface LocalizedDeps {
@@ -213,6 +212,8 @@ export async function saveSettingsAction(
     ...prev,
     saving: true,
     error: '',
+    saveSuccess: false,
+    saveError: false,
   }))
 
   try {
@@ -228,6 +229,7 @@ export async function saveSettingsAction(
     setSettingsState((prev) => ({
       ...prev,
       data: saved,
+      saveSuccess: true,
       voiceValidationErrors: voiceValidation.errors,
     }))
     setTaskState((prev) => ({
@@ -245,11 +247,31 @@ export async function saveSettingsAction(
       level: 'info',
       text: t('log.settingsSaved'),
     })
+
+    // 自动清除成功状态（3秒后）
+    setTimeout(() => {
+      setSettingsState((prev) => ({
+        ...prev,
+        saveSuccess: false,
+      }))
+    }, 3000)
   } catch (error) {
+    const errorMessage = getErrorMessage(error, t('error.saveSettings'))
     setSettingsState((prev) => ({
       ...prev,
-      error: getErrorMessage(error, t('error.saveSettings')),
+      error: errorMessage,
+      saveError: true,
+      saveErrorMessage: errorMessage,
     }))
+
+    // 自动清除错误状态（3秒后）
+    setTimeout(() => {
+      setSettingsState((prev) => ({
+        ...prev,
+        saveError: false,
+        saveErrorMessage: '',
+      }))
+    }, 3000)
   } finally {
     setSettingsState((prev) => ({
       ...prev,
@@ -279,7 +301,6 @@ export async function startTaskAction(
     stageProgress: {},
     segments: [],
     recoveryActions: [],
-    runtimeItems: createEmptyRuntimeItems(),
     logs: [],
   }))
 
@@ -298,10 +319,19 @@ export async function startTaskAction(
       youtubeUrl: taskForm.youtubeUrl.trim(),
       targetLanguage: taskForm.targetLanguage,
       whisperModel: settings.defaultWhisperModel,
+      translateProvider: settings.translateProvider,
+      ttsProvider: settings.ttsProvider,
       translateModelId: settings.translateModelId,
       ttsModelId: settings.ttsModelId,
       ttsVoice: taskForm.ttsVoiceId,
       modelConfigSnapshot: {
+        translateProvider: settings.translateProvider,
+        ttsProvider: settings.ttsProvider,
+        minimaxApiBaseUrl: settings.minimaxApiBaseUrl,
+        deepseekApiBaseUrl: settings.deepseekApiBaseUrl,
+        glmApiBaseUrl: settings.glmApiBaseUrl,
+        kimiApiBaseUrl: settings.kimiApiBaseUrl,
+        customApiBaseUrl: settings.customApiBaseUrl,
         segmentationStrategy: taskForm.segmentationStrategy,
         segmentationOptions: {
           maxCharsPerSegment: 900,
@@ -746,7 +776,6 @@ export async function handleRetryHistoryTaskAction(
       stageProgress: {},
       segments: [],
       recoveryActions: [],
-      runtimeItems: createEmptyRuntimeItems(),
       logs: [],
     }))
     setActiveRoute('task')

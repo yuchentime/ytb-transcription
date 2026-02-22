@@ -117,22 +117,6 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       void refreshSegmentsAndRecovery(payload.taskId)
     })
 
-    const offRuntime = ipcClient.task.onRuntime((payload) => {
-      if (payload.taskId !== activeTaskId && activeTaskId) return
-      setTaskState((prev) => ({
-        ...prev,
-        runtimeItems: {
-          ...prev.runtimeItems,
-          [payload.component]: {
-            component: payload.component,
-            status: payload.status,
-            message: payload.message,
-            timestamp: payload.timestamp,
-          },
-        },
-      }))
-    })
-
     const offLog = ipcClient.task.onLog((payload) => {
       if (payload.taskId !== activeTaskId && activeTaskId) return
       pushLog({
@@ -186,7 +170,6 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       offSegmentProgress()
       offSegmentFailed()
       offRecoverySuggested()
-      offRuntime()
       offLog()
       offCompleted()
       offFailed()

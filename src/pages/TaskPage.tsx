@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { TaskSegmentRecord, TaskStatus, VoiceProfile } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
-import { translateRuntimeStatus, translateTaskStatus } from '../app/i18n'
+import { translateTaskStatus } from '../app/i18n'
 import { SegmentProgressList } from '../components/SegmentProgressList'
 import { SegmentationConfigPanel } from '../components/SegmentationConfigPanel'
 
@@ -28,13 +28,6 @@ interface LogItem {
   text: string
 }
 
-interface RuntimeItem {
-  component: 'yt-dlp' | 'ffmpeg' | 'python' | 'whisper' | 'deno' | 'engine'
-  status: 'checking' | 'downloading' | 'installing' | 'ready' | 'error'
-  message: string
-  timestamp: string
-}
-
 interface TaskPageModel {
   stages: readonly string[]
   taskForm: TaskFormState
@@ -45,7 +38,6 @@ interface TaskPageModel {
   activeStatus: TaskStatus | ''
   stageProgress: Record<string, number>
   overallProgress: number
-  runtimeItems: Record<RuntimeItem['component'], RuntimeItem | undefined>
   voiceProfiles: VoiceProfile[]
   taskFormErrors: string[]
   segments: TaskSegmentRecord[]
@@ -165,10 +157,6 @@ function CollapsibleSection({ title, isExpanded, onToggle, children, hasContent 
 }
 
 export function TaskPage(props: TaskPageProps) {
-  const runtimeEntries = Object.values(props.model.runtimeItems).filter(
-    (item): item is RuntimeItem => item !== undefined,
-  )
-
   // State for collapsible sections
   const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false)
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
@@ -176,6 +164,7 @@ export function TaskPage(props: TaskPageProps) {
   // Check if content exists
   const hasTranscript = !!props.model.transcriptContent
   const hasTranslation = !!props.model.translationContent
+  const hasSegmentProgress = props.model.segments.length > 0
 
   return (
     <>
@@ -301,25 +290,16 @@ export function TaskPage(props: TaskPageProps) {
           )}
         </div>
 
-        {/* {runtimeEntries.length > 0 && (
-          <div className="runtime">
-            <div className="runtime-header">{props.t('task.runtime')}</div>
-            {runtimeEntries.map((item) => (
-              <p key={item.component} className="runtime-line">
-                [{item.component}] {translateRuntimeStatus(item.status, props.t)}: {item.message}
-              </p>
-            ))}
-          </div>
-        )} */}
-
-        <div className="task-m2-section">
-          <h3>段级进度</h3>
-          <SegmentProgressList
-            segments={props.model.segments}
-            activeStatus={props.model.activeStatus}
-            onRetrySingle={props.actions.onRetrySingleSegment}
-          />
-        </div>
+        {hasSegmentProgress && (
+          <details className="task-m2-section" open={false}>
+            <summary>处理细节（可选）</summary>
+            <SegmentProgressList
+              segments={props.model.segments}
+              activeStatus={props.model.activeStatus}
+              onRetrySingle={props.actions.onRetrySingleSegment}
+            />
+          </details>
+        )}
 
         {/* Final Output Section - only show when audio is ready */}
         {props.model.ttsAudioUrl && (
