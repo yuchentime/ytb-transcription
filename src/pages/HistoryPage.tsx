@@ -1,6 +1,7 @@
 import type { TaskRecord, TaskStatus } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
-import { translateLanguageLabel, translateStatusFilter, translateTaskStatus } from '../app/i18n'
+import { translateLanguageLabel, translateTaskStatus } from '../app/i18n'
+import { isRecoverableTaskStatus } from '../app/utils'
 
 interface HistoryPageModel {
   historyKeywordDraft: string
@@ -10,6 +11,7 @@ interface HistoryPageModel {
   historyError: string
   historyLoading: boolean
   historyItems: TaskRecord[]
+  historyRunningTaskId: string
   historyBusyTaskId: string
   historyPage: number
   historyTotalPages: number
@@ -29,7 +31,6 @@ interface HistoryPageActions {
   onHistoryPageSizeChange(value: number): void
   onApplyFilters(): void
   onRefresh(): Promise<void>
-  onLoadTaskDetail(taskId: string): Promise<void>
   onResumeTask(taskId: string): Promise<void>
   onDeleteTask(taskId: string): Promise<void>
   onPlayAudio(taskId: string): Promise<void>
@@ -75,7 +76,12 @@ export function HistoryPage(props: HistoryPageProps) {
             {props.model.historyItems.map((item) => (
               <tr key={item.id}>
                 <td>{props.actions.formatDateTime(item.createdAt)}</td>
-                <td>{translateTaskStatus(item.status, props.t)}</td>
+                <td>
+                  <span className="history-status">
+                    <span>{translateTaskStatus(item.status, props.t)}</span>
+                    {props.model.historyRunningTaskId === item.id && <span className="running-dot" title="运行中" />}
+                  </span>
+                </td>
                 <td>{translateLanguageLabel(item.targetLanguage, props.t)}</td>
                 <td className="url-cell" title={item.youtubeUrl}>
                   {item.youtubeTitle || item.youtubeUrl}
@@ -115,13 +121,9 @@ export function HistoryPage(props: HistoryPageProps) {
                       </button>
                     )}
 
-                    <button className="btn small" onClick={() => void props.actions.onLoadTaskDetail(item.id)}>
-                      {props.t('history.view')}
-                    </button>
-
                     <button
                       className="btn small"
-                      disabled={item.status !== 'failed' || !!props.model.historyBusyTaskId}
+                      disabled={!isRecoverableTaskStatus(item.status) || !!props.model.historyBusyTaskId}
                       onClick={() => void props.actions.onResumeTask(item.id)}
                     >
                       恢复

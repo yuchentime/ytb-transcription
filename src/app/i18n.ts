@@ -67,6 +67,8 @@ const zhCNMessages = {
   'history.prev': '上一页',
   'history.next': '下一页',
   'history.deleteConfirm': '确定删除任务 {taskId}？这会移除数据库记录和本地产物。',
+  'history.resumeOverrideConfirm':
+    '当前任务 {runningTaskId} 正在处理中。继续恢复任务 {taskId} 将中断当前任务，是否继续？',
 
   'settings.title': '设置',
   'settings.loading': '正在加载设置...',
@@ -235,6 +237,8 @@ const zhTWMessages: Messages = {
   'history.prev': '上一頁',
   'history.next': '下一頁',
   'history.deleteConfirm': '確定刪除任務 {taskId}？這會移除資料庫記錄和本地產物。',
+  'history.resumeOverrideConfirm':
+    '目前任務 {runningTaskId} 正在處理中。繼續恢復任務 {taskId} 將中斷目前任務，是否繼續？',
 
   'settings.title': '設定',
   'settings.loading': '正在載入設定...',

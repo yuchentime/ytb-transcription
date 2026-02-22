@@ -21,6 +21,7 @@ export const IPC_CHANNELS = {
   taskCancel: 'task:cancel',
   taskRetry: 'task:retry',
   taskGet: 'task:get',
+  taskGetRunning: 'task:getRunning',
   taskSegments: 'task:segments',
   taskRetrySegments: 'task:retrySegments',
   taskResumeFromCheckpoint: 'task:resumeFromCheckpoint',
@@ -235,6 +236,7 @@ export interface RendererAPI {
     cancel(payload: TaskIdPayload): Promise<TaskCancelResult>
     retry(payload: TaskIdPayload): Promise<TaskActionResult>
     get(payload: TaskIdPayload): Promise<TaskDetail>
+    getRunning(): Promise<TaskRecord | null>
     segments(payload: TaskIdPayload): Promise<TaskSegmentRecord[]>
     retrySegments(payload: RetrySegmentsPayload): Promise<TaskActionResult>
     resumeFromCheckpoint(payload: TaskIdPayload): Promise<ResumeFromCheckpointResult>

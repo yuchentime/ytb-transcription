@@ -14,6 +14,7 @@ const api: RendererAPI = {
     cancel: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskCancel, payload),
     retry: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskRetry, payload),
     get: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskGet, payload),
+    getRunning: () => ipcRenderer.invoke(IPC_CHANNELS.taskGetRunning),
     segments: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskSegments, payload),
     retrySegments: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskRetrySegments, payload),
     resumeFromCheckpoint: (payload) => ipcRenderer.invoke(IPC_CHANNELS.taskResumeFromCheckpoint, payload),

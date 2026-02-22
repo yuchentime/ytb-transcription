@@ -19,6 +19,14 @@ const RUNNING_STATUSES: TaskStatus[] = [
   'merging',
 ]
 
+export const RECOVERABLE_STATUSES: TaskStatus[] = [
+  'failed',
+  'extracting',
+  'transcribing',
+  'translating',
+  'synthesizing',
+]
+
 // Provider-specific model options
 export const TRANSLATE_MODEL_OPTIONS: Record<Exclude<TranslateProvider, 'custom'>, string[]> = {
   minimax: ['MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2'],
@@ -101,6 +109,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export function isRunningStatus(status: TaskStatus | ''): boolean {
   if (!status) return false
   return RUNNING_STATUSES.includes(status)
+}
+
+export function isRecoverableTaskStatus(status: TaskStatus): boolean {
+  return RECOVERABLE_STATUSES.includes(status)
 }
 
 export function formatDateTime(value: string | null, locale?: string): string {

@@ -36,7 +36,7 @@ import {
   saveLocale,
   type AppLocale,
 } from './app/i18n'
-import { DEFAULT_SETTINGS, STAGES, formatDateTime } from './app/utils'
+import { DEFAULT_SETTINGS, STAGES, formatDateTime, isRecoverableTaskStatus } from './app/utils'
 import { useTaskAudio } from './app/hooks/useTaskAudio'
 import { useTaskEvents } from './app/hooks/useTaskEvents'
 import { SidebarMenu } from './components/SidebarMenu'
@@ -58,7 +58,7 @@ function App() {
 
   const filteredHistoryItems = useMemo(() => {
     if (!historyState.recoverableOnly) return historyState.items
-    return historyState.items.filter((item) => item.status === 'failed')
+    return historyState.items.filter((item) => isRecoverableTaskStatus(item.status))
   }, [historyState.items, historyState.recoverableOnly])
 
   const historyVisibleTotal = useMemo(() => {
@@ -332,6 +332,66 @@ function App() {
     setActiveRoute('task')
   }
 
+  async function waitUntilNoRunningTask(timeoutMs = 15000): Promise<void> {
+    const startTime = Date.now()
+    while (Date.now() - startTime < timeoutMs) {
+      const runningTask = await ipcClient.task.getRunning().catch(() => null)
+      if (!runningTask) return
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 250)
+      })
+    }
+    throw new Error(t('error.cancelTask'))
+  }
+
+  async function handleResumeHistoryTask(taskId: string): Promise<void> {
+    setHistoryState((prev) => ({
+      ...prev,
+      busyTaskId: taskId,
+      error: '',
+    }))
+
+    try {
+      const runningTask = await ipcClient.task.getRunning().catch(() => null)
+      if (runningTask && runningTask.id !== taskId) {
+        const shouldOverride = window.confirm(
+          t('history.resumeOverrideConfirm', { runningTaskId: runningTask.id, taskId }),
+        )
+        if (!shouldOverride) return
+        const cancelResult = await ipcClient.task.cancel({ taskId: runningTask.id })
+        if (!cancelResult.canceled) {
+          throw new Error(t('error.cancelTask'))
+        }
+        await waitUntilNoRunningTask()
+      }
+
+      await loadTaskDetail(taskId)
+      const activeRunningTask = await ipcClient.task.getRunning().catch(() => null)
+      if (activeRunningTask?.id === taskId) {
+        setActiveRoute('task')
+        pushLog({
+          time: new Date().toISOString(),
+          stage: 'history',
+          level: 'info',
+          text: `任务已在运行：${taskId}`,
+        })
+      } else {
+        await handleResumeFromCheckpoint(taskId)
+      }
+    } catch (error) {
+      setHistoryState((prev) => ({
+        ...prev,
+        error: error instanceof Error ? error.message : t('error.retryTask'),
+      }))
+    } finally {
+      setHistoryState((prev) => ({
+        ...prev,
+        busyTaskId: '',
+      }))
+      await loadHistory(historyState.query)
+    }
+  }
+
   const settingsPageModel = {
     settings: settingsState.data,
     settingsLoading: settingsState.loading,
@@ -422,6 +482,7 @@ function App() {
     historyError: historyState.error,
     historyLoading: historyState.loading,
     historyItems: filteredHistoryItems,
+    historyRunningTaskId: historyState.runningTaskId,
     historyBusyTaskId: historyState.busyTaskId,
     historyPage: historyState.recoverableOnly ? 1 : historyState.query.page,
     historyTotalPages,
@@ -465,11 +526,7 @@ function App() {
       })),
     onApplyFilters: applyHistoryFilters,
     onRefresh: () => loadHistory(historyState.query),
-    onLoadTaskDetail: loadTaskDetail,
-    onResumeTask: async (taskId: string) => {
-      await loadTaskDetail(taskId)
-      await handleResumeFromCheckpoint(taskId)
-    },
+    onResumeTask: handleResumeHistoryTask,
     onDeleteTask: handleDeleteHistoryTask,
     onPlayAudio: async (taskId: string) => {
       const task = historyState.items.find((item) => item.id === taskId)

@@ -60,6 +60,14 @@ export function registerTaskHandlers(): void {
     }
   })
 
+  ipcMain.handle(IPC_CHANNELS.taskGetRunning, () => {
+    const engine = getTaskEngine()
+    const runningTaskId = engine.getRunningTaskId()
+    if (!runningTaskId) return null
+    const { taskDao } = getDatabaseContext()
+    return taskDao.getTaskById(runningTaskId)
+  })
+
   ipcMain.handle(IPC_CHANNELS.taskStart, (_event, payload: TaskIdPayload) => {
     const taskId = assertTaskId(payload)
     const engine = getTaskEngine()

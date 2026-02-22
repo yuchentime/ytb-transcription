@@ -1,10 +1,7 @@
 import { EventEmitter } from 'node:events'
-import { createReadStream, createWriteStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { createHash, randomUUID } from 'node:crypto'
-import { Readable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
+import { randomUUID } from 'node:crypto'
 import type {
   ArtifactDao,
   SettingsDao,
@@ -21,721 +18,78 @@ import type {
   SegmentationStrategy,
   StepName,
   TaskSegmentRecord,
-  TaskStatus,
 } from '../db/types'
 import { runCommand } from './command'
 import { synthesizeSpeech, translateText } from './modelProvider'
 import { CheckpointStore } from './recovery/CheckpointStore'
 import { RecoveryPlanner, classifyError } from './recovery/RecoveryPlanner'
 import { assertSegmentIntegrity, segment, type TextSegment } from './segmentation'
-import { ensureToolchain, type Toolchain } from './toolchain'
+import { ensureToolchain } from './toolchain'
 import { runWithConcurrency } from '../../services/minimax/ttsAsyncOrchestrator'
+import {
+  DEFAULT_POLISH_CONTEXT_CHARS,
+  DEFAULT_POLISH_MIN_DURATION_SEC,
+  DEFAULT_POLISH_TARGET_SEGMENT_LENGTH,
+  DEFAULT_TRANSCRIBE_CHUNK_DURATION_SEC,
+  DEFAULT_TRANSCRIBE_CHUNK_ENABLED,
+  DEFAULT_TRANSCRIBE_CHUNK_MIN_DURATION_SEC,
+  DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_SEC,
+  DEFAULT_TRANSCRIBE_CONCURRENCY,
+  DEFAULT_TRANSLATE_REQUEST_TIMEOUT_MS,
+  DEFAULT_TRANSLATE_SPLIT_THRESHOLD_TOKENS,
+  DEFAULT_TRANSLATE_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_TRANSLATION_CONTEXT_CHARS,
+  DEFAULT_TTS_SPLIT_THRESHOLD_CHARS,
+  DEFAULT_TTS_TARGET_SEGMENT_CHARS,
+  MLX_MODEL_REPOS,
+  STAGES,
+  WHISPER_MODEL_URLS,
+} from './constants'
+import type { EventName, Listener, TaskEngineEvents, TaskExecutionContext } from './types'
+import {
+  buildSegmentsFromChunkTexts,
+  estimateTokenCount,
+  joinTranslatedChunks,
+  mergeChunkTranscript,
+  resolveDominantLanguage,
+  splitTextByPunctuationForTts,
+  splitTextByTokenBudget,
+  trimContextWindow,
+} from './text-processing'
+import {
+  buildComparableCheckpointConfig,
+  normalizeEndpointForLog,
+  resolveTranslateApiBaseUrl,
+  resolveTranslateApiKeyState,
+  resolveTtsApiBaseUrl,
+  resolveTtsApiKeyState,
+} from './settings-resolvers'
+import {
+  canResumeAtStage,
+  computeSha256,
+  downloadFileStream,
+  downloadToFile,
+  formatComparableValue,
+  hasProxyEnv,
+  isLikelyProxyTlsError,
+  isRecord,
+  isSegmentStage,
+  normalizeCheckpointStageName,
+  parseDownloadSpeed,
+  parseDurationFromLine,
+  parseFailedSegmentIds,
+  parsePercent,
+  parseWhisperDetectedLanguage,
+  parseWhisperModelHashFromUrl,
+  selectTranscribeBackend,
+  selectWhisperDevice,
+  shouldRetryWithTvClient,
+  sleep,
+  stageToStatus,
+  toSafeNumber,
+  type ArtifactTypeForResume,
+} from './utils'
 
-const STAGES: StepName[] = [
-  'downloading',
-  'extracting',
-  'transcribing',
-  'translating',
-  'synthesizing',
-  'merging',
-]
-
-const WHISPER_MODEL_URLS: Record<string, string> = {
-  tiny: 'https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt',
-  base: 'https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt',
-  small:
-    'https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt',
-  medium:
-    'https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt',
-  large:
-    'https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt',
-}
-
-const MLX_MODEL_REPOS: Record<string, string[]> = {
-  tiny: ['mlx-community/whisper-tiny-mlx', 'mlx-community/whisper-tiny'],
-  base: ['mlx-community/whisper-base-mlx', 'mlx-community/whisper-base'],
-  small: ['mlx-community/whisper-small-mlx', 'mlx-community/whisper-small'],
-  medium: ['mlx-community/whisper-medium-mlx', 'mlx-community/whisper-medium'],
-  large: ['mlx-community/whisper-large-v3-turbo'],
-}
-
-const DEFAULT_TRANSLATION_CONTEXT_CHARS = 160
-const DEFAULT_TRANSLATE_REQUEST_TIMEOUT_MS = 120 * 1000
-const DEFAULT_TRANSLATE_CONTEXT_WINDOW_TOKENS = 256_000
-const DEFAULT_TRANSLATE_SPLIT_THRESHOLD_RATIO = 0.7
-const DEFAULT_TRANSLATE_SPLIT_THRESHOLD_TOKENS = Math.floor(
-  DEFAULT_TRANSLATE_CONTEXT_WINDOW_TOKENS * DEFAULT_TRANSLATE_SPLIT_THRESHOLD_RATIO,
-)
-const DEFAULT_TRANSLATE_MIN_CHUNK_CHARS = 1_200
-const DEFAULT_TTS_SPLIT_THRESHOLD_CHARS = 3_000
-const DEFAULT_TTS_TARGET_SEGMENT_CHARS = 900
-const DEFAULT_POLISH_CONTEXT_CHARS = 180
-const DEFAULT_POLISH_TARGET_SEGMENT_LENGTH = 900
-const DEFAULT_POLISH_MIN_DURATION_SEC = 10 * 60
-const DEFAULT_TRANSCRIBE_CHUNK_ENABLED = true
-const DEFAULT_TRANSCRIBE_CHUNK_MIN_DURATION_SEC = 10 * 60
-const DEFAULT_TRANSCRIBE_CHUNK_DURATION_SEC = 4 * 60
-const DEFAULT_TRANSCRIBE_CHUNK_OVERLAP_SEC = 1.2
-const DEFAULT_TRANSCRIBE_CONCURRENCY = 2
-
-interface TaskEngineEvents {
-  status: {
-    taskId: string
-    status: TaskStatus
-    timestamp: string
-  }
-  progress: {
-    taskId: string
-    stage: StepName | 'queued'
-    percent: number
-    message: string
-    /** 下载速度（格式化的字符串，如 "2.5 MB/s"） */
-    speed?: string
-  }
-  segmentProgress: {
-    taskId: string
-    stage: SegmentStageName
-    segmentId: string
-    index: number
-    total: number
-    percent: number
-    message: string
-  }
-  segmentFailed: {
-    taskId: string
-    stage: SegmentStageName
-    segmentId: string
-    errorCode: string
-    errorMessage: string
-    retryable: boolean
-  }
-  recoverySuggested: {
-    taskId: string
-    actions: RecoveryPlan['actions']
-  }
-  log: {
-    taskId: string
-    stage: StepName | 'engine'
-    level: 'info' | 'warn' | 'error'
-    text: string
-    timestamp: string
-  }
-  completed: {
-    taskId: string
-    output: {
-      ttsPath?: string
-      transcriptPath?: string
-      translationPath?: string
-    }
-  }
-  failed: {
-    taskId: string
-    stage: StepName
-    errorCode: string
-    errorMessage: string
-  }
-  runtime: {
-    taskId: string
-    component: 'yt-dlp' | 'ffmpeg' | 'python' | 'whisper' | 'deno' | 'engine'
-    status: 'checking' | 'downloading' | 'installing' | 'ready' | 'error'
-    message: string
-    timestamp: string
-  }
-}
-
-interface TaskExecutionContext {
-  taskId: string
-  taskDir: string
-  toolchain?: Toolchain
-  videoPath?: string
-  audioPath?: string
-  transcriptPath?: string
-  translationPath?: string
-  ttsRawPath?: string
-  finalTtsPath?: string
-  translationSegments?: TextSegment[]
-  audioDurationSec?: number
-}
-
-type EventName = keyof TaskEngineEvents
-type Listener<T extends EventName> = (payload: TaskEngineEvents[T]) => void
-
-function stageToStatus(stage: StepName): TaskStatus {
-  return stage
-}
-
-function isRunningStatus(status: TaskStatus): boolean {
-  return (
-    status === 'queued' ||
-    status === 'downloading' ||
-    status === 'extracting' ||
-    status === 'transcribing' ||
-    status === 'translating' ||
-    status === 'synthesizing' ||
-    status === 'merging'
-  )
-}
-
-function parsePercent(line: string): number | null {
-  const match = line.match(/(\d{1,3}(?:\.\d+)?)%/)
-  if (!match) return null
-  const value = Number(match[1])
-  if (Number.isNaN(value)) return null
-  return Math.max(0, Math.min(100, Math.round(value)))
-}
-
-/**
- * 从 yt-dlp 输出中解析下载速度
- * 匹配格式如: "at 2.5MiB/s" 或 "at  24KB/s" 或 "at 3.2 MB/s"
- */
-function parseDownloadSpeed(line: string): string | null {
-  // 匹配各种速度格式: at  2.5MiB/s, at  24KB/s, at 3.2 MB/s 等
-  const match = line.match(/at\s+(\d+\.?\d*)\s*(KiB|MiB|KB|MB|GiB|GB)\/s/i)
-  if (!match) return null
-  const value = match[1]
-  const unit = match[2]
-  return `${value} ${unit}/s`
-}
-
-function parseWhisperDetectedLanguage(jsonContent: string): string | null {
-  try {
-    const parsed = JSON.parse(jsonContent) as { language?: unknown }
-    return typeof parsed.language === 'string' ? parsed.language : null
-  } catch {
-    return null
-  }
-}
-
-function shouldRetryWithTvClient(message: string): boolean {
-  const lower = message.toLowerCase()
-  return (
-    lower.includes('requested format is not available') ||
-    lower.includes('only images are available') ||
-    lower.includes('n challenge solving failed')
-  )
-}
-
-function selectWhisperDevice(
-  runtime: Toolchain['whisperRuntime'],
-  model: string | null,
-): 'cpu' | 'cuda' | 'mps' {
-  if (runtime.cudaAvailable) return 'cuda'
-  if (!runtime.mpsAvailable) return 'cpu'
-
-  // For tiny/base models, CPU can be faster due to GPU scheduling overhead.
-  if (model === 'tiny' || model === 'base') return 'cpu'
-  return 'mps'
-}
-
-function selectTranscribeBackend(
-  runtime: Toolchain['whisperRuntime'],
-  model: string | null,
-): 'mlx' | 'openai-whisper' {
-  if (
-    process.platform === 'darwin' &&
-    process.arch === 'arm64' &&
-    runtime.mlxAvailable &&
-    model !== 'tiny'
-  ) {
-    return 'mlx'
-  }
-  return 'openai-whisper'
-}
-
-const PROXY_ENV_KEYS = [
-  'HTTP_PROXY',
-  'HTTPS_PROXY',
-  'ALL_PROXY',
-  'http_proxy',
-  'https_proxy',
-  'all_proxy',
-] as const
-
-function hasProxyEnv(): boolean {
-  return PROXY_ENV_KEYS.some((key) => {
-    const value = process.env[key]
-    return typeof value === 'string' && value.trim().length > 0
-  })
-}
-
-function isLikelyProxyTlsError(stderrLines: string[]): boolean {
-  const joined = stderrLines.join('\n').toLowerCase()
-  return (
-    joined.includes('http_proxy') ||
-    joined.includes('proxyerror') ||
-    joined.includes('connecterror') ||
-    joined.includes('unexpected_eof_while_reading')
-  )
-}
-
-async function downloadToFile(url: string, filePath: string): Promise<void> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 60_000)
-  let response: Response
-  try {
-    response = await fetch(url, { signal: controller.signal })
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Download timeout after 60000ms')
-    }
-    throw error
-  } finally {
-    clearTimeout(timer)
-  }
-  if (!response.ok) {
-    throw new Error(`Download failed: HTTP ${response.status}`)
-  }
-  const content = Buffer.from(await response.arrayBuffer())
-  await fs.writeFile(filePath, content)
-}
-
-function parseWhisperModelHashFromUrl(url: string): string | null {
-  const pathname = new URL(url).pathname
-  const segments = pathname.split('/').filter(Boolean)
-  const hash = segments[segments.length - 2] ?? ''
-  return /^[a-f0-9]{64}$/i.test(hash) ? hash.toLowerCase() : null
-}
-
-async function computeSha256(filePath: string): Promise<string> {
-  const hash = createHash('sha256')
-  await new Promise<void>((resolve, reject) => {
-    const stream = createReadStream(filePath)
-    stream.on('data', (chunk: string | Buffer) => hash.update(typeof chunk === 'string' ? Buffer.from(chunk) : chunk))
-    stream.on('error', reject)
-    stream.on('end', () => resolve())
-  })
-  return hash.digest('hex')
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-type CheckpointComparableValue = string | number | boolean | null
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function toComparableNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-
-function toComparableString(value: unknown): string | null | undefined {
-  if (typeof value === 'string') return value
-  if (value === null) return null
-  return undefined
-}
-
-function toComparableBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
-}
-
-function formatComparableValue(value: CheckpointComparableValue | undefined): string {
-  if (value === undefined) return 'undefined'
-  return JSON.stringify(value)
-}
-
-function normalizeCheckpointStageName(stageName: unknown): StepName | null {
-  if (typeof stageName !== 'string') return null
-  const normalized = stageName.trim().toLowerCase()
-  if (STAGES.includes(normalized as StepName)) {
-    return normalized as StepName
-  }
-
-  if (normalized === 'translate' || normalized === 'translation') {
-    return 'translating'
-  }
-  if (normalized === 'tts' || normalized === 'synthesize' || normalized === 'synthesis') {
-    return 'synthesizing'
-  }
-  return null
-}
-
-function isSegmentStage(stageName: StepName): stageName is SegmentStageName {
-  return stageName === 'translating' || stageName === 'synthesizing'
-}
-
-function parseFailedSegmentIds(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean)
-}
-
-type ArtifactTypeForResume = 'video' | 'audio' | 'transcript' | 'translation' | 'tts'
-
-function stageRequiresArtifact(
-  stageName: StepName,
-): ArtifactTypeForResume | null {
-  if (stageName === 'extracting') return 'video'
-  if (stageName === 'transcribing') return 'audio'
-  if (stageName === 'translating') return 'transcript'
-  if (stageName === 'synthesizing') return 'translation'
-  if (stageName === 'merging') return 'tts'
-  return null
-}
-
-function canResumeAtStage(
-  stageName: StepName,
-  artifactTypes: Set<ArtifactTypeForResume>,
-): boolean {
-  const required = stageRequiresArtifact(stageName)
-  if (!required) return true
-  return artifactTypes.has(required)
-}
-
-function toSafeNumber(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
-  return Math.max(min, Math.min(max, value))
-}
-
-function parseDurationFromLine(line: string): number | null {
-  const matched = line.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/i)
-  if (!matched) return null
-  const hours = Number(matched[1])
-  const minutes = Number(matched[2])
-  const seconds = Number(matched[3])
-  if ([hours, minutes, seconds].some((value) => Number.isNaN(value))) return null
-  return hours * 3600 + minutes * 60 + seconds
-}
-
-function trimContextWindow(text: string, limit: number, fromEnd: boolean): string {
-  const normalized = text.trim()
-  if (!normalized || limit <= 0) return ''
-  if (normalized.length <= limit) return normalized
-  return fromEnd ? normalized.slice(-limit) : normalized.slice(0, limit)
-}
-
-function estimateTokenCount(text: string): number {
-  const normalized = text.trim()
-  if (!normalized) return 0
-  const cjkMatches = normalized.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/gu)
-  const cjkChars = cjkMatches?.length ?? 0
-  const otherChars = Math.max(0, normalized.length - cjkChars)
-  return cjkChars + Math.ceil(otherChars / 4)
-}
-
-function resolveCharBudgetByTokenBudget(text: string, tokenBudget: number): number {
-  if (tokenBudget <= 0) return DEFAULT_TRANSLATE_MIN_CHUNK_CHARS
-  const estimatedTokens = estimateTokenCount(text)
-  if (estimatedTokens <= 0) {
-    return Math.max(DEFAULT_TRANSLATE_MIN_CHUNK_CHARS, tokenBudget * 2)
-  }
-  const charsPerToken = text.length / estimatedTokens
-  const safeCharsPerToken = Math.max(1, Math.min(4, charsPerToken * 0.9))
-  return Math.max(
-    DEFAULT_TRANSLATE_MIN_CHUNK_CHARS,
-    Math.floor(tokenBudget * safeCharsPerToken),
-  )
-}
-
-function splitTextByHardLimit(text: string, maxChars: number): string[] {
-  const normalized = text.trim()
-  if (!normalized) return []
-  if (maxChars <= 0 || normalized.length <= maxChars) return [normalized]
-
-  const chunks: string[] = []
-  let cursor = 0
-  const boundaryPattern = /[\s,.!?;:，。！？；：、)\]】）}]/u
-  while (cursor < normalized.length) {
-    const remaining = normalized.length - cursor
-    if (remaining <= maxChars) {
-      chunks.push(normalized.slice(cursor))
-      break
-    }
-
-    const hardEnd = Math.min(normalized.length, cursor + maxChars)
-    const searchStart = Math.max(cursor + Math.floor(maxChars * 0.6), cursor + 1)
-    let splitAt = hardEnd
-    for (let pointer = hardEnd; pointer > searchStart; pointer -= 1) {
-      if (boundaryPattern.test(normalized[pointer - 1] ?? '')) {
-        splitAt = pointer
-        break
-      }
-    }
-
-    if (splitAt <= cursor) {
-      splitAt = hardEnd
-    }
-    chunks.push(normalized.slice(cursor, splitAt))
-    cursor = splitAt
-  }
-
-  return chunks.map((item) => item.trim()).filter(Boolean)
-}
-
-function splitTextByTokenBudget(
-  text: string,
-  tokenBudget: number,
-  depth = 0,
-): string[] {
-  const normalized = text.trim()
-  if (!normalized) return []
-  if (estimateTokenCount(normalized) <= tokenBudget) return [normalized]
-  if (depth >= 8) {
-    const half = Math.floor(normalized.length / 2)
-    if (half <= 0 || half >= normalized.length) return [normalized]
-    const left = normalized.slice(0, half).trim()
-    const right = normalized.slice(half).trim()
-    return [left, right].filter(Boolean)
-  }
-
-  const charBudget = resolveCharBudgetByTokenBudget(normalized, tokenBudget)
-  let pieces = splitTextByHardLimit(normalized, charBudget)
-  if (pieces.length <= 1) {
-    const fallbackHalf = Math.floor(normalized.length / 2)
-    if (fallbackHalf <= 0 || fallbackHalf >= normalized.length) return [normalized]
-    pieces = [
-      normalized.slice(0, fallbackHalf).trim(),
-      normalized.slice(fallbackHalf).trim(),
-    ].filter(Boolean)
-  }
-  return pieces.flatMap((piece) => splitTextByTokenBudget(piece, tokenBudget, depth + 1))
-}
-
-function splitTextByPunctuationUnits(text: string): string[] {
-  const normalized = text.trim()
-  if (!normalized) return []
-  const matched = normalized.match(/[^。！？!?；;，,、\n]+[。！？!?；;，,、\n]*/g)
-  if (!matched) return [normalized]
-  return matched.map((item) => item.trim()).filter(Boolean)
-}
-
-function splitTextByPunctuationForTts(text: string, targetChars: number): string[] {
-  const units = splitTextByPunctuationUnits(text)
-  if (units.length === 0) return []
-  if (targetChars <= 0) return units
-
-  const chunks: string[] = []
-  let buffer = ''
-  for (const unit of units) {
-    if (!buffer) {
-      buffer = unit
-      continue
-    }
-    if ((buffer + unit).length <= targetChars) {
-      buffer += unit
-      continue
-    }
-    chunks.push(buffer.trim())
-    buffer = unit
-  }
-  if (buffer.trim()) {
-    chunks.push(buffer.trim())
-  }
-  return chunks
-}
-
-function buildSegmentsFromChunkTexts(chunks: string[]): TextSegment[] {
-  return chunks.map((chunk, index) => ({
-    id: randomUUID(),
-    index,
-    text: chunk,
-    estimatedDurationSec: Math.max(1, Math.ceil(chunk.length / 4)),
-  }))
-}
-
-function mergeChunkTranscript(previousText: string, currentText: string): string {
-  const previous = previousText.trim()
-  const current = currentText.trim()
-  if (!previous) return current
-  if (!current) return previous
-
-  const maxOverlap = Math.min(200, previous.length, current.length)
-  for (let overlap = maxOverlap; overlap >= 16; overlap -= 1) {
-    const prevTail = previous.slice(-overlap).toLowerCase()
-    const currentHead = current.slice(0, overlap).toLowerCase()
-    if (prevTail === currentHead) {
-      return `${previous}${current.slice(overlap)}`
-    }
-  }
-  return `${previous}\n${current}`
-}
-
-function joinTranslatedChunks(chunks: string[]): string {
-  return chunks.map((chunk) => chunk.trim()).filter(Boolean).join('\n')
-}
-
-function resolveDominantLanguage(candidates: string[]): string | null {
-  if (candidates.length === 0) return null
-  const counts = new Map<string, number>()
-  for (const language of candidates) {
-    const normalized = language.trim().toLowerCase()
-    if (!normalized) continue
-    counts.set(normalized, (counts.get(normalized) ?? 0) + 1)
-  }
-  if (counts.size === 0) return null
-  const [best] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
-  return best
-}
-
-function resolveTranslateApiBaseUrl(settings: AppSettings): string {
-  switch (settings.translateProvider) {
-    case 'minimax':
-      return settings.minimaxApiBaseUrl
-    case 'deepseek':
-      return settings.deepseekApiBaseUrl
-    case 'glm':
-      return settings.glmApiBaseUrl
-    case 'kimi':
-      return settings.kimiApiBaseUrl
-    case 'custom':
-      return settings.customApiBaseUrl
-  }
-}
-
-function resolveTtsApiBaseUrl(settings: AppSettings): string {
-  switch (settings.ttsProvider) {
-    case 'minimax':
-      return settings.minimaxApiBaseUrl
-    case 'glm':
-      return settings.glmApiBaseUrl
-    case 'piper':
-      return ''
-  }
-}
-
-function normalizeEndpointForLog(rawUrl: string): string {
-  const trimmed = rawUrl.trim()
-  if (!trimmed) return '(empty)'
-  try {
-    const parsed = new URL(trimmed)
-    return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '')
-  } catch {
-    return trimmed
-  }
-}
-
-function resolveTranslateApiKeyState(settings: AppSettings): 'set' | 'missing' | 'optional-empty' {
-  const provider = settings.translateProvider
-  const key =
-    provider === 'minimax'
-      ? settings.minimaxApiKey
-      : provider === 'deepseek'
-        ? settings.deepseekApiKey
-        : provider === 'glm'
-          ? settings.glmApiKey
-          : provider === 'kimi'
-            ? settings.kimiApiKey
-            : settings.customApiKey
-  if (provider === 'custom' && !key.trim()) {
-    return 'optional-empty'
-  }
-  return key.trim() ? 'set' : 'missing'
-}
-
-function resolveTtsApiKeyState(settings: AppSettings): 'set' | 'missing' | 'optional-empty' {
-  const provider = settings.ttsProvider
-  if (provider === 'piper') {
-    return 'optional-empty'
-  }
-  const key =
-    provider === 'minimax'
-      ? settings.minimaxApiKey
-      : provider === 'glm'
-        ? settings.glmApiKey
-        : ''
-  return key.trim() ? 'set' : 'missing'
-}
-
-function buildComparableCheckpointConfig(config: Record<string, unknown>): Record<string, CheckpointComparableValue> {
-  const comparable: Record<string, CheckpointComparableValue> = {}
-
-  const directStringKeys = [
-    'targetLanguage',
-    'segmentationStrategy',
-    'translateProvider',
-    'ttsProvider',
-    'translateApiBaseUrl',
-    'ttsApiBaseUrl',
-    'translateModelId',
-    'ttsModelId',
-    'ttsVoiceId',
-    'piperExecutablePath',
-    'piperModelPath',
-    'piperConfigPath',
-  ] as const
-  for (const key of directStringKeys) {
-    const value = toComparableString(config[key])
-    if (value !== undefined) {
-      comparable[key] = value
-    }
-  }
-
-  const directNumberKeys = [
-    'ttsSpeed',
-    'ttsPitch',
-    'ttsVolume',
-    'ttsPollingConcurrency',
-    'piperSpeakerId',
-    'piperLengthScale',
-    'piperNoiseScale',
-    'piperNoiseW',
-  ] as const
-  for (const key of directNumberKeys) {
-    const value = toComparableNumber(config[key])
-    if (value !== undefined) {
-      comparable[key] = value
-    }
-  }
-  const directBooleanKeys = ['autoPolishLongText', 'transcribeChunkEnabled'] as const
-  for (const key of directBooleanKeys) {
-    const value = toComparableBoolean(config[key])
-    if (value !== undefined) {
-      comparable[key] = value
-    }
-  }
-  const extraNumberKeys = [
-    'translationContextChars',
-    'translateRequestTimeoutMs',
-    'translateSplitThresholdTokens',
-    'polishMinDurationSec',
-    'polishContextChars',
-    'polishTargetSegmentLength',
-    'transcribeChunkMinDurationSec',
-    'transcribeChunkDurationSec',
-    'transcribeChunkOverlapSec',
-    'ttsSplitThresholdChars',
-    'ttsTargetSegmentChars',
-  ] as const
-  for (const key of extraNumberKeys) {
-    const value = toComparableNumber(config[key])
-    if (value !== undefined) {
-      comparable[key] = value
-    }
-  }
-
-  const segmentationOptions = isRecord(config.segmentationOptions) ? config.segmentationOptions : {}
-  const maxCharsPerSegment = toComparableNumber(segmentationOptions.maxCharsPerSegment)
-  const targetSegmentLength = toComparableNumber(segmentationOptions.targetSegmentLength)
-  const targetDurationSec = toComparableNumber(segmentationOptions.targetDurationSec)
-  if (maxCharsPerSegment !== undefined) {
-    comparable['segmentationOptions.maxCharsPerSegment'] = maxCharsPerSegment
-  }
-  if (targetSegmentLength !== undefined) {
-    comparable['segmentationOptions.targetSegmentLength'] = targetSegmentLength
-  }
-  if (targetDurationSec !== undefined) {
-    comparable['segmentationOptions.targetDurationSec'] = targetDurationSec
-  }
-
-  return comparable
-}
-
-async function downloadFileStream(url: string, filePath: string): Promise<void> {
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Download failed: HTTP ${response.status}`)
-  }
-  if (!response.body) {
-    throw new Error('Download failed: empty response stream')
-  }
-  await pipeline(Readable.fromWeb(response.body as never), createWriteStream(filePath))
-}
 
 export class TaskEngine {
   private readonly emitter = new EventEmitter()
@@ -790,8 +144,8 @@ export class TaskEngine {
       return { accepted: false, reason: `Task ${this.runningTaskId} is already running` }
     }
 
-    const task = this.deps.taskDao.getTaskById(taskId)
-    if (this.runningTaskId === taskId || isRunningStatus(task.status)) {
+    this.deps.taskDao.getTaskById(taskId)
+    if (this.runningTaskId === taskId) {
       return { accepted: false, reason: 'Task is already running' }
     }
 
@@ -811,6 +165,10 @@ export class TaskEngine {
 
   retry(taskId: string): { accepted: boolean; reason?: string } {
     return this.start(taskId)
+  }
+
+  getRunningTaskId(): string | null {
+    return this.runningTaskId
   }
 
   listSegments(taskId: string): TaskSegmentRecord[] {
@@ -2599,7 +1957,7 @@ export class TaskEngine {
       throw new Error(`Segment missing translated text: ${missing.id}`)
     }
 
-    let translated = joinTranslatedChunks(ordered.map((segment) => segment.targetText ?? ''))
+    const translated = joinTranslatedChunks(ordered.map((segment) => segment.targetText ?? ''))
     const estimatedLongByDuration =
       typeof context.audioDurationSec === 'number' &&
       Number.isFinite(context.audioDurationSec) &&

@@ -51,11 +51,15 @@ export async function loadHistoryAction(
   }))
 
   try {
-    const result = await ipcClient.history.list(query)
+    const [result, runningTask] = await Promise.all([
+      ipcClient.history.list(query),
+      ipcClient.task.getRunning().catch(() => null),
+    ])
     setHistoryState((prev) => ({
       ...prev,
       items: result.items,
       total: result.total,
+      runningTaskId: runningTask?.id ?? '',
       loading: false,
     }))
   } catch (error) {

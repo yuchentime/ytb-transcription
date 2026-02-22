@@ -72,6 +72,7 @@ export interface TaskState {
 export interface HistoryState {
   items: TaskRecord[]
   total: number
+  runningTaskId: string
   query: HistoryQueryState
   loading: boolean
   error: string
@@ -124,6 +125,7 @@ export function createInitialHistoryState(): HistoryState {
   return {
     items: [],
     total: 0,
+    runningTaskId: '',
     query: { page: 1, pageSize: 10 },
     loading: false,
     error: '',
