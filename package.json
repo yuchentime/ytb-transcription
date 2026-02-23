@@ -9,7 +9,10 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "bench:dao2-04": "node scripts/benchmarks/dao2-04-segment-db-perf.mjs",
-    "perf:fill-dataset-urls": "node scripts/benchmarks/fill-perf-dataset-urls.mjs --target docs/verification/perf-baseline.baseline-current.json --map docs/verification/perf-baseline.dataset-urls.template.json --in-place"
+    "perf:fill-dataset-urls": "node scripts/benchmarks/fill-perf-dataset-urls.mjs --target docs/verification/perf-baseline.baseline-current.json --map docs/verification/perf-baseline.dataset-urls.template.json --in-place",
+    "dist:mac": "tsc && vite build && electron-builder --mac",
+    "dist:win": "tsc && vite build && electron-builder --win",
+    "dist:all": "tsc && vite build && electron-builder --mac --win"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",
@@ -33,5 +36,37 @@
     "vite-plugin-electron": "^0.28.6",
     "vite-plugin-electron-renderer": "^0.14.5"
   },
-  "main": "dist-electron/main.js"
+  "main": "dist-electron/main.js",
+  "build": {
+    "appId": "com.yourcompany.ytb-transcription",
+    "productName": "YouTube Transcription",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist",
+      "dist-electron"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "dmg",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    }
+  }
 }
