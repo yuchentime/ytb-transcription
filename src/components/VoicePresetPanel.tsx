@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { VoiceProfile } from '../../electron/core/db/types'
+import type { TranslateFn } from '../app/i18n'
 
 interface VoicePresetPanelProps {
   voiceId: string
@@ -9,6 +10,7 @@ interface VoicePresetPanelProps {
   voiceProfiles: VoiceProfile[]
   validationErrors: string[]
   showAdvancedParams?: boolean
+  t: TranslateFn
   setVoiceConfig: Dispatch<
     SetStateAction<{
       voiceId: string
@@ -28,13 +30,14 @@ export function VoicePresetPanel(props: VoicePresetPanelProps) {
     voiceProfiles,
     validationErrors,
     showAdvancedParams = true,
+    t,
     setVoiceConfig,
   } = props
 
   return (
     <div className="voice-preset-panel">
       <label>
-        音色预设
+        {t('task.voicePreset')}
         <select
           value={voiceId}
           onChange={(event) =>
@@ -44,7 +47,7 @@ export function VoicePresetPanel(props: VoicePresetPanelProps) {
             }))
           }
         >
-          <option value="">请选择音色</option>
+          <option value="">{t('task.selectVoice')}</option>
           {voiceProfiles.map((voice) => (
             <option key={voice.id} value={voice.id}>
               {voice.displayName}
@@ -56,7 +59,7 @@ export function VoicePresetPanel(props: VoicePresetPanelProps) {
       {showAdvancedParams && (
         <>
           <label>
-            语速（0.5 ~ 2）
+            {t('task.ttsSpeed')}
             <input
               type="number"
               min={0.5}
@@ -72,7 +75,7 @@ export function VoicePresetPanel(props: VoicePresetPanelProps) {
             />
           </label>
           <label>
-            音调（-10 ~ 10）
+            {t('task.ttsPitch')}
             <input
               type="number"
               min={-10}
@@ -88,7 +91,7 @@ export function VoicePresetPanel(props: VoicePresetPanelProps) {
             />
           </label>
           <label>
-            音量（0 ~ 10）
+            {t('task.ttsVolume')}
             <input
               type="number"
               min={0}

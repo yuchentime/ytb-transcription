@@ -84,6 +84,24 @@ const VOICES: VoiceProfile[] = [
   { id: 'Cantonese_PlayfulMan', displayName: '活泼男声(粤语)', description: '活泼男声', language: 'zh', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
   { id: 'Cantonese_CuteGirl', displayName: '可爱女孩(粤语)', description: '可爱女孩', language: 'zh', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
   { id: 'Cantonese_KindWoman', displayName: '善良女声(粤语)', description: '善良女声', language: 'zh', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+
+  // 英文音色 - MiniMax 系统音色 (https://platform.minimaxi.com/docs/faq/system-voice-id)
+  { id: 'Santa_Claus', displayName: 'Santa Claus (English)', description: 'Santa Claus', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Grinch', displayName: 'Grinch (English)', description: 'Grinch', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Rudolph', displayName: 'Rudolph (English)', description: 'Rudolph', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Arnold', displayName: 'Arnold (English)', description: 'Arnold', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Charming_Santa', displayName: 'Charming Santa (English)', description: 'Charming Santa', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Charming_Lady', displayName: 'Charming Lady (English)', description: 'Charming Lady', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Sweet_Girl', displayName: 'Sweet Girl (English)', description: 'Sweet Girl', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Cute_Elf', displayName: 'Cute Elf (English)', description: 'Cute Elf', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Attractive_Girl', displayName: 'Attractive Girl (English)', description: 'Attractive Girl', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'Serene_Woman', displayName: 'Serene Woman (English)', description: 'Serene Woman', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'English_Trustworthy_Man', displayName: 'Trustworthy Man (English)', description: 'Trustworthy Man', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'English_Graceful_Lady', displayName: 'Graceful Lady (English)', description: 'Graceful Lady', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'English_Aussie_Bloke', displayName: 'Aussie Bloke (English)', description: 'Aussie Bloke', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'English_Whispering_girl', displayName: 'Whispering Girl (English)', description: 'Whispering girl', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'English_Diligent_Man', displayName: 'Diligent Man (English)', description: 'Diligent Man', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
+  { id: 'English_Gentle-voiced_man', displayName: 'Gentle-voiced Man (English)', description: 'Gentle-voiced man', language: 'en', speedRange: [0.5, 2], pitchRange: [-10, 10], volumeRange: [0, 10] },
 ]
 
 export function listVoiceProfiles(): VoiceProfile[] {

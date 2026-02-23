@@ -130,31 +130,35 @@ function App() {
     const isPiperTts = settingsState.data.ttsProvider === 'piper'
 
     if (!taskState.form.youtubeUrl.trim()) {
-      errors.push('请输入有效的 YouTube 链接')
+      errors.push(t('validation.youtubeUrlRequired'))
     }
     if (!isPiperTts && !settingsState.data.ttsModelId.trim()) {
-      errors.push('请先在设置页选择 TTS 模型')
+      errors.push(t('validation.ttsModelRequired'))
     }
     if (isPiperTts && !settingsState.data.piperModelPath.trim()) {
-      errors.push('请先在设置页配置 Piper 模型路径')
+      errors.push(t('validation.piperModelPathRequired'))
     }
     if (!isPiperTts && !voiceId) {
-      errors.push('请选择音色预设')
+      errors.push(t('validation.voicePresetRequired'))
     }
     if (!isPiperTts && voiceId && settingsState.voiceProfiles.length > 0) {
       const selectedVoice = settingsState.voiceProfiles.find((voice) => voice.id === voiceId)
+      const ttsTargetLang = settingsState.data.ttsTargetLanguage ?? 'zh'
       if (!selectedVoice) {
-        errors.push('音色不存在，请重新选择')
+        errors.push(t('validation.voiceNotFound'))
       } else if (
         selectedVoice.language !== 'multi' &&
-        selectedVoice.language !== taskState.form.targetLanguage
+        selectedVoice.language !== ttsTargetLang
       ) {
-        errors.push(`音色语言(${selectedVoice.language})与目标语言(${taskState.form.targetLanguage})不一致`)
+        errors.push(t('validation.voiceLanguageMismatch', {
+          voiceLang: selectedVoice.language,
+          targetLang: ttsTargetLang,
+        }))
       }
     }
 
     return errors
-  }, [settingsState.data.piperModelPath, settingsState.data.ttsModelId, settingsState.data.ttsProvider, settingsState.voiceProfiles, taskState.form])
+  }, [t, settingsState.data.piperModelPath, settingsState.data.ttsModelId, settingsState.data.ttsProvider, settingsState.data.ttsTargetLanguage, settingsState.voiceProfiles, taskState.form])
 
   const isStartDisabled = useMemo(() => {
     return taskFormErrors.length > 0
@@ -798,8 +802,6 @@ function App() {
     activeStatus: taskState.activeStatus,
     stageProgress: taskState.stageProgress,
     overallProgress,
-    voiceProfiles: settingsState.voiceProfiles,
-    isPiperTts: settingsState.data.ttsProvider === 'piper',
     taskFormErrors,
     segments: taskState.segments,
     output: taskState.output,

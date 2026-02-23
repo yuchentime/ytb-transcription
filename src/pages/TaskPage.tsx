@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import type { TaskSegmentRecord, TaskStatus, VoiceProfile } from '../../electron/core/db/types'
+import type { TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
 import type { TranslateFn } from '../app/i18n'
 import { translateTaskStatus } from '../app/i18n'
 
@@ -34,8 +34,6 @@ interface TaskPageModel {
   activeStatus: TaskStatus | ''
   stageProgress: Record<string, number>
   overallProgress: number
-  voiceProfiles: VoiceProfile[]
-  isPiperTts: boolean
   taskFormErrors: string[]
   segments: TaskSegmentRecord[]
   output: TaskOutput
@@ -180,6 +178,8 @@ export function TaskPage(props: TaskPageProps) {
   const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false)
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
   const [copySuccess, setCopySuccess] = useState(false)
+  // State to track if user has attempted to submit (to show validation errors)
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false)
 
   // Check if content exists
   const hasTranscript = !!props.model.transcriptContent
@@ -219,11 +219,12 @@ export function TaskPage(props: TaskPageProps) {
       <section className="panel main-panel">
         <h1>{props.t('task.title')}</h1>
 
-        <div className="grid two-col">
-          <label>
+        <div className="task-input-section">
+          <label className="youtube-url-label">
             {props.t('task.youtubeUrl')}
             <input
               type="text"
+              className="youtube-url-input"
               value={props.model.taskForm.youtubeUrl}
               onChange={(event) =>
                 props.actions.setTaskForm((prev) => ({
@@ -234,46 +235,9 @@ export function TaskPage(props: TaskPageProps) {
               placeholder={props.t('task.youtubeUrlPlaceholder')}
             />
           </label>
-
-          <label>
-            {props.t('task.targetLanguage')}
-            <select
-              value={props.model.taskForm.targetLanguage}
-              onChange={(event) =>
-                props.actions.setTaskForm((prev) => ({
-                  ...prev,
-                  targetLanguage: event.target.value as 'zh',
-                }))
-              }
-            >
-              <option value="zh">{props.t('lang.zh')}</option>
-            </select>
-          </label>
-
-          {!props.model.isPiperTts && (
-            <label>
-              音色预设
-              <select
-                value={props.model.taskForm.ttsVoiceId}
-                onChange={(event) =>
-                  props.actions.setTaskForm((prev) => ({
-                    ...prev,
-                    ttsVoiceId: event.target.value,
-                  }))
-                }
-              >
-                <option value="">请选择音色</option>
-                {props.model.voiceProfiles.map((voice) => (
-                  <option key={voice.id} value={voice.id}>
-                    {voice.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
         </div>
 
-        {props.model.taskFormErrors.length > 0 && (
+        {hasAttemptedSubmit && props.model.taskFormErrors.length > 0 && (
           <div className="error task-form-errors">
             {props.model.taskFormErrors.map((error) => (
               <p key={error}>{error}</p>
@@ -284,8 +248,13 @@ export function TaskPage(props: TaskPageProps) {
         <div className="actions">
           <button
             className="btn primary"
-            disabled={props.model.isStartDisabled}
-            onClick={() => void props.actions.onStartTask()}
+            disabled={props.model.taskRunning}
+            onClick={() => {
+              setHasAttemptedSubmit(true)
+              if (!props.model.isStartDisabled) {
+                void props.actions.onStartTask()
+              }
+            }}
           >
             {props.t('task.start')}
           </button>

@@ -265,6 +265,7 @@ export interface AppSettings {
   // TTS provider settings
   ttsProvider: TtsProvider
   ttsModelId: string
+  ttsTargetLanguage: 'zh' | 'en'
   ttsVoiceId: string
   ttsSpeed: number
   ttsPitch: number

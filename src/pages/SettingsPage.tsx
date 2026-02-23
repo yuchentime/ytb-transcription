@@ -433,6 +433,32 @@ export function SettingsPage(props: SettingsPageProps) {
             </label>
           )}
 
+          {/* TTS Target Language - controls voice preset filtering */}
+          {settings.ttsProvider !== 'piper' && (
+            <label>
+              {props.t('settings.ttsTargetLanguage')}
+              <select
+                value={settings.ttsTargetLanguage}
+                onChange={(event) => {
+                  const newTargetLanguage = event.target.value as 'zh' | 'en'
+                  // Filter voices by target language and auto-select first available
+                  const filteredVoices = props.model.voiceProfiles.filter(
+                    (voice) => voice.language === newTargetLanguage || voice.language === 'multi'
+                  )
+                  const firstVoiceId = filteredVoices[0]?.id ?? ''
+                  setSettings((prev) => ({
+                    ...prev,
+                    ttsTargetLanguage: newTargetLanguage,
+                    ttsVoiceId: firstVoiceId,
+                  }))
+                }}
+              >
+                <option value="zh">{props.t('lang.zh')}</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+          )}
+
           {/* Voice Preset Panel */}
           {settings.ttsProvider !== 'piper' && (
             <div className="full">
@@ -441,9 +467,12 @@ export function SettingsPage(props: SettingsPageProps) {
                 speed={settings.ttsSpeed}
                 pitch={settings.ttsPitch}
                 volume={settings.ttsVolume}
-                voiceProfiles={props.model.voiceProfiles}
+                voiceProfiles={props.model.voiceProfiles.filter(
+                  (voice) => voice.language === settings.ttsTargetLanguage || voice.language === 'multi'
+                )}
                 validationErrors={props.model.voiceValidationErrors}
                 showAdvancedParams={false}
+                t={props.t}
                 setVoiceConfig={(updater) =>
                   setSettings((prev) => {
                     const base = {

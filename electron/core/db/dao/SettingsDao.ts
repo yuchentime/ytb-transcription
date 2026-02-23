@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   // TTS provider settings
   ttsProvider: 'minimax',
   ttsModelId: '',
+  ttsTargetLanguage: 'zh',
   ttsVoiceId: '',
   ttsSpeed: 1,
   ttsPitch: 0,

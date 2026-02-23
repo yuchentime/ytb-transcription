@@ -188,6 +188,7 @@ export async function loadSettingsAction(
       ...prev,
       form: {
         ...prev.form,
+        targetLanguage: result.ttsTargetLanguage ?? 'zh',
         ttsVoiceId: result.ttsVoiceId,
       },
     }))
@@ -249,6 +250,7 @@ export async function saveSettingsAction(
       ...prev,
       form: {
         ...prev.form,
+        targetLanguage: saved.ttsTargetLanguage ?? 'zh',
         ttsVoiceId: saved.ttsVoiceId,
       },
     }))
