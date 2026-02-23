@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { RendererAPI } from '../../../electron/ipc/channels'
+import type { TaskStatusEventPayload } from '../../../electron/ipc/channels'
 import type { TranslateFn } from '../i18n'
 import { translateTaskStatus } from '../i18n'
 import { loadTaskContentAction } from '../actions'
@@ -15,12 +16,24 @@ interface UseTaskEventsOptions {
   pushLog(item: Omit<LogItem, 'id'>): void
   refreshHistory(query: HistoryQueryState): Promise<void>
   t: TranslateFn
+  onTaskStatus?(payload: TaskStatusEventPayload): void
 }
 
 export function useTaskEvents(options: UseTaskEventsOptions): void {
-  const { ipcClient, activeTaskId, historyQuery, setTaskState, pushLog, refreshHistory, t } = options
+  const { ipcClient, activeTaskId, historyQuery, setTaskState, pushLog, refreshHistory, t, onTaskStatus } = options
 
   useEffect(() => {
+    let historyRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+    const scheduleHistoryRefresh = (): void => {
+      if (historyRefreshTimer) {
+        clearTimeout(historyRefreshTimer)
+      }
+      historyRefreshTimer = setTimeout(() => {
+        void refreshHistory(historyQuery)
+      }, 120)
+    }
+
     const formatRecoveryActionsLog = (
       actions: Array<{ label: string; reason: string }>,
     ): string => {
@@ -51,6 +64,8 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
     }
 
     const offStatus = ipcClient.task.onStatus((payload) => {
+      onTaskStatus?.(payload)
+      scheduleHistoryRefresh()
       if (payload.taskId !== activeTaskId && activeTaskId) return
       setTaskState((prev) => ({
         ...prev,
@@ -131,6 +146,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
     })
 
     const offCompleted = ipcClient.task.onCompleted((payload) => {
+      scheduleHistoryRefresh()
       if (payload.taskId !== activeTaskId && activeTaskId) return
       setTaskState((prev) => ({
         ...prev,
@@ -153,10 +169,10 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         text: t('log.taskCompleted'),
       })
       void refreshSegmentsAndRecovery(payload.taskId)
-      void refreshHistory(historyQuery)
     })
 
     const offFailed = ipcClient.task.onFailed((payload) => {
+      scheduleHistoryRefresh()
       if (payload.taskId !== activeTaskId && activeTaskId) return
       setTaskState((prev) => ({
         ...prev,
@@ -171,10 +187,12 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         text: `${payload.errorCode}: ${payload.errorMessage}`,
       })
       void refreshSegmentsAndRecovery(payload.taskId)
-      void refreshHistory(historyQuery)
     })
 
     return () => {
+      if (historyRefreshTimer) {
+        clearTimeout(historyRefreshTimer)
+      }
       offStatus()
       offProgress()
       offSegmentProgress()
@@ -184,5 +202,5 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       offCompleted()
       offFailed()
     }
-  }, [activeTaskId, historyQuery, ipcClient, pushLog, refreshHistory, setTaskState, t])
+  }, [activeTaskId, historyQuery, ipcClient, onTaskStatus, pushLog, refreshHistory, setTaskState, t])
 }

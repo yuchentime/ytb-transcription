@@ -1,12 +1,11 @@
 import type { QueueSnapshot } from '../../electron/core/db/types'
-import type { BatchProgressEventPayload, QueueUpdatedEventPayload } from '../../electron/ipc/channels'
+import type { QueueUpdatedEventPayload } from '../../electron/ipc/channels'
 
 export interface QueueState {
   snapshot: QueueSnapshot
   loading: boolean
   error: string
   updatedSummary: QueueUpdatedEventPayload | null
-  batchProgressMap: Record<string, BatchProgressEventPayload>
 }
 
 export function createInitialQueueState(): QueueState {
@@ -22,6 +21,5 @@ export function createInitialQueueState(): QueueState {
     loading: false,
     error: '',
     updatedSummary: null,
-    batchProgressMap: {},
   }
 }

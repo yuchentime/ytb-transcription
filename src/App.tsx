@@ -270,6 +270,10 @@ function App() {
         snapshot,
         loading: false,
       }))
+      setHistoryState((prev) => ({
+        ...prev,
+        runningTaskId: runningTaskId ?? '',
+      }))
 
       setTaskState((prev) => ({
         ...prev,
@@ -283,6 +287,10 @@ function App() {
         ...prev,
         error: error instanceof Error ? error.message : '加载队列失败',
         loading: false,
+      }))
+      setHistoryState((prev) => ({
+        ...prev,
+        runningTaskId: '',
       }))
       setTaskState((prev) => ({
         ...prev,
@@ -302,6 +310,11 @@ function App() {
     historyState.query.targetLanguage,
     historyState.query.keyword,
   ])
+
+  useEffect(() => {
+    if (activeRoute !== 'history') return
+    void loadHistory(historyState.query)
+  }, [activeRoute, loadHistory, historyState.query])
 
   useEffect(() => {
     saveLocale(locale)
@@ -361,41 +374,9 @@ function App() {
       void refreshQueueSnapshot()
     })
 
-    const offBatchProgress = ipcClient.batch.onProgress((payload) => {
-      setQueueState((prev) => ({
-        ...prev,
-        batchProgressMap: {
-          ...prev.batchProgressMap,
-          [payload.batchId]: payload,
-        },
-      }))
-    })
-
-    const offBatchCompleted = ipcClient.batch.onCompleted((payload) => {
-      setQueueState((prev) => {
-        const existing = prev.batchProgressMap[payload.batchId]
-        if (!existing) return prev
-        return {
-          ...prev,
-          batchProgressMap: {
-            ...prev.batchProgressMap,
-            [payload.batchId]: {
-              ...existing,
-              completed: payload.completed,
-              failed: payload.failed,
-              percent: 100,
-            },
-          },
-        }
-      })
-      void refreshQueueSnapshot()
-    })
-
     return () => {
       offQueueUpdated()
       offQueueTaskMoved()
-      offBatchProgress()
-      offBatchCompleted()
     }
   }, [refreshQueueSnapshot])
 
@@ -482,6 +463,7 @@ function App() {
       setTaskState,
       t,
     })
+    await refreshQueueSnapshot()
   }
 
   async function pauseQueue(): Promise<void> {
@@ -747,16 +729,11 @@ function App() {
     error: queueState.error,
     waitingCount: queueState.snapshot.waiting.length,
     runningCount: queueState.snapshot.running.length,
-    completedCount: queueState.snapshot.completed.length,
-    failedCount: queueState.snapshot.failed.length,
     updatedAt: queueState.updatedSummary?.updatedAt ?? queueState.snapshot.updatedAt,
     snapshot: {
       waiting: queueState.snapshot.waiting,
       running: queueState.snapshot.running,
-      completed: queueState.snapshot.completed,
-      failed: queueState.snapshot.failed,
     },
-    batchProgressMap: queueState.batchProgressMap,
   }
   const queuePageActions = {
     onPause: pauseQueue,

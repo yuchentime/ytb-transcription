@@ -109,6 +109,7 @@ export class QueueScheduler {
   }
 
   getSnapshot(): QueueSnapshot {
+    this.reconcileRunningState()
     return this.queueStore.getSnapshot(this.paused)
   }
 
@@ -283,6 +284,7 @@ export class QueueScheduler {
       }
 
       if (result.reason?.includes('already running')) {
+        this.scheduleAfterDelay(200)
         break
       }
 
@@ -320,6 +322,63 @@ export class QueueScheduler {
     } satisfies QueueUpdatedPayload)
   }
 
+  private reconcileRunningState(): void {
+    const snapshot = this.queueStore.getSnapshot(this.paused)
+    const running = snapshot.running
+    if (running.length === 0) {
+      return
+    }
+
+    const maxRunning = this.workerPool.capacity()
+    const expectedRunningTaskIds = new Set<string>()
+    for (const taskId of this.workerPool.runningTaskIds()) {
+      expectedRunningTaskIds.add(taskId)
+    }
+
+    const engineRunningTaskId = this.deps.taskEngine.getRunningTaskId()
+    if (engineRunningTaskId) {
+      expectedRunningTaskIds.add(engineRunningTaskId)
+    }
+
+    let overflow: QueueTaskRecord[] = []
+    if (expectedRunningTaskIds.size === 0) {
+      overflow = running
+    } else {
+      const keep = new Set<string>()
+      for (const task of running) {
+        if (keep.size >= maxRunning) break
+        if (expectedRunningTaskIds.has(task.taskId)) {
+          keep.add(task.taskId)
+        }
+      }
+      overflow = running.filter((task) => !keep.has(task.taskId))
+    }
+
+    if (overflow.length === 0) {
+      return
+    }
+
+    const overflowTaskIds = overflow.map((task) => task.taskId)
+    this.queueStore.requeueTasks(overflowTaskIds)
+    for (const task of overflow) {
+      this.workerPool.releaseByTask(task.taskId)
+      this.deps.taskDao.updateTaskStatus(task.taskId, 'queued', {
+        errorCode: null,
+        errorMessage: null,
+        completedAt: null,
+      })
+
+      if (task.batchId) {
+        try {
+          this.deps.batchDao.updateBatchItemStatusByTaskId(task.taskId, 'queued')
+          this.emitBatchProgress(task.batchId)
+        } catch {
+          // Ignore non-batch tasks.
+        }
+      }
+    }
+  }
+
   private emitBatchProgress(batchId: string): void {
     const progress = this.deps.batchDao.getBatchProgress(batchId)
     this.emitter.emit('batchProgress', progress)
@@ -332,5 +391,11 @@ export class QueueScheduler {
         failed: progress.failed,
       } satisfies BatchCompletedPayload)
     }
+  }
+
+  private scheduleAfterDelay(delayMs: number): void {
+    setTimeout(() => {
+      this.schedule()
+    }, Math.max(0, Math.floor(delayMs)))
   }
 }

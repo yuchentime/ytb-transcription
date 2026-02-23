@@ -255,6 +255,7 @@ export class TaskEngine {
     }
     if (this.runningTaskId === taskId) {
       this.cancelRequested.add(taskId)
+      this.markCanceled(taskId)
       this.emit('log', {
         taskId,
         stage: 'engine',

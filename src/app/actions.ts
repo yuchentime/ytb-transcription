@@ -51,15 +51,17 @@ export async function loadHistoryAction(
   }))
 
   try {
-    const [result, runningTask] = await Promise.all([
+    const [result, queueSnapshot, runningTask] = await Promise.all([
       ipcClient.history.list(query),
+      ipcClient.queue.list().catch(() => null),
       ipcClient.task.getRunning().catch(() => null),
     ])
+    const runningTaskId = queueSnapshot?.running[0]?.taskId ?? runningTask?.id ?? ''
     setHistoryState((prev) => ({
       ...prev,
       items: result.items,
       total: result.total,
-      runningTaskId: runningTask?.id ?? '',
+      runningTaskId,
       loading: false,
     }))
   } catch (error) {
@@ -407,10 +409,36 @@ export async function cancelTaskAction(
   } & LocalizedDeps,
 ): Promise<void> {
   const { activeTaskId, ipcClient, setTaskState, t } = params
-  if (!activeTaskId) return
+  const directTaskId = activeTaskId.trim()
 
   try {
-    await ipcClient.task.cancel({ taskId: activeTaskId })
+    const runningTask = await ipcClient.task.getRunning().catch(() => null)
+    const preferredTaskId = directTaskId || runningTask?.id || ''
+    if (!preferredTaskId) {
+      throw new Error(t('error.cancelTask'))
+    }
+
+    let canceled = false
+    let canceledTaskId = preferredTaskId
+
+    const directResult = await ipcClient.task.cancel({ taskId: preferredTaskId })
+    canceled = directResult.canceled
+
+    if (!canceled && runningTask && runningTask.id !== preferredTaskId) {
+      const fallbackResult = await ipcClient.task.cancel({ taskId: runningTask.id })
+      canceled = fallbackResult.canceled
+      canceledTaskId = runningTask.id
+    }
+
+    if (!canceled) {
+      throw new Error(t('error.cancelTask'))
+    }
+
+    setTaskState((prev) => ({
+      ...prev,
+      activeTaskId: canceledTaskId,
+      error: '',
+    }))
   } catch (error) {
     setTaskState((prev) => ({
       ...prev,

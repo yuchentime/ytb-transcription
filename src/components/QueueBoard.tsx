@@ -4,8 +4,6 @@ import type { QueueTaskRecord } from '../../electron/core/db/types'
 interface QueueBoardProps {
   waiting: QueueTaskRecord[]
   running: QueueTaskRecord[]
-  completed: QueueTaskRecord[]
-  failed: QueueTaskRecord[]
   onReorder(taskId: string, toIndex: number): Promise<void>
   onRemove(taskId: string): Promise<void>
 }
@@ -102,26 +100,6 @@ export function QueueBoard(props: QueueBoardProps) {
         </header>
         {props.running.length === 0 ? <p className="hint">暂无运行任务</p> : null}
         {props.running.map((task) => (
-          <QueueCard key={task.taskId} task={task} />
-        ))}
-      </section>
-
-      <section className="queue-column">
-        <header>
-          <h3>Completed ({props.completed.length})</h3>
-        </header>
-        {props.completed.length === 0 ? <p className="hint">暂无完成任务</p> : null}
-        {props.completed.map((task) => (
-          <QueueCard key={task.taskId} task={task} />
-        ))}
-      </section>
-
-      <section className="queue-column">
-        <header>
-          <h3>Failed ({props.failed.length})</h3>
-        </header>
-        {props.failed.length === 0 ? <p className="hint">暂无失败任务</p> : null}
-        {props.failed.map((task) => (
           <QueueCard key={task.taskId} task={task} />
         ))}
       </section>
