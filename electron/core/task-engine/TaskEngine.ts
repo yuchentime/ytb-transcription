@@ -255,12 +255,25 @@ export class TaskEngine {
       return { accepted: false, fromStage: snapshot.stageName, reason: 'Checkpoint stage is invalid' }
     }
 
-    const configCheck = this.validateCheckpointConfig(taskId, snapshot.snapshotJson.configSnapshot)
-    if (!configCheck.accepted) {
+    const shouldResetSynthesis = this.shouldResetSynthesisProgress(
+      taskId,
+      stageName,
+      snapshot.snapshotJson.configSnapshot,
+    )
+    if (shouldResetSynthesis) {
+      this.deps.taskSegmentDao.clearByTaskAndStage(taskId, 'synthesizing')
+      this.retrySegmentRequests.delete(taskId)
+      this.resumeFromStageRequests.set(taskId, 'synthesizing')
+      this.emit('log', {
+        taskId,
+        stage: 'engine',
+        level: 'info',
+        text: 'Detected TTS config changes while resuming synthesis; restarting synthesizing stage to avoid mixed voices',
+        timestamp: new Date().toISOString(),
+      })
       return {
-        accepted: false,
-        fromStage: stageName,
-        reason: configCheck.reason,
+        accepted: true,
+        fromStage: 'synthesizing',
       }
     }
 
@@ -1633,28 +1646,18 @@ export class TaskEngine {
     return normalizeCheckpointStageName(snapshotJson.stageName)
   }
 
-  private validateCheckpointConfig(
+  private listCheckpointConfigMismatches(
     taskId: string,
     snapshotConfig: unknown,
-  ): { accepted: boolean; reason?: string } {
-    if (!isRecord(snapshotConfig)) {
-      return {
-        accepted: false,
-        reason: 'Checkpoint config snapshot is missing',
-      }
-    }
-
+    targetKeys: readonly string[],
+  ): string[] {
+    if (!isRecord(snapshotConfig) || targetKeys.length === 0) return []
+    const keySet = new Set(targetKeys)
     const expected = buildComparableCheckpointConfig(snapshotConfig)
-    if (Object.keys(expected).length === 0) {
-      return {
-        accepted: false,
-        reason: 'Checkpoint config snapshot is empty',
-      }
-    }
-
     const currentConfig = buildComparableCheckpointConfig(this.buildCheckpointConfig(taskId))
     const mismatches: string[] = []
     for (const [key, expectedValue] of Object.entries(expected)) {
+      if (!keySet.has(key)) continue
       const currentValue = currentConfig[key]
       if (currentValue !== expectedValue) {
         mismatches.push(
@@ -1663,14 +1666,49 @@ export class TaskEngine {
       }
     }
 
-    if (mismatches.length > 0) {
-      return {
-        accepted: false,
-        reason: `Checkpoint config mismatch. ${mismatches.slice(0, 3).join(' | ')}`,
-      }
-    }
+    return mismatches
+  }
 
-    return { accepted: true }
+  private shouldResetSynthesisProgress(
+    taskId: string,
+    resumeStage: StepName,
+    snapshotConfig: unknown,
+  ): boolean {
+    if (resumeStage !== 'synthesizing') return false
+    const hasCompletedSynthesisSegments = this.deps.taskSegmentDao
+      .listByTaskAndStage(taskId, 'synthesizing')
+      .some((segment) => segment.status === 'success')
+    if (!hasCompletedSynthesisSegments) return false
+
+    const ttsCheckpointKeys = [
+      'ttsProvider',
+      'ttsApiBaseUrl',
+      'ttsModelId',
+      'ttsVoiceId',
+      'ttsSpeed',
+      'ttsPitch',
+      'ttsVolume',
+      'piperExecutablePath',
+      'piperModelPath',
+      'piperConfigPath',
+      'piperSpeakerId',
+      'piperLengthScale',
+      'piperNoiseScale',
+      'piperNoiseW',
+      'ttsSplitThresholdChars',
+      'ttsTargetSegmentChars',
+    ] as const
+    const mismatches = this.listCheckpointConfigMismatches(taskId, snapshotConfig, ttsCheckpointKeys)
+    if (mismatches.length === 0) return false
+
+    this.emit('log', {
+      taskId,
+      stage: 'engine',
+      level: 'info',
+      text: `Resume ignores checkpoint config lock; synthesis config changed (${mismatches.slice(0, 3).join(' | ')})`,
+      timestamp: new Date().toISOString(),
+    })
+    return true
   }
 
   private resolveResumeRetrySet(
@@ -1757,6 +1795,7 @@ export class TaskEngine {
   }
 
   private resolveTtsConcurrency(taskId: string, totalSegments: number): number {
+    const settings = this.resolveExecutionSettings(taskId)
     const task = this.deps.taskDao.getTaskById(taskId)
     const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
     const requested = snapshot.ttsPollingConcurrency
@@ -1764,95 +1803,15 @@ export class TaskEngine {
       typeof requested === 'number' && Number.isFinite(requested)
         ? Math.floor(requested)
         : 3
-    return Math.max(1, Math.min(3, configured, Math.max(1, totalSegments)))
+    const providerCap = settings.ttsProvider === 'piper' ? 1 : 3
+    return Math.max(1, Math.min(providerCap, configured, Math.max(1, totalSegments)))
   }
 
   private resolveExecutionSettings(taskId: string): AppSettings {
-    const base = this.deps.settingsDao.getSettings()
-    const task = this.deps.taskDao.getTaskById(taskId)
-    const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
-
-    const resolved: AppSettings = {
-      ...base,
+    this.deps.taskDao.getTaskById(taskId)
+    return {
+      ...this.deps.settingsDao.getSettings(),
     }
-    resolved.translateProvider = task.translateProvider ?? resolved.translateProvider
-    resolved.ttsProvider = task.ttsProvider ?? resolved.ttsProvider
-
-    const snapshotTranslateProvider = snapshot.translateProvider
-    if (
-      snapshotTranslateProvider === 'minimax' ||
-      snapshotTranslateProvider === 'deepseek' ||
-      snapshotTranslateProvider === 'glm' ||
-      snapshotTranslateProvider === 'kimi' ||
-      snapshotTranslateProvider === 'custom'
-    ) {
-      resolved.translateProvider = snapshotTranslateProvider
-    }
-    const snapshotTtsProvider = snapshot.ttsProvider
-    if (
-      snapshotTtsProvider === 'minimax' ||
-      snapshotTtsProvider === 'glm' ||
-      snapshotTtsProvider === 'piper' ||
-      snapshotTtsProvider === 'custom'
-    ) {
-      resolved.ttsProvider = snapshotTtsProvider === 'custom' ? 'piper' : snapshotTtsProvider
-    }
-
-    const patchString = (
-      key:
-        | 'translateModelId'
-        | 'ttsModelId'
-        | 'ttsVoiceId'
-        | 'minimaxApiBaseUrl'
-        | 'deepseekApiBaseUrl'
-        | 'glmApiBaseUrl'
-        | 'kimiApiBaseUrl'
-        | 'customApiBaseUrl'
-        | 'piperExecutablePath'
-        | 'piperModelPath'
-        | 'piperConfigPath',
-    ): void => {
-      const value = snapshot[key]
-      if (typeof value === 'string') {
-        resolved[key] = value
-      }
-    }
-    const patchNumber = (
-      key:
-        | 'ttsSpeed'
-        | 'ttsPitch'
-        | 'ttsVolume'
-        | 'piperSpeakerId'
-        | 'piperLengthScale'
-        | 'piperNoiseScale'
-        | 'piperNoiseW',
-    ): void => {
-      const value = snapshot[key]
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        resolved[key] = value
-      }
-    }
-
-    patchString('translateModelId')
-    patchString('ttsModelId')
-    patchString('ttsVoiceId')
-    patchString('minimaxApiBaseUrl')
-    patchString('deepseekApiBaseUrl')
-    patchString('glmApiBaseUrl')
-    patchString('kimiApiBaseUrl')
-    patchString('customApiBaseUrl')
-    patchString('piperExecutablePath')
-    patchString('piperModelPath')
-    patchString('piperConfigPath')
-    patchNumber('ttsSpeed')
-    patchNumber('ttsPitch')
-    patchNumber('ttsVolume')
-    patchNumber('piperSpeakerId')
-    patchNumber('piperLengthScale')
-    patchNumber('piperNoiseScale')
-    patchNumber('piperNoiseW')
-
-    return resolved
   }
 
   private async executeTranslating(context: TaskExecutionContext): Promise<void> {

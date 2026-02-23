@@ -11,6 +11,11 @@ const GITHUB_HEADERS = {
   'User-Agent': 'YTB2Voice',
 } as const
 
+const MIN_SUPPORTED_PYTHON = {
+  major: 3,
+  minor: 10,
+} as const
+
 interface GitHubReleaseAsset {
   name: string
   browser_download_url: string
@@ -97,6 +102,12 @@ async function resolvePiperWheelAsset(): Promise<{
   }
 }
 
+function isPythonVersionSupported(version: { major: number; minor: number }): boolean {
+  if (version.major > MIN_SUPPORTED_PYTHON.major) return true
+  if (version.major < MIN_SUPPORTED_PYTHON.major) return false
+  return version.minor >= MIN_SUPPORTED_PYTHON.minor
+}
+
 async function getPythonVersion(command: string): Promise<{ major: number; minor: number } | null> {
   const lines: string[] = []
   try {
@@ -122,7 +133,7 @@ async function findSystemPython(): Promise<string | null> {
   const candidates = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python']
   for (const candidate of candidates) {
     const version = await getPythonVersion(candidate)
-    if (version && (version.major > 3 || (version.major === 3 && version.minor >= 9))) {
+    if (version && isPythonVersionSupported(version)) {
       return candidate
     }
   }
@@ -199,7 +210,14 @@ async function installPortablePython(toolsDir: string): Promise<string> {
   await fs.mkdir(portableDir, { recursive: true })
 
   const existing = await findPortablePythonBinary(portableDir)
-  if (existing) return existing
+  if (existing) {
+    const version = await getPythonVersion(existing)
+    if (version && isPythonVersionSupported(version)) {
+      return existing
+    }
+    await fs.rm(portableDir, { recursive: true, force: true })
+    await fs.mkdir(portableDir, { recursive: true })
+  }
 
   const downloadUrl = await resolvePortablePythonDownloadUrl()
   const archivePath = path.join(toolsDir, 'python-portable.tar.gz')
@@ -247,12 +265,40 @@ async function ensurePiperVenv(dataRoot: string, bootstrapPython: string): Promi
   const venvDir = path.join(dataRoot, 'piper', 'venv')
   await fs.mkdir(venvDir, { recursive: true })
   const venvPython = getVenvPythonPath(venvDir)
-  if (!(await pathExists(venvPython))) {
+  const bootstrapMarkerPath = path.join(venvDir, '.bootstrap-python-path')
+  let shouldCreateVenv = !(await pathExists(venvPython))
+
+  if (!shouldCreateVenv) {
+    const venvPythonVersion = await getPythonVersion(venvPython)
+    if (!venvPythonVersion || !isPythonVersionSupported(venvPythonVersion)) {
+      await fs.rm(venvDir, { recursive: true, force: true })
+      await fs.mkdir(venvDir, { recursive: true })
+      shouldCreateVenv = true
+    }
+  }
+
+  if (!shouldCreateVenv) {
+    try {
+      const marker = (await fs.readFile(bootstrapMarkerPath, 'utf8')).trim()
+      if (marker !== bootstrapPython) {
+        await fs.rm(venvDir, { recursive: true, force: true })
+        await fs.mkdir(venvDir, { recursive: true })
+        shouldCreateVenv = true
+      }
+    } catch {
+      await fs.rm(venvDir, { recursive: true, force: true })
+      await fs.mkdir(venvDir, { recursive: true })
+      shouldCreateVenv = true
+    }
+  }
+
+  if (shouldCreateVenv) {
     await runCommand({
       command: bootstrapPython,
       args: ['-m', 'venv', venvDir],
       timeoutMs: 10 * 60 * 1000,
     })
+    await fs.writeFile(bootstrapMarkerPath, bootstrapPython, 'utf8')
   }
 
   const piperExecutablePath = getPiperExecutablePath(venvDir)

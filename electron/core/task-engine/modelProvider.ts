@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../db/types'
 import { runCommand } from './command'
+import { splitTextByPunctuationForTts } from './text-processing'
 
 interface MiniMaxTextResponse {
   choices?: Array<{
@@ -80,6 +81,47 @@ interface MiniMaxFileRetrieveResponse {
     download_url?: string
   }
   download_url?: string
+}
+
+const DEFAULT_PIPER_INPUT_MAX_CHARS = 220
+const FALLBACK_PIPER_INPUT_MAX_CHARS = 120
+
+function buildPiperInputLines(text: string, maxChars: number): string[] {
+  const normalized = text.replace(/\r\n/g, '\n').trim()
+  if (!normalized) return []
+
+  const lines = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const baseLines = lines.length > 0 ? lines : [normalized]
+
+  const chunks: string[] = []
+  for (const line of baseLines) {
+    const splitLines = splitTextByPunctuationForTts(line, maxChars)
+    const candidates = splitLines.length > 0 ? splitLines : [line]
+    for (const candidate of candidates) {
+      const compact = candidate.replace(/\s+/g, ' ').trim()
+      if (!compact) continue
+      if (compact.length <= maxChars) {
+        chunks.push(compact)
+        continue
+      }
+      for (let cursor = 0; cursor < compact.length; cursor += maxChars) {
+        const piece = compact.slice(cursor, cursor + maxChars).trim()
+        if (piece) chunks.push(piece)
+      }
+    }
+  }
+  return chunks
+}
+
+function isPiperNoChannelsError(message: string): boolean {
+  return message.includes('# channels not specified') || message.includes('wave.Error')
+}
+
+function isLegacyPythonWaveError(message: string): boolean {
+  return /python3\.9[\\/](wave\.py|site-packages)/i.test(message)
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -743,23 +785,50 @@ async function requestPiperTts(params: {
   args.push('--noise_scale', String(noiseScale))
   args.push('--noise_w', String(noiseW))
   args.push('--data-dir', dataDir)
+  const normalizedText = params.text.trim()
+  const maxCharsPlans = [DEFAULT_PIPER_INPUT_MAX_CHARS, FALLBACK_PIPER_INPUT_MAX_CHARS]
 
   try {
-    await runCommand({
-      command,
-      args,
-      timeoutMs: Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
-      onSpawn: (child) => {
-        const input = params.text.endsWith('\n') ? params.text : `${params.text}\n`
-        child.stdin.write(input)
-        child.stdin.end()
-      },
-    })
-    const audioBuffer = await fs.readFile(outputPath)
-    if (audioBuffer.length === 0) {
-      throw new Error('Piper output is empty')
+    if (!normalizedText) {
+      throw new Error('Piper text is empty')
     }
-    return { audioBuffer, extension: 'wav' }
+
+    let lastNoChannelsError: unknown = null
+    for (let index = 0; index < maxCharsPlans.length; index += 1) {
+      const maxChars = maxCharsPlans[index]
+      const inputLines = buildPiperInputLines(normalizedText, maxChars)
+      if (inputLines.length === 0) {
+        throw new Error('Piper text is empty after normalization')
+      }
+
+      try {
+        await runCommand({
+          command,
+          args,
+          timeoutMs: Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
+          onSpawn: (child) => {
+            child.stdin.end(`${inputLines.join('\n')}\n`)
+          },
+        })
+        const audioBuffer = await fs.readFile(outputPath)
+        if (audioBuffer.length === 0) {
+          throw new Error('Piper output is empty')
+        }
+        return { audioBuffer, extension: 'wav' }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const isLastPlan = index >= maxCharsPlans.length - 1
+        if (!isPiperNoChannelsError(message) || isLastPlan) {
+          throw error
+        }
+        lastNoChannelsError = error
+      }
+    }
+
+    if (lastNoChannelsError) {
+      throw lastNoChannelsError
+    }
+    throw new Error('Piper output is empty')
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     const missingModuleMatch = message.match(/No module named '([^']+)'/)
@@ -776,6 +845,14 @@ async function requestPiperTts(params: {
             : 'python3'
       throw new Error(
         `Piper tts failed: missing Python module "${missingModule}". Reinstall Piper runtime in Settings -> 本地语音合成（Piper） or run "${suggestedPython} -m pip install ${missingModule}" and retry.`,
+      )
+    }
+    if (isPiperNoChannelsError(message)) {
+      const versionHint = isLegacyPythonWaveError(message)
+        ? ' Detected legacy Python 3.9 runtime; please reinstall Piper runtime to rebuild venv with managed Python.'
+        : ''
+      throw new Error(
+        `Piper tts failed: model produced empty audio frames. Try reinstalling Piper runtime/model and retry.${versionHint} Raw error: ${message}`,
       )
     }
     throw new Error(`Piper tts failed: ${message}`)

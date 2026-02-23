@@ -115,6 +115,8 @@ export async function loadTaskDetailAction(
       },
       transcriptContent: undefined,
       translationContent: undefined,
+      runtimeComponentStatus: {},
+      isRuntimeModalVisible: false,
     }))
     // Load transcript and translation content if available (before routing)
     const transcriptPath = findLatestArtifactPath(detail.artifacts, 'transcript')
@@ -400,6 +402,8 @@ export async function startTaskAction(
       transcriptContent: prev.running ? prev.transcriptContent : undefined,
       translationContent: prev.running ? prev.translationContent : undefined,
       downloadSpeed: prev.running ? prev.downloadSpeed : undefined,
+      runtimeComponentStatus: prev.running ? prev.runtimeComponentStatus : {},
+      isRuntimeModalVisible: prev.running ? prev.isRuntimeModalVisible : false,
       form: {
         ...prev.form,
         youtubeUrl: '',

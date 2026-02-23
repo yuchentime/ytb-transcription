@@ -70,7 +70,6 @@ export function SettingsPage(props: SettingsPageProps) {
   }, [
     settings.translateProvider,
     settings.translateModelId,
-    settings.translateTemperature,
     settings.minimaxApiKey,
     settings.minimaxApiBaseUrl,
     settings.deepseekApiKey,
@@ -690,121 +689,6 @@ export function SettingsPage(props: SettingsPageProps) {
           </label>
         </div>
       </div>
-
-      {/* Group 5: Advanced Options */}
-      <details className="settings-advanced">
-        <summary>{props.t('settings.advanced')}</summary>
-        <div className="grid two-col settings-advanced-grid">
-          <label>
-            {props.t('settings.translateTemperature')}
-            <input
-              type="number"
-              step="0.1"
-              min="0"
-              max="2"
-              value={settings.translateTemperature}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  translateTemperature: Number(event.target.value) || 0,
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            {props.t('settings.stageTimeoutMs')}
-            <input
-              type="number"
-              min="1000"
-              step="1000"
-              value={settings.stageTimeoutMs}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  stageTimeoutMs: Number(event.target.value) || props.model.defaultStageTimeoutMs,
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            {props.t('settings.retryDownload')}
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={settings.retryPolicy.download}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  retryPolicy: {
-                    ...prev.retryPolicy,
-                    download: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                  },
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            {props.t('settings.retryTranslate')}
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={settings.retryPolicy.translate}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  retryPolicy: {
-                    ...prev.retryPolicy,
-                    translate: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                  },
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            {props.t('settings.retryTts')}
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={settings.retryPolicy.tts}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  retryPolicy: {
-                    ...prev.retryPolicy,
-                    tts: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                  },
-                }))
-              }
-            />
-          </label>
-
-          <label>
-            {props.t('settings.retryTranscribe')}
-            <input
-              type="number"
-              min="0"
-              step="1"
-              value={settings.retryPolicy.transcribe}
-              onChange={(event) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  retryPolicy: {
-                    ...prev.retryPolicy,
-                    transcribe: Math.max(0, Math.floor(Number(event.target.value) || 0)),
-                  },
-                }))
-              }
-            />
-          </label>
-        </div>
-      </details>
 
       <p className="hint">{props.t('settings.securityNote')}</p>
       <p className="hint">{props.t('settings.paramRanges')}</p>

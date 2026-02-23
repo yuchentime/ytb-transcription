@@ -66,11 +66,15 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       onTaskStatus?.(payload)
       scheduleHistoryRefresh()
       if (payload.taskId !== activeTaskId && activeTaskId) return
+      const isTerminalStatus =
+        payload.status === 'completed' || payload.status === 'failed' || payload.status === 'canceled'
       setTaskState((prev) => ({
         ...prev,
         activeTaskId: payload.taskId,
         activeStatus: payload.status,
         running: isRunningStatus(payload.status),
+        runtimeComponentStatus: isTerminalStatus ? {} : prev.runtimeComponentStatus,
+        isRuntimeModalVisible: isTerminalStatus ? false : prev.isRuntimeModalVisible,
       }))
 
       pushLog({
@@ -152,6 +156,8 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         running: false,
         error: '',
         output: payload.output,
+        runtimeComponentStatus: {},
+        isRuntimeModalVisible: false,
       }))
       void loadTaskContentAction({
         ipcClient,
@@ -177,6 +183,8 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         ...prev,
         running: false,
         error: payload.errorMessage,
+        runtimeComponentStatus: {},
+        isRuntimeModalVisible: false,
       }))
 
       pushLog({

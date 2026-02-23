@@ -24,6 +24,37 @@ interface EnsureToolchainOptions {
   reporter?: (event: ToolchainRuntimeEvent) => void
 }
 
+const NETWORK_REQUEST_TIMEOUT_MS = 20 * 60 * 1000
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = NETWORK_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => {
+    controller.abort()
+  }, timeoutMs)
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s: ${url}`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 function getYtDlpBinaryName(): string {
   return process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
 }
@@ -132,17 +163,17 @@ async function ensureYtDlp(toolsDir: string, options?: EnsureToolchainOptions): 
     status: 'downloading',
     message: 'Downloading yt-dlp binary',
   })
-  const response = await fetch(getYtDlpDownloadUrl())
-  if (!response.ok) {
+  try {
+    await downloadFile(getYtDlpDownloadUrl(), ytDlpPath)
+  } catch (error) {
+    const errorMessage = toErrorMessage(error)
     options?.reporter?.({
       component: 'yt-dlp',
       status: 'error',
-      message: `yt-dlp download failed: HTTP ${response.status}`,
+      message: `yt-dlp download failed: ${errorMessage}`,
     })
-    throw new Error(`Failed to download yt-dlp: HTTP ${response.status}`)
+    throw new Error(`Failed to download yt-dlp: ${errorMessage}`)
   }
-  const buffer = Buffer.from(await response.arrayBuffer())
-  await fs.writeFile(ytDlpPath, buffer)
   if (process.platform !== 'win32') {
     await fs.chmod(ytDlpPath, 0o755)
   }
@@ -272,15 +303,36 @@ async function ensureDeno(toolsDir: string, options?: EnsureToolchainOptions): P
     status: 'downloading',
     message: 'Downloading deno runtime',
   })
-  await downloadFile(downloadUrl, archivePath)
+  try {
+    await downloadFile(downloadUrl, archivePath)
+  } catch (error) {
+    const errorMessage = toErrorMessage(error)
+    options?.reporter?.({
+      component: 'deno',
+      status: 'error',
+      message: `deno download failed: ${errorMessage}`,
+    })
+    throw new Error(`Failed to download deno runtime: ${errorMessage}`)
+  }
 
   options?.reporter?.({
     component: 'deno',
     status: 'installing',
     message: 'Extracting deno runtime',
   })
-  await extractZipArchive(archivePath, denoDir)
-  await fs.rm(archivePath, { force: true })
+  try {
+    await extractZipArchive(archivePath, denoDir)
+  } catch (error) {
+    const errorMessage = toErrorMessage(error)
+    options?.reporter?.({
+      component: 'deno',
+      status: 'error',
+      message: `deno extraction failed: ${errorMessage}`,
+    })
+    throw new Error(`Failed to extract deno runtime: ${errorMessage}`)
+  } finally {
+    await fs.rm(archivePath, { force: true })
+  }
 
   try {
     await fs.access(denoPath)
@@ -383,17 +435,17 @@ async function ensureFfmpeg(toolsDir: string, options?: EnsureToolchainOptions):
     status: 'downloading',
     message: 'Downloading ffmpeg binary',
   })
-  const response = await fetch(url)
-  if (!response.ok) {
+  try {
+    await downloadFile(url, ffmpegPath)
+  } catch (error) {
+    const errorMessage = toErrorMessage(error)
     options?.reporter?.({
       component: 'ffmpeg',
       status: 'error',
-      message: `ffmpeg download failed: HTTP ${response.status}`,
+      message: `ffmpeg download failed: ${errorMessage}`,
     })
-    throw new Error(`Failed to download ffmpeg: HTTP ${response.status}`)
+    throw new Error(`Failed to download ffmpeg: ${errorMessage}`)
   }
-  const buffer = Buffer.from(await response.arrayBuffer())
-  await fs.writeFile(ffmpegPath, buffer)
   if (process.platform !== 'win32') {
     await fs.chmod(ffmpegPath, 0o755)
   }
@@ -436,7 +488,7 @@ async function resolvePortablePythonAssetUrl(): Promise<string> {
   }
 
   const api = 'https://api.github.com/repos/indygreg/python-build-standalone/releases/latest'
-  const response = await fetch(api, {
+  const response = await fetchWithTimeout(api, {
     headers: {
       Accept: 'application/vnd.github+json',
     },
@@ -464,7 +516,7 @@ async function resolvePortablePythonAssetUrl(): Promise<string> {
 }
 
 async function downloadFile(url: string, filePath: string): Promise<void> {
-  const response = await fetch(url)
+  const response = await fetchWithTimeout(url)
   if (!response.ok) {
     throw new Error(`Download failed (${response.status}): ${url}`)
   }
@@ -568,16 +620,48 @@ async function installPortablePython(toolsDir: string, options?: EnsureToolchain
     status: 'downloading',
     message: 'Downloading managed Python runtime',
   })
-  const downloadUrl = await resolvePortablePythonAssetUrl()
+  let downloadUrl = ''
+  try {
+    downloadUrl = await resolvePortablePythonAssetUrl()
+  } catch (error) {
+    const errorMessage = toErrorMessage(error)
+    options?.reporter?.({
+      component: 'python',
+      status: 'error',
+      message: `Managed Python artifact resolve failed: ${errorMessage}`,
+    })
+    throw new Error(`Failed to resolve managed Python artifact: ${errorMessage}`)
+  }
   const archivePath = path.join(toolsDir, 'python-portable.tar.gz')
-  await downloadFile(downloadUrl, archivePath)
+  try {
+    await downloadFile(downloadUrl, archivePath)
+  } catch (error) {
+    const errorMessage = toErrorMessage(error)
+    options?.reporter?.({
+      component: 'python',
+      status: 'error',
+      message: `Managed Python download failed: ${errorMessage}`,
+    })
+    throw new Error(`Failed to download managed Python runtime: ${errorMessage}`)
+  }
   options?.reporter?.({
     component: 'python',
     status: 'installing',
     message: 'Extracting portable Python runtime',
   })
-  await extractTarGz(archivePath, portableDir)
-  await fs.rm(archivePath, { force: true })
+  try {
+    await extractTarGz(archivePath, portableDir)
+  } catch (error) {
+    const errorMessage = toErrorMessage(error)
+    options?.reporter?.({
+      component: 'python',
+      status: 'error',
+      message: `Managed Python extraction failed: ${errorMessage}`,
+    })
+    throw new Error(`Failed to extract managed Python runtime: ${errorMessage}`)
+  } finally {
+    await fs.rm(archivePath, { force: true })
+  }
 
   const installed = await findPortablePythonBinary(portableDir)
   if (!installed) {

@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { app, ipcMain, shell } from 'electron'
 import type { AppSettings } from '../../core/db/types'
@@ -226,6 +227,83 @@ async function verifyCommandRunnable(command: string): Promise<{ ok: boolean; me
       ok: false,
       message: detail ? `${baseMessage}; ${detail}` : baseMessage,
     }
+  }
+}
+
+function truncateMessage(message: string, maxLength = 280): string {
+  const normalized = message.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, maxLength)}...`
+}
+
+function getPiperHealthCheckText(language: AppSettings['ttsTargetLanguage']): string {
+  if (language === 'en') return 'This is a Piper runtime health check.'
+  return '这是 Piper 运行环境健康检查。'
+}
+
+async function runPiperHealthCheck(params: {
+  command: string
+  modelPath: string
+  configPath: string | null
+  settings: AppSettings
+}): Promise<{ ok: boolean; message: string }> {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piper-probe-'))
+  const outputPath = path.join(tempDir, 'probe.wav')
+  const args = ['--model', params.modelPath, '--output_file', outputPath]
+  const dataDir = path.join(path.dirname(params.modelPath), '.piper-data')
+
+  if (params.configPath) {
+    args.push('--config', params.configPath)
+  }
+
+  if (Number.isFinite(params.settings.piperSpeakerId) && params.settings.piperSpeakerId >= 0) {
+    args.push('--speaker', String(Math.floor(params.settings.piperSpeakerId)))
+  }
+
+  const lengthScale = Number.isFinite(params.settings.piperLengthScale)
+    ? Math.max(0.1, params.settings.piperLengthScale)
+    : 1
+  const noiseScale = Number.isFinite(params.settings.piperNoiseScale)
+    ? Math.max(0, params.settings.piperNoiseScale)
+    : 0.667
+  const noiseW = Number.isFinite(params.settings.piperNoiseW)
+    ? Math.max(0, params.settings.piperNoiseW)
+    : 0.8
+
+  args.push('--length_scale', String(lengthScale))
+  args.push('--noise_scale', String(noiseScale))
+  args.push('--noise_w', String(noiseW))
+  args.push('--data-dir', dataDir)
+
+  try {
+    await fs.mkdir(dataDir, { recursive: true }).catch(() => undefined)
+    await runCommand({
+      command: params.command,
+      args,
+      timeoutMs: 45_000,
+      onSpawn: (child) => {
+        child.stdin.end(`${getPiperHealthCheckText(params.settings.ttsTargetLanguage)}\n`)
+      },
+    })
+    const stat = await fs.stat(outputPath)
+    if (!stat.isFile() || stat.size <= 0) {
+      return {
+        ok: false,
+        message: 'health check output is empty',
+      }
+    }
+    return {
+      ok: true,
+      message: `health check passed (${Math.round(stat.size / 1024)} KB audio)`,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      ok: false,
+      message: truncateMessage(message),
+    }
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 
@@ -470,7 +548,7 @@ export function registerSystemHandlers(): void {
       const binaryRun = binaryCommand
         ? await verifyCommandRunnable(binaryCommand)
         : { ok: false, message: '未找到 Piper 可执行文件' }
-      const binaryResult: PiperProbeCheckResult = {
+      let binaryResult: PiperProbeCheckResult = {
         ok: binaryRun.ok,
         path: binaryCommand || '(empty)',
         message: binaryRun.ok
@@ -499,10 +577,33 @@ export function registerSystemHandlers(): void {
             : '未配置配置文件，已按可选项处理',
       }
 
+      let healthCheckMessage = '未执行合成健康检查'
+      if (binaryResult.ok && modelPath) {
+        const healthCheck = await runPiperHealthCheck({
+          command: binaryCommand,
+          modelPath,
+          configPath,
+          settings: mergedSettings,
+        })
+        healthCheckMessage = healthCheck.message
+        if (!healthCheck.ok) {
+          binaryResult = {
+            ...binaryResult,
+            ok: false,
+            message: `Piper 可执行文件可用，但合成健康检查失败: ${healthCheck.message}`,
+          }
+        } else {
+          binaryResult = {
+            ...binaryResult,
+            message: `Piper 可执行文件可用，合成健康检查通过`,
+          }
+        }
+      }
+
       const ok = binaryResult.ok && modelResult.ok && configResult.ok
       return {
         ok,
-        summary: ok ? 'Piper 环境就绪' : 'Piper 环境未就绪',
+        summary: ok ? `Piper 环境就绪（${healthCheckMessage}）` : `Piper 环境未就绪（${healthCheckMessage}）`,
         binary: binaryResult,
         model: modelResult,
         config: configResult,
