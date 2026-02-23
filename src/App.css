@@ -169,6 +169,81 @@ label {
   color: #333;
 }
 
+.settings-label-with-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-tip-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border-radius: 999px;
+  border: 1px solid #bdbdbd;
+  color: #8d8d8d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-tip-icon:hover,
+.settings-tip-icon:focus-visible {
+  border-color: #9b9b9b;
+  color: #666;
+  outline: none;
+}
+
+.settings-tip-icon::before,
+.settings-tip-icon::after {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.settings-tip-icon::before {
+  content: '';
+  position: absolute;
+  left: calc(100% + 2px);
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 6px;
+  border-style: solid;
+  border-color: transparent #444 transparent transparent;
+}
+
+.settings-tip-icon::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 260px;
+  max-width: min(260px, 70vw);
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  z-index: 50;
+}
+
+.settings-tip-icon:hover::before,
+.settings-tip-icon:hover::after,
+.settings-tip-icon:focus-visible::before,
+.settings-tip-icon:focus-visible::after {
+  opacity: 1;
+}
+
 /* Settings Panel - Grouped Layout */
 .settings-panel {
   padding: 24px;

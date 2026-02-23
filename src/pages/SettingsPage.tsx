@@ -598,7 +598,18 @@ export function SettingsPage(props: SettingsPageProps) {
         <h3 className="settings-group-title">{props.t('settings.group.youtube')}</h3>
         <div className="settings-group-content grid two-col">
           <label>
-            {props.t('settings.youtubeDownloadAuth')}
+            <span className="settings-label-with-tip">
+              {props.t('settings.youtubeDownloadAuth')}
+              <span
+                className="settings-tip-icon"
+                data-tooltip={props.t('settings.youtubeDownloadAuthHint')}
+                aria-label={props.t('settings.youtubeDownloadAuthHintAria')}
+                role="img"
+                tabIndex={0}
+              >
+                !
+              </span>
+            </span>
             <select
               value={settings.ytDlpAuthMode}
               onChange={(event) =>

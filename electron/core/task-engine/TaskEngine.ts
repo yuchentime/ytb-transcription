@@ -1032,6 +1032,18 @@ export class TaskEngine {
       context.audioDurationSec = audioDurationSec
     }
 
+    const transcribePythonEnvBase: NodeJS.ProcessEnv = {
+      XDG_CACHE_HOME: path.join(this.deps.dataRoot, 'cache'),
+    }
+    if (path.isAbsolute(toolchain.ffmpegPath)) {
+      const ffmpegDir = path.dirname(toolchain.ffmpegPath)
+      const inheritedPath = process.env.PATH ?? ''
+      transcribePythonEnvBase.PATH = inheritedPath
+        ? `${ffmpegDir}${path.delimiter}${inheritedPath}`
+        : ffmpegDir
+      transcribePythonEnvBase.FFMPEG_BINARY = toolchain.ffmpegPath
+    }
+
     this.emit('log', {
       taskId: context.taskId,
       stage: 'transcribing',
@@ -1073,6 +1085,7 @@ export class TaskEngine {
       const runMlxCommand = async (disableProxy: boolean): Promise<string[]> => {
         const stderrLines: string[] = []
         const env: NodeJS.ProcessEnv = {
+          ...transcribePythonEnvBase,
           XDG_CACHE_HOME: path.join(this.deps.dataRoot, 'cache'),
           HF_HOME: path.join(this.deps.dataRoot, 'cache', 'hf'),
           HF_HUB_DISABLE_IMPLICIT_TOKEN: '1',
@@ -1220,16 +1233,16 @@ export class TaskEngine {
         args.push('--fp16', 'False')
       }
 
+      const stderrLines: string[] = []
       await runCommand({
         command: toolchain.pythonPath,
         args,
         cwd: context.taskDir,
         timeoutMs: settings.stageTimeoutMs,
-        env: {
-          XDG_CACHE_HOME: path.join(this.deps.dataRoot, 'cache'),
-        },
+        env: transcribePythonEnvBase,
         isCanceled: () => this.cancelRequested.has(context.taskId),
         onStderrLine: (line) => {
+          stderrLines.push(line)
           this.emit('log', {
             taskId: context.taskId,
             stage: 'transcribing',
@@ -1241,9 +1254,23 @@ export class TaskEngine {
       })
 
       const baseName = path.basename(audioPath, path.extname(audioPath))
+      const whisperTxtPath = path.join(outputDir, `${baseName}.txt`)
+      const whisperJsonPath = path.join(outputDir, `${baseName}.json`)
+      try {
+        await fs.access(whisperTxtPath)
+        await fs.access(whisperJsonPath)
+      } catch {
+        const detail = stderrLines.slice(-12).join(' | ')
+        throw new Error(
+          detail
+            ? `Whisper finished but output files were not produced (${whisperTxtPath}, ${whisperJsonPath}). stderr: ${detail}`
+            : `Whisper finished but output files were not produced (${whisperTxtPath}, ${whisperJsonPath})`,
+        )
+      }
+
       return {
-        whisperTxtPath: path.join(outputDir, `${baseName}.txt`),
-        whisperJsonPath: path.join(outputDir, `${baseName}.json`),
+        whisperTxtPath,
+        whisperJsonPath,
       }
     }
 
@@ -1255,6 +1282,14 @@ export class TaskEngine {
       const applyOpenaiOutput = async (
         generated: { whisperTxtPath: string; whisperJsonPath: string },
       ): Promise<void> => {
+        try {
+          await fs.access(generated.whisperTxtPath)
+          await fs.access(generated.whisperJsonPath)
+        } catch {
+          throw new Error(
+            `Whisper output files are missing: txt=${generated.whisperTxtPath}, json=${generated.whisperJsonPath}`,
+          )
+        }
         if (generated.whisperTxtPath !== outputTxtPath) {
           await fs.copyFile(generated.whisperTxtPath, outputTxtPath)
           await fs.rm(generated.whisperTxtPath, { force: true })

@@ -188,7 +188,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       void refreshSegmentsAndRecovery(payload.taskId)
     })
 
-    // Handle runtime events - show modal when components are being prepared
+    // Handle runtime events - only show modal when missing runtime resources are downloading/installing.
     const offRuntime = ipcClient.task.onRuntime((payload) => {
       if (payload.taskId !== activeTaskId && activeTaskId) return
       setTaskState((prev) => {
@@ -198,17 +198,15 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
           [payload.component]: payload,
         }
 
-        // Determine if modal should be visible
-        // Show modal if any component is in checking/downloading/installing state
-        const hasActiveWork = Object.values(updatedStatus).some(
-          (event) => event.status === 'checking' || event.status === 'downloading' || event.status === 'installing'
+        // Show modal only when a component is missing and needs action.
+        const hasMissingRuntimeResources = Object.values(updatedStatus).some(
+          (event) => event.status === 'downloading' || event.status === 'installing' || event.status === 'error'
         )
 
         return {
           ...prev,
           runtimeComponentStatus: updatedStatus,
-          // Show modal when there's active work and we're in early stages
-          isRuntimeModalVisible: hasActiveWork,
+          isRuntimeModalVisible: hasMissingRuntimeResources,
         }
       })
     })

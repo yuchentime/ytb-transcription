@@ -79,8 +79,8 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
-  // Set dock icon for macOS
-  if (process.platform === 'darwin') {
+  // Set dock icon only in development; in production use the bundled app icon (icns).
+  if (process.platform === 'darwin' && VITE_DEV_SERVER_URL) {
     const publicRoot = process.env.VITE_PUBLIC ?? path.join(APP_ROOT, 'public')
     const dockIcon = nativeImage.createFromPath(path.join(publicRoot, 'logo.png'))
     if (!dockIcon.isEmpty()) {

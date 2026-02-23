@@ -104,6 +104,9 @@ const zhMessages = {
   'settings.ttsApiKey': 'API Key',
   'settings.ttsBaseUrl': 'Base URL',
   'settings.youtubeDownloadAuth': 'YouTube 下载鉴权',
+  'settings.youtubeDownloadAuthHint':
+    '公开视频可选“无”；遇到登录/年龄/地区限制时再开 Cookies。浏览器 Cookies 适合本机，Cookies 文件适合跨设备或自动化（需定期更新）。',
+  'settings.youtubeDownloadAuthHintAria': 'YouTube 下载鉴权说明',
   'settings.auth.none': '无',
   'settings.auth.browserCookies': '浏览器 Cookies',
   'settings.auth.cookiesFile': 'Cookies 文件',
@@ -329,6 +332,9 @@ const enMessages: Messages = {
   'settings.ttsApiKey': 'API Key',
   'settings.ttsBaseUrl': 'Base URL',
   'settings.youtubeDownloadAuth': 'YouTube Download Auth',
+  'settings.youtubeDownloadAuthHint':
+    'Use None for public videos. If login/age/region limits appear, enable cookies. Browser Cookies are easiest on this device; Cookies File is better for cross-device or automation and needs refresh.',
+  'settings.youtubeDownloadAuthHintAria': 'YouTube download auth help',
   'settings.auth.none': 'None',
   'settings.auth.browserCookies': 'Browser Cookies',
   'settings.auth.cookiesFile': 'Cookies File',
