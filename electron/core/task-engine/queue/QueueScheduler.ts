@@ -83,7 +83,11 @@ export class QueueScheduler {
 
     this.deps.taskEngine.on('status', (payload) => {
       if (payload.status === 'canceled') {
-        this.handleTaskTerminated(payload.taskId, 'failed', 'E_TASK_CANCELED')
+        this.handleTaskTerminated(payload.taskId, 'failed', 'E_TASK_CANCELED', {
+          countAsFailure: false,
+        })
+      } else if (payload.status === 'failed') {
+        this.handleTaskTerminated(payload.taskId, 'failed', 'E_TASK_FAILED')
       }
     })
 
@@ -128,6 +132,47 @@ export class QueueScheduler {
     this.emitQueueUpdated()
     this.schedule()
     return queueTask
+  }
+
+  requeueTask(taskId: string): { accepted: boolean; reason?: string } {
+    let queueRecord: QueueTaskRecord | null = null
+    try {
+      queueRecord = this.queueStore.getByTaskId(taskId)
+    } catch {
+      queueRecord = null
+    }
+
+    if (!queueRecord) {
+      this.enqueueTask(taskId, null, 0)
+      return { accepted: true }
+    }
+
+    if (queueRecord.queueStatus === 'running') {
+      return { accepted: false, reason: `Task ${taskId} is already running` }
+    }
+
+    if (queueRecord.queueStatus !== 'waiting') {
+      queueRecord = this.queueStore.moveToWaitingTail(taskId)
+    }
+
+    this.deps.taskDao.updateTaskStatus(taskId, 'queued', {
+      errorCode: null,
+      errorMessage: null,
+      completedAt: null,
+    })
+
+    if (queueRecord.batchId) {
+      try {
+        this.deps.batchDao.updateBatchItemStatusByTaskId(taskId, 'queued')
+        this.emitBatchProgress(queueRecord.batchId)
+      } catch {
+        // Ignore non-batch tasks.
+      }
+    }
+
+    this.emitQueueUpdated()
+    this.schedule()
+    return { accepted: true }
   }
 
   reorder(taskId: string, toIndex: number): { ok: boolean; fromIndex?: number; toIndex?: number } {
@@ -188,6 +233,9 @@ export class QueueScheduler {
     taskId: string,
     status: 'completed' | 'failed',
     errorCode?: string,
+    options?: {
+      countAsFailure?: boolean
+    },
   ): void {
     let queueRecord: QueueTaskRecord
     try {
@@ -203,7 +251,9 @@ export class QueueScheduler {
     this.workerPool.releaseByTask(taskId)
     const finishedRecord = this.queueStore.markFinished(taskId, status, errorCode)
 
-    if (status === 'failed') {
+    const countAsFailure = options?.countAsFailure ?? status === 'failed'
+
+    if (status === 'failed' && countAsFailure) {
       this.consecutiveFailureCount += 1
       if (this.consecutiveFailureCount >= this.consecutiveFailureThreshold) {
         this.paused = true
@@ -345,10 +395,25 @@ export class QueueScheduler {
       overflow = running
     } else {
       const keep = new Set<string>()
-      for (const task of running) {
+      const runningTaskIds = new Set(running.map((task) => task.taskId))
+
+      if (engineRunningTaskId && runningTaskIds.has(engineRunningTaskId)) {
+        keep.add(engineRunningTaskId)
+      }
+
+      for (const taskId of this.workerPool.runningTaskIds()) {
         if (keep.size >= maxRunning) break
-        if (expectedRunningTaskIds.has(task.taskId)) {
-          keep.add(task.taskId)
+        if (runningTaskIds.has(taskId)) {
+          keep.add(taskId)
+        }
+      }
+
+      if (keep.size === 0) {
+        for (const task of running) {
+          if (keep.size >= maxRunning) break
+          if (expectedRunningTaskIds.has(task.taskId)) {
+            keep.add(task.taskId)
+          }
         }
       }
       overflow = running.filter((task) => !keep.has(task.taskId))

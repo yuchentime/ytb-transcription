@@ -56,7 +56,7 @@ export async function loadHistoryAction(
       ipcClient.queue.list().catch(() => null),
       ipcClient.task.getRunning().catch(() => null),
     ])
-    const runningTaskId = queueSnapshot?.running[0]?.taskId ?? runningTask?.id ?? ''
+    const runningTaskId = runningTask?.id ?? queueSnapshot?.running[0]?.taskId ?? ''
     setHistoryState((prev) => ({
       ...prev,
       items: result.items,

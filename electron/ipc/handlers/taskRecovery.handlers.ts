@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDatabaseContext } from '../../core/db'
-import { getTaskEngine } from '../../core/task-engine'
+import { getQueueScheduler, getTaskEngine } from '../../core/task-engine'
 import {
   IPC_CHANNELS,
   type RetrySegmentsPayload,
@@ -65,13 +65,44 @@ export function registerTaskRecoveryHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.taskRetrySegments, (_event, payload: RetrySegmentsPayload) => {
     const { taskId, segmentIds } = assertRetrySegmentPayload(payload)
     const engine = getTaskEngine()
-    return engine.retrySegments(taskId, segmentIds)
+    const prepared = engine.prepareRetrySegments(taskId, segmentIds)
+    if (!prepared.accepted) {
+      return prepared
+    }
+
+    const queueScheduler = getQueueScheduler()
+    const queued = queueScheduler.requeueTask(taskId)
+    if (!queued.accepted) {
+      engine.clearPendingExecutionRequests(taskId)
+      return queued
+    }
+
+    return { accepted: true }
   })
 
   ipcMain.handle(IPC_CHANNELS.taskResumeFromCheckpoint, (_event, payload: TaskIdPayload) => {
     const taskId = assertTaskId(payload)
     const engine = getTaskEngine()
-    return engine.resumeFromCheckpoint(taskId)
+    const prepared = engine.prepareResumeFromCheckpoint(taskId)
+    if (!prepared.accepted) {
+      return prepared
+    }
+
+    const queueScheduler = getQueueScheduler()
+    const queued = queueScheduler.requeueTask(taskId)
+    if (!queued.accepted) {
+      engine.clearPendingExecutionRequests(taskId)
+      return {
+        accepted: false,
+        fromStage: prepared.fromStage,
+        reason: queued.reason,
+      }
+    }
+
+    return {
+      accepted: true,
+      fromStage: prepared.fromStage,
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.taskRecoveryPlan, (_event, payload: TaskIdPayload) => {

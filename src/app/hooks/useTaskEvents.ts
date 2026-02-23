@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import type { RendererAPI } from '../../../electron/ipc/channels'
-import type { TaskStatusEventPayload } from '../../../electron/ipc/channels'
+import type { RendererAPI, TaskStatusEventPayload } from '../../../electron/ipc/channels'
 import type { TranslateFn } from '../i18n'
 import { translateTaskStatus } from '../i18n'
 import { loadTaskContentAction } from '../actions'

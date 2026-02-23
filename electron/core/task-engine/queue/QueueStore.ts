@@ -57,4 +57,8 @@ export class QueueStore {
   requeueTasks(taskIds: string[]): number {
     return this.taskQueueDao.requeueTasks(taskIds)
   }
+
+  moveToWaitingTail(taskId: string): QueueTaskRecord {
+    return this.taskQueueDao.moveToWaitingTail(taskId)
+  }
 }

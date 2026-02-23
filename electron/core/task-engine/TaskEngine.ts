@@ -180,12 +180,26 @@ export class TaskEngine {
   }
 
   retrySegments(taskId: string, segmentIds: string[]): { accepted: boolean; reason?: string } {
+    const prepared = this.prepareRetrySegments(taskId, segmentIds)
+    if (!prepared.accepted) {
+      return prepared
+    }
+
+    const started = this.start(taskId)
+    if (!started.accepted) {
+      this.clearPendingExecutionRequests(taskId)
+    }
+    return started
+  }
+
+  prepareRetrySegments(taskId: string, segmentIds: string[]): { accepted: boolean; reason?: string } {
     if (!Array.isArray(segmentIds) || segmentIds.length === 0) {
       return { accepted: false, reason: 'segmentIds is required' }
     }
-    if (this.runningTaskId && this.runningTaskId !== taskId) {
-      return { accepted: false, reason: `Task ${this.runningTaskId} is already running` }
+    if (this.runningTaskId === taskId) {
+      return { accepted: false, reason: 'Task is already running' }
     }
+
     this.retrySegmentRequests.set(taskId, new Set(segmentIds))
     const allSegments = this.deps.taskSegmentDao.listByTask(taskId)
     const targetSegments = allSegments.filter((segment) => segmentIds.includes(segment.id))
@@ -195,10 +209,31 @@ export class TaskEngine {
     } else {
       this.resumeFromStageRequests.set(taskId, 'synthesizing')
     }
-    return this.start(taskId)
+    return { accepted: true }
   }
 
   resumeFromCheckpoint(taskId: string): { accepted: boolean; fromStage: string; reason?: string } {
+    const prepared = this.prepareResumeFromCheckpoint(taskId)
+    if (!prepared.accepted) {
+      return prepared
+    }
+
+    const started = this.start(taskId)
+    if (!started.accepted) {
+      this.clearPendingExecutionRequests(taskId)
+    }
+    return {
+      accepted: started.accepted,
+      fromStage: prepared.fromStage,
+      reason: started.reason,
+    }
+  }
+
+  prepareResumeFromCheckpoint(taskId: string): { accepted: boolean; fromStage: string; reason?: string } {
+    if (this.runningTaskId === taskId) {
+      return { accepted: false, fromStage: 'downloading', reason: 'Task is already running' }
+    }
+
     const snapshot = this.deps.taskRecoveryDao.getLatestSnapshot(taskId)
     if (!snapshot) {
       const fallbackStage = this.resolveFallbackResumeStage(taskId)
@@ -209,11 +244,9 @@ export class TaskEngine {
         this.retrySegmentRequests.delete(taskId)
       }
       this.resumeFromStageRequests.set(taskId, fallbackStage)
-      const started = this.start(taskId)
       return {
-        accepted: started.accepted,
+        accepted: true,
         fromStage: fallbackStage,
-        reason: started.reason,
       }
     }
 
@@ -239,12 +272,15 @@ export class TaskEngine {
     }
     this.resumeFromStageRequests.set(taskId, stageName)
 
-    const started = this.start(taskId)
     return {
-      accepted: started.accepted,
+      accepted: true,
       fromStage: stageName,
-      reason: started.reason,
     }
+  }
+
+  clearPendingExecutionRequests(taskId: string): void {
+    this.retrySegmentRequests.delete(taskId)
+    this.resumeFromStageRequests.delete(taskId)
   }
 
   cancel(taskId: string): { canceled: boolean } {

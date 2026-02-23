@@ -414,6 +414,51 @@ export class TaskQueueDao {
     return run()
   }
 
+  moveToWaitingTail(taskId: string): QueueTaskRecord {
+    const run = this.db.transaction(() => {
+      const existed = this.db
+        .prepare('SELECT task_id AS taskId FROM task_queue WHERE task_id = ?')
+        .get(taskId) as { taskId: string } | undefined
+
+      if (!existed) {
+        throw new Error(`Queue task not found: ${taskId}`)
+      }
+
+      const maxIndexRow = this.db
+        .prepare(
+          `
+          SELECT COALESCE(MAX(queue_index), -1) AS maxIndex
+          FROM task_queue
+          WHERE queue_status = 'waiting'
+        `,
+        )
+        .get() as { maxIndex: number }
+
+      const nextIndex = maxIndexRow.maxIndex + 1
+      const now = new Date().toISOString()
+      this.db
+        .prepare(
+          `
+          UPDATE task_queue
+          SET
+            queue_status = 'waiting',
+            queue_index = ?,
+            enqueued_at = ?,
+            started_at = NULL,
+            heartbeat_at = NULL,
+            finished_at = NULL,
+            worker_slot = NULL,
+            last_error_code = NULL
+          WHERE task_id = ?
+        `,
+        )
+        .run(nextIndex, now, taskId)
+    })
+
+    run()
+    return this.getByTaskId(taskId)
+  }
+
   getByTaskId(taskId: string): QueueTaskRecord {
     const row = this.db
       .prepare(

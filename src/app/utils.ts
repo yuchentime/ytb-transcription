@@ -21,6 +21,7 @@ const RUNNING_STATUSES: TaskStatus[] = [
 
 export const RECOVERABLE_STATUSES: TaskStatus[] = [
   'failed',
+  'canceled',
   'extracting',
   'transcribing',
   'translating',

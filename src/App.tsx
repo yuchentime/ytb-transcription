@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TaskStatus } from '../electron/core/db/types'
-import type { PiperInstallResult, PiperProbeResult, TranslateConnectivityResult } from '../electron/ipc/channels'
+import type {
+  PiperInstallResult,
+  PiperProbeResult,
+  TaskStatusEventPayload,
+  TranslateConnectivityResult,
+} from '../electron/ipc/channels'
 import {
   applyHistoryFiltersAction,
   cancelTaskAction,
@@ -35,7 +40,7 @@ import {
   saveLocale,
   type AppLocale,
 } from './app/i18n'
-import { DEFAULT_SETTINGS, STAGES, formatDateTime, isRecoverableTaskStatus } from './app/utils'
+import { DEFAULT_SETTINGS, STAGES, formatDateTime, isRecoverableTaskStatus, isRunningStatus } from './app/utils'
 import { useTaskAudio } from './app/hooks/useTaskAudio'
 import { useTaskEvents } from './app/hooks/useTaskEvents'
 import { SidebarMenu } from './components/SidebarMenu'
@@ -51,11 +56,15 @@ import { createInitialQueueState } from './stores/queue.store'
 import './App.css'
 
 function App() {
+  const historyLoadRequestRef = useRef(0)
   const [activeRoute, setActiveRoute] = useState<AppRoute>('task')
   const [locale, setLocale] = useState<AppLocale>(() => getInitialLocale())
   const [settingsState, setSettingsState] = useState(createInitialSettingsState)
   const [taskState, setTaskState] = useState<TaskState>(createInitialTaskState)
   const [historyState, setHistoryState] = useState<HistoryState>(createInitialHistoryState)
+  const [liveTaskStatuses, setLiveTaskStatuses] = useState<
+    Record<string, { status: TaskStatus; timestamp: string }>
+  >({})
   const [queueState, setQueueState] = useState(createInitialQueueState)
   const [queueSubmitToast, setQueueSubmitToast] = useState<{ visible: boolean; key: number }>({
     visible: false,
@@ -83,10 +92,29 @@ function App() {
   const deleteConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null)
   const t = useMemo(() => createTranslator(locale), [locale])
 
+  const mergedHistoryItems = useMemo(() => {
+    return historyState.items.map((item) => {
+      const liveStatus = liveTaskStatuses[item.id]
+      if (!liveStatus) {
+        return item
+      }
+      if (item.updatedAt && liveStatus.timestamp < item.updatedAt) {
+        return item
+      }
+      if (item.status === liveStatus.status) {
+        return item
+      }
+      return {
+        ...item,
+        status: liveStatus.status,
+      }
+    })
+  }, [historyState.items, liveTaskStatuses])
+
   const filteredHistoryItems = useMemo(() => {
-    if (!historyState.recoverableOnly) return historyState.items
-    return historyState.items.filter((item) => isRecoverableTaskStatus(item.status))
-  }, [historyState.items, historyState.recoverableOnly])
+    if (!historyState.recoverableOnly) return mergedHistoryItems
+    return mergedHistoryItems.filter((item) => isRecoverableTaskStatus(item.status))
+  }, [historyState.recoverableOnly, mergedHistoryItems])
 
   const historyVisibleTotal = useMemo(() => {
     return historyState.recoverableOnly ? filteredHistoryItems.length : historyState.total
@@ -225,13 +253,63 @@ function App() {
   }, [])
 
   const loadHistory = useCallback(async (query: HistoryQueryState): Promise<void> => {
+    const requestId = historyLoadRequestRef.current + 1
+    historyLoadRequestRef.current = requestId
+
+    const setHistoryStateIfLatest: Dispatch<SetStateAction<HistoryState>> = (updater) => {
+      if (requestId !== historyLoadRequestRef.current) {
+        return
+      }
+      setHistoryState(updater)
+    }
+
     await loadHistoryAction({
       ipcClient,
-      setHistoryState,
+      setHistoryState: setHistoryStateIfLatest,
       query,
       t,
     })
   }, [t])
+
+  const handleTaskStatus = useCallback((payload: TaskStatusEventPayload): void => {
+    setHistoryState((prev) => {
+      if (isRunningStatus(payload.status)) {
+        if (prev.runningTaskId === payload.taskId) return prev
+        return {
+          ...prev,
+          runningTaskId: payload.taskId,
+        }
+      }
+      if (prev.runningTaskId !== payload.taskId) {
+        return prev
+      }
+      return {
+        ...prev,
+        runningTaskId: '',
+      }
+    })
+
+    setLiveTaskStatuses((prev) => {
+      const current = prev[payload.taskId]
+      if (
+        current &&
+        current.status === payload.status &&
+        current.timestamp === payload.timestamp
+      ) {
+        return prev
+      }
+      if (current && current.timestamp > payload.timestamp) {
+        return prev
+      }
+      return {
+        ...prev,
+        [payload.taskId]: {
+          status: payload.status,
+          timestamp: payload.timestamp,
+        },
+      }
+    })
+  }, [])
 
   const loadTaskDetail = useCallback(async (taskId: string): Promise<void> => {
     await loadTaskDetailAction({
@@ -253,33 +331,49 @@ function App() {
 
     try {
       const snapshot = await ipcClient.queue.list()
-      const runningTaskId = snapshot.running[0]?.taskId
+      const runningTaskResponse = await ipcClient.task
+        .getRunning()
+        .then((task) => ({ task, ok: true as const }))
+        .catch(() => ({ task: null, ok: false as const }))
+      const runningTask = runningTaskResponse.task
+      const resolvedRunningTaskId =
+        runningTask?.id ?? (runningTaskResponse.ok ? undefined : snapshot.running[0]?.taskId)
       let processingYoutubeUrl = ''
       let runningTaskStatus: TaskStatus | '' = ''
 
-      if (runningTaskId) {
-        const detail = await ipcClient.task.get({ taskId: runningTaskId }).catch(() => null)
+      if (runningTask) {
+        processingYoutubeUrl = runningTask.youtubeUrl
+        runningTaskStatus = runningTask.status
+      } else if (resolvedRunningTaskId) {
+        const detail = await ipcClient.task.get({ taskId: resolvedRunningTaskId }).catch(() => null)
         if (detail) {
           processingYoutubeUrl = detail.task.youtubeUrl
           runningTaskStatus = detail.task.status
         }
       }
 
+      const normalizedRunning = resolvedRunningTaskId
+        ? snapshot.running.filter((item) => item.taskId === resolvedRunningTaskId)
+        : []
+
       setQueueState((prev) => ({
         ...prev,
-        snapshot,
+        snapshot: {
+          ...snapshot,
+          running: normalizedRunning,
+        },
         loading: false,
       }))
       setHistoryState((prev) => ({
         ...prev,
-        runningTaskId: runningTaskId ?? '',
+        runningTaskId: resolvedRunningTaskId ?? '',
       }))
 
       setTaskState((prev) => ({
         ...prev,
-        activeTaskId: runningTaskId ?? prev.activeTaskId,
+        activeTaskId: resolvedRunningTaskId ?? prev.activeTaskId,
         activeStatus: runningTaskStatus || prev.activeStatus,
-        running: Boolean(runningTaskId),
+        running: Boolean(resolvedRunningTaskId),
         processingYoutubeUrl,
       }))
     } catch (error) {
@@ -314,7 +408,8 @@ function App() {
   useEffect(() => {
     if (activeRoute !== 'history') return
     void loadHistory(historyState.query)
-  }, [activeRoute, loadHistory, historyState.query])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRoute, loadHistory])
 
   useEffect(() => {
     saveLocale(locale)
@@ -388,6 +483,7 @@ function App() {
     pushLog,
     refreshHistory: loadHistory,
     t,
+    onTaskStatus: handleTaskStatus,
   })
 
   useTaskAudio({
