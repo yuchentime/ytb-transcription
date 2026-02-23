@@ -1,4 +1,5 @@
 import type { QueueTaskRecord } from '../../electron/core/db/types'
+import type { TranslateFn } from '../app/i18n'
 import { QueueBoard } from '../components/QueueBoard'
 import { QueueControls } from '../components/QueueControls'
 
@@ -26,18 +27,21 @@ interface QueuePageActions {
 interface QueuePageProps {
   model: QueuePageModel
   actions: QueuePageActions
+  t: TranslateFn
 }
 
 export function QueuePage(props: QueuePageProps) {
+  const { t } = props
+
   return (
     <section className="panel main-panel">
       <div className="queue-page-header">
         <div>
-          <h1>任务队列</h1>
+          <h1>{t('queue.title')}</h1>
           <div className="queue-header-tags">
-            <span className="queue-header-tag time">更新时间：{props.model.updatedAt || '-'}</span>
-            <span className="queue-header-tag waiting">待处理：{props.model.waitingCount}</span>
-            <span className="queue-header-tag running">进行中：{props.model.runningCount}</span>
+            <span className="queue-header-tag time">{t('queue.updatedAt', { time: props.model.updatedAt || '-' })}</span>
+            <span className="queue-header-tag waiting">{t('queue.waitingCount', { count: props.model.waitingCount })}</span>
+            <span className="queue-header-tag running">{t('queue.runningCount', { count: props.model.runningCount })}</span>
           </div>
         </div>
         <QueueControls
@@ -50,7 +54,7 @@ export function QueuePage(props: QueuePageProps) {
       </div>
 
       {props.model.error ? <p className="error">{props.model.error}</p> : null}
-      {props.model.paused ? <p className="hint">队列已暂停，运行中任务会继续，新的 waiting 任务不会出队。</p> : null}
+      {props.model.paused ? <p className="hint">{t('queue.pausedHint')}</p> : null}
 
       <QueueBoard
         waiting={props.model.snapshot.waiting}

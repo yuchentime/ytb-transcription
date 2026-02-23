@@ -138,7 +138,7 @@ export function HistoryPage(props: HistoryPageProps) {
                       }
                       onClick={() => void props.actions.onResumeTask(item.id)}
                     >
-                      恢复
+                      {props.t('history.resume')}
                     </button>
 
                     <button

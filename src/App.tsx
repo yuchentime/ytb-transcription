@@ -944,18 +944,18 @@ function App() {
           </div>
           <div className="locale-switch" role="group" aria-label={t('app.localeSwitcherLabel')}>
             <button
-              className={`locale-btn ${locale === 'zh-CN' ? 'active' : ''}`}
-              onClick={() => setLocale('zh-CN')}
+              className={`locale-btn ${locale === 'zh' ? 'active' : ''}`}
+              onClick={() => setLocale('zh')}
               type="button"
             >
-              {t('app.locale.zhCN')}
+              {t('app.locale.zh')}
             </button>
             <button
-              className={`locale-btn ${locale === 'zh-TW' ? 'active' : ''}`}
-              onClick={() => setLocale('zh-TW')}
+              className={`locale-btn ${locale === 'en' ? 'active' : ''}`}
+              onClick={() => setLocale('en')}
               type="button"
             >
-              {t('app.locale.zhTW')}
+              {t('app.locale.en')}
             </button>
           </div>
         </div>
@@ -971,7 +971,7 @@ function App() {
 
           {activeRoute === 'task' && <TaskPage model={taskPageModel} actions={taskPageActions} t={t} />}
 
-          {activeRoute === 'queue' && <QueuePage model={queuePageModel} actions={queuePageActions} />}
+          {activeRoute === 'queue' && <QueuePage model={queuePageModel} actions={queuePageActions} t={t} />}
 
           {activeRoute === 'history' && (
             <HistoryPage model={historyPageModel} actions={historyPageActions} t={t} />

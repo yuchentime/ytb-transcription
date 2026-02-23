@@ -10,29 +10,7 @@ import type { TranslateFn } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
 import { Toast } from '../components/Toast'
 import { TRANSLATE_MODEL_OPTIONS, TTS_MODEL_OPTIONS } from '../app/utils'
-
-// Translation provider options
-const TRANSLATE_PROVIDERS: { value: TranslateProvider; label: string }[] = [
-  { value: 'minimax', label: 'MiniMax' },
-  { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'glm', label: 'GLM (智谱AI)' },
-  { value: 'kimi', label: 'Kimi (Moonshot)' },
-  { value: 'custom', label: '自定义(OpenAI-compatible)' },
-] 
-
-// TTS provider options
-const TTS_PROVIDERS: { value: TtsProvider; label: string }[] = [
-  { value: 'minimax', label: 'MiniMax' },
-  { value: 'piper', label: '本地语音合成（Piper）' },
-]
-
-// Default base URLs for providers
-const DEFAULT_BASE_URLS = {
-  minimax: 'https://api.minimaxi.com',
-  deepseek: 'https://api.deepseek.com',
-  glm: 'https://open.bigmodel.cn/api/paas',
-  kimi: 'https://api.moonshot.cn',
-} as const
+import { DEFAULT_BASE_URLS, TRANSLATE_PROVIDERS, TTS_PROVIDERS } from '../app/constants'
 
 interface SettingsPageModel {
   settings: AppSettings
@@ -249,7 +227,7 @@ export function SettingsPage(props: SettingsPageProps) {
             >
               {TRANSLATE_PROVIDERS.map((p) => (
                 <option key={p.value} value={p.value}>
-                  {p.label}
+                  {props.t(p.labelKey)}
                 </option>
               ))}
             </select>
@@ -391,7 +369,7 @@ export function SettingsPage(props: SettingsPageProps) {
             >
               {TTS_PROVIDERS.map((p) => (
                 <option key={p.value} value={p.value}>
-                  {p.label}
+                  {props.t(p.labelKey)}
                 </option>
               ))}
             </select>
@@ -489,8 +467,8 @@ export function SettingsPage(props: SettingsPageProps) {
           )}
           {settings.ttsProvider === 'piper' && (
             <div className="full">
-              <p className="hint">Piper 使用本地模型，不依赖云端 API Key/Base URL。</p>
-              <p className="hint">首次使用可一键安装 Piper 运行环境与默认音色模型（自动下载）。</p>
+              <p className="hint">{props.t('settings.piper.localModelHint')}</p>
+              <p className="hint">{props.t('settings.piper.installHint')}</p>
               <div className="actions">
                 <button
                   className="btn primary"
@@ -498,7 +476,11 @@ export function SettingsPage(props: SettingsPageProps) {
                   onClick={() => void handleInstallPiper(isPiperInstalled)}
                   disabled={installLoading}
                 >
-                  {installLoading ? '安装中...' : isPiperInstalled ? '重新安装Piper' : '一键安装Piper'}
+                  {installLoading
+                    ? props.t('settings.piperInstalling')
+                    : isPiperInstalled
+                      ? props.t('settings.piperReinstall')
+                      : props.t('settings.piperInstall')}
                 </button>
                 <button
                   className="btn"
@@ -506,11 +488,13 @@ export function SettingsPage(props: SettingsPageProps) {
                   onClick={() => void handleProbePiper()}
                   disabled={probeLoading}
                 >
-                  {probeLoading ? '检测中...' : '检测 Piper 就绪状态'}
+                  {probeLoading ? props.t('settings.piperProbing') : props.t('settings.piperProbe')}
                 </button>
-                {probeResult?.ok && <span className="settings-connectivity-status success">检测通过✅</span>}
+                {probeResult?.ok && (
+                  <span className="settings-connectivity-status success">{props.t('settings.piperProbeSuccess')}</span>
+                )}
                 {(probeError || (probeResult && !probeResult.ok)) && (
-                  <span className="settings-connectivity-status error">检测失败，请检查配置</span>
+                  <span className="settings-connectivity-status error">{props.t('settings.piperProbeFail')}</span>
                 )}
               </div>
               {installError && <p className="error">{installError}</p>}
