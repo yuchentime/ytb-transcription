@@ -112,6 +112,26 @@ export function isRunningStatus(status: TaskStatus | ''): boolean {
   return RUNNING_STATUSES.includes(status)
 }
 
+export function isValidYoutubeUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false
+    }
+
+    const hostname = parsed.hostname.toLowerCase()
+    return (
+      hostname === 'youtube.com' ||
+      hostname === 'www.youtube.com' ||
+      hostname === 'm.youtube.com' ||
+      hostname === 'youtu.be' ||
+      hostname === 'www.youtu.be'
+    )
+  } catch {
+    return false
+  }
+}
+
 export function isRecoverableTaskStatus(status: TaskStatus): boolean {
   return RECOVERABLE_STATUSES.includes(status)
 }

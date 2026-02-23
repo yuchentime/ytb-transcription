@@ -40,7 +40,14 @@ import {
   saveLocale,
   type AppLocale,
 } from './app/i18n'
-import { DEFAULT_SETTINGS, STAGES, formatDateTime, isRecoverableTaskStatus, isRunningStatus } from './app/utils'
+import {
+  DEFAULT_SETTINGS,
+  STAGES,
+  formatDateTime,
+  isRecoverableTaskStatus,
+  isRunningStatus,
+  isValidYoutubeUrl,
+} from './app/utils'
 import { useTaskAudio } from './app/hooks/useTaskAudio'
 import { useTaskEvents } from './app/hooks/useTaskEvents'
 import { SidebarMenu } from './components/SidebarMenu'
@@ -129,7 +136,8 @@ function App() {
     const voiceId = taskState.form.ttsVoiceId.trim()
     const isPiperTts = settingsState.data.ttsProvider === 'piper'
 
-    if (!taskState.form.youtubeUrl.trim()) {
+    const youtubeUrl = taskState.form.youtubeUrl.trim()
+    if (!youtubeUrl || !isValidYoutubeUrl(youtubeUrl)) {
       errors.push(t('validation.youtubeUrlRequired'))
     }
     if (!isPiperTts && !settingsState.data.ttsModelId.trim()) {

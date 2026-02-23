@@ -1605,43 +1605,113 @@ input:read-only {
   color: #334155;
 }
 
-/* Task Page - YouTube URL Input Styling */
+/* Task Page Layout */
+.task-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 400px;
+  transition: all 0.3s ease;
+}
+
+/* When no task is active, center everything vertically */
+.task-panel:not(.task-active) {
+  justify-content: center;
+  align-items: center;
+}
+
+.task-panel:not(.task-active) .task-title {
+  margin-bottom: 48px;
+  font-size: 32px;
+  font-weight: 600;
+}
+
+/* Task active state - normal layout */
+.task-panel.task-active {
+  justify-content: flex-start;
+}
+
+.task-panel.task-active .task-title {
+  display: none;
+}
+
+/* Input section - centered when idle */
 .task-input-section {
   display: flex;
   justify-content: center;
-  padding: 32px 0;
-  margin-bottom: 16px;
+  width: 100%;
+  padding: 0 24px;
+  margin-bottom: 32px;
+}
+
+.task-panel:not(.task-active) .task-input-section {
+  margin-bottom: 48px;
 }
 
 .youtube-url-label {
   width: 100%;
-  max-width: 800px;
+  max-width: 720px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 600;
   text-align: center;
+  color: #000;
 }
 
 .youtube-url-input {
   width: 100%;
-  height: 56px;
-  padding: 0 20px;
-  font-size: 16px;
+  height: 64px;
+  padding: 0 24px;
+  font-size: 17px;
   border: 2px solid #000;
-  border-radius: 8px;
+  border-radius: 12px;
   background: #fff;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: all 0.2s ease;
 }
 
 .youtube-url-input:focus {
   outline: none;
   border-color: #000;
-  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
 }
 
 .youtube-url-input::placeholder {
   color: #999;
-  font-size: 15px;
+  font-size: 16px;
+}
+
+/* Task actions - centered */
+.task-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  margin-bottom: 24px;
+}
+
+.btn-submit {
+  min-width: 160px;
+  height: 48px;
+  font-size: 16px;
+  font-weight: 500;
+  padding: 0 32px;
+}
+
+.btn-cancel {
+  min-width: 120px;
+  height: 48px;
+  font-size: 16px;
+}
+
+/* Results panel - more compact */
+.results-panel {
+  padding: 16px 24px;
+}
+
+/* Log section - limited height */
+.logbox {
+  max-height: 200px;
+  overflow-y: auto;
 }

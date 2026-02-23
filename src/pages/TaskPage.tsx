@@ -178,8 +178,6 @@ export function TaskPage(props: TaskPageProps) {
   const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false)
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
   const [copySuccess, setCopySuccess] = useState(false)
-  // State to track if user has attempted to submit (to show validation errors)
-  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false)
 
   // Check if content exists
   const hasTranscript = !!props.model.transcriptContent
@@ -214,10 +212,13 @@ export function TaskPage(props: TaskPageProps) {
     }
   }
 
+  // Check if task is active (running or has progress)
+  const isTaskActive = props.model.taskRunning || props.model.activeTaskId !== '' || props.model.overallProgress > 0
+
   return (
     <>
-      <section className="panel main-panel">
-        <h1>{props.t('task.title')}</h1>
+      <section className={`panel main-panel task-panel ${isTaskActive ? 'task-active' : ''}`}>
+        {!isTaskActive && <h1 className="task-title">{props.t('task.title')}</h1>}
 
         <div className="task-input-section">
           <label className="youtube-url-label">
@@ -237,20 +238,19 @@ export function TaskPage(props: TaskPageProps) {
           </label>
         </div>
 
-        {hasAttemptedSubmit && props.model.taskFormErrors.length > 0 && (
+        {/* {hasAttemptedSubmit && props.model.taskFormErrors.length > 0 && (
           <div className="error task-form-errors">
             {props.model.taskFormErrors.map((error) => (
               <p key={error}>{error}</p>
             ))}
           </div>
-        )}
+        )} */}
 
-        <div className="actions">
+        <div className="task-actions">
           <button
-            className="btn primary"
-            disabled={props.model.taskRunning}
+            className="btn primary btn-submit"
+            disabled={props.model.isStartDisabled}
             onClick={() => {
-              setHasAttemptedSubmit(true)
               if (!props.model.isStartDisabled) {
                 void props.actions.onStartTask()
               }
@@ -258,50 +258,54 @@ export function TaskPage(props: TaskPageProps) {
           >
             {props.t('task.start')}
           </button>
-          <button
-            className="btn"
-            disabled={!props.model.taskRunning}
-            onClick={() => void props.actions.onCancelTask()}
-          >
-            {props.t('task.cancel')}
-          </button>
+          {props.model.taskRunning && (
+            <button
+              className="btn btn-cancel"
+              onClick={() => void props.actions.onCancelTask()}
+            >
+              {props.t('task.cancel')}
+            </button>
+          )}
           {props.model.taskError && <span className="error">{props.model.taskError}</span>}
         </div>
 
-        <div className="status-bar">
-          <div className="status-meta">
-            <span>
-              {props.t('task.idLabel')}: <strong>{props.model.activeTaskId || props.t('common.hyphen')}</strong>
-            </span>
-            <span>
-              {props.t('task.statusLabel')}:{' '}
-              <strong>{translateTaskStatus(props.model.activeStatus, props.t)}</strong>
-            </span>
-            <span className={`processing-task-chip ${props.model.processingYoutubeUrl ? 'active' : ''}`}>
-              {props.t('task.processingTask')}:{' '}
-              <strong title={props.model.processingYoutubeUrl || props.t('common.hyphen')}>
-                {props.model.processingYoutubeUrl || props.t('common.hyphen')}
-              </strong>
-            </span>
-          </div>
-
-          {/* Hide progress when audio is ready */}
-          {!props.model.ttsAudioUrl && (
-            <div className="progress-wrap">
-              <span className="progress-current">
-                {translateTaskStatus(props.model.activeStatus || 'idle', props.t)}
-                {/* 在下载阶段显示下载速度 */}
-                {props.model.activeStatus === 'downloading' && props.model.downloadSpeed && (
-                  <span className="download-speed">{props.model.downloadSpeed}</span>
-                )}
+        {/* Only show status bar when task is active */}
+        {isTaskActive && (
+          <div className="status-bar">
+            <div className="status-meta">
+              <span>
+                {props.t('task.idLabel')}: <strong>{props.model.activeTaskId || props.t('common.hyphen')}</strong>
               </span>
-              <div className="progress-track">
-                <div className="progress-fill" style={{ width: `${props.model.overallProgress}%` }} />
-              </div>
-              <span className="progress-percent">{props.model.overallProgress}%</span>
+              <span>
+                {props.t('task.statusLabel')}:{' '}
+                <strong>{translateTaskStatus(props.model.activeStatus, props.t)}</strong>
+              </span>
+              <span className={`processing-task-chip ${props.model.processingYoutubeUrl ? 'active' : ''}`}>
+                {props.t('task.processingTask')}:{' '}
+                <strong title={props.model.processingYoutubeUrl || props.t('common.hyphen')}>
+                  {props.model.processingYoutubeUrl || props.t('common.hyphen')}
+                </strong>
+              </span>
             </div>
-          )}
-        </div>
+
+            {/* Hide progress when audio is ready */}
+            {!props.model.ttsAudioUrl && (
+              <div className="progress-wrap">
+                <span className="progress-current">
+                  {translateTaskStatus(props.model.activeStatus || 'idle', props.t)}
+                  {/* 在下载阶段显示下载速度 */}
+                  {props.model.activeStatus === 'downloading' && props.model.downloadSpeed && (
+                    <span className="download-speed">{props.model.downloadSpeed}</span>
+                  )}
+                </span>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: `${props.model.overallProgress}%` }} />
+                </div>
+                <span className="progress-percent">{props.model.overallProgress}%</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Final Output Section - only show when audio is ready */}
         {props.model.ttsAudioUrl && (

@@ -12,7 +12,7 @@ import type {
   TaskState,
 } from './state'
 import type { AppRoute } from './router'
-import { findLatestArtifactPath, isRunningStatus } from './utils'
+import { findLatestArtifactPath, isRunningStatus, isValidYoutubeUrl } from './utils'
 
 interface LocalizedDeps {
   t: TranslateFn
@@ -306,7 +306,14 @@ export async function startTaskAction(
 ): Promise<boolean> {
   const { taskForm, settings, ipcClient, setTaskState, setActiveRoute, refreshHistory, historyQuery, t } = params
 
-  if (!taskForm.youtubeUrl.trim()) return false
+  const youtubeUrl = taskForm.youtubeUrl.trim()
+  if (!youtubeUrl || !isValidYoutubeUrl(youtubeUrl)) {
+    setTaskState((prev) => ({
+      ...prev,
+      error: t('validation.youtubeUrlRequired'),
+    }))
+    return false
+  }
 
   setTaskState((prev) => ({
     ...prev,
@@ -327,7 +334,7 @@ export async function startTaskAction(
     }
 
     const createResult = await ipcClient.batch.create({
-      urls: [taskForm.youtubeUrl.trim()],
+      urls: [youtubeUrl],
       sharedConfig: {
         targetLanguage: taskForm.targetLanguage,
         whisperModel: settings.defaultWhisperModel,
