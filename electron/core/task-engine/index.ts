@@ -25,10 +25,27 @@ export function initTaskEngine(dbContext: DatabaseContext): TaskEngine {
     artifactsRoot,
     dataRoot,
   })
+  const taskEngine = engine
 
   const queueStore = new QueueStore(dbContext.taskQueueDao)
+  const preparedResumeTaskIds = new Set<string>()
+  const prepareResumeForTask = (taskId: string): void => {
+    if (preparedResumeTaskIds.has(taskId)) return
+    preparedResumeTaskIds.add(taskId)
+    try {
+      taskEngine.prepareResumeFromCheckpoint(taskId)
+    } catch {
+      // Ignore restore-preparation errors and let scheduler retry from queued state.
+    }
+  }
+
+  const interruptedRunningTasks = queueStore.getSnapshot(false).running.map((task) => task.taskId)
+  for (const taskId of interruptedRunningTasks) {
+    prepareResumeForTask(taskId)
+  }
+
   queueScheduler = new QueueScheduler({
-    taskEngine: engine,
+    taskEngine,
     taskDao: dbContext.taskDao,
     batchDao: dbContext.batchDao,
     queueStore,
@@ -42,7 +59,10 @@ export function initTaskEngine(dbContext: DatabaseContext): TaskEngine {
     batchDao: dbContext.batchDao,
     staleTimeoutMs: 10 * 60 * 1000,
   })
-  queueRecovery.recoverStaleRunningTasks()
+  const recovered = queueRecovery.recoverStaleRunningTasks()
+  for (const taskId of recovered.recoveredTaskIds) {
+    prepareResumeForTask(taskId)
+  }
 
   queueScheduler.start()
 

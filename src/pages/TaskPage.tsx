@@ -179,9 +179,15 @@ export function TaskPage(props: TaskPageProps) {
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
   const [copySuccess, setCopySuccess] = useState(false)
 
-  // Check if content exists
-  const hasTranscript = !!props.model.transcriptContent
-  const hasTranslation = !!props.model.translationContent
+  const isTaskInProgress =
+    props.model.taskRunning ||
+    (props.model.activeStatus !== '' &&
+      props.model.activeStatus !== 'completed' &&
+      props.model.activeStatus !== 'failed' &&
+      props.model.activeStatus !== 'canceled')
+  // Hide previous task results while a new task is in progress.
+  const hasTranscript = !isTaskInProgress && !!props.model.transcriptContent
+  const hasTranslation = !isTaskInProgress && !!props.model.translationContent
   const logsCopyLabel = copySuccess ? props.t('task.copyLogsDone') : props.t('task.copyLogs')
 
   const handleCopyLogs = async (): Promise<void> => {
