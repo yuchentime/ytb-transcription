@@ -65,7 +65,15 @@ function App() {
     runningTaskId: '',
     targetTaskId: '',
   })
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
+    open: boolean
+    targetTaskId: string
+  }>({
+    open: false,
+    targetTaskId: '',
+  })
   const resumeConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null)
+  const deleteConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null)
   const t = useMemo(() => createTranslator(locale), [locale])
 
   const filteredHistoryItems = useMemo(() => {
@@ -177,6 +185,29 @@ function App() {
     resolver?.(confirmed)
   }, [])
 
+  const requestDeleteConfirm = useCallback(async (targetTaskId: string): Promise<boolean> => {
+    return await new Promise<boolean>((resolve) => {
+      if (deleteConfirmResolverRef.current) {
+        deleteConfirmResolverRef.current(false)
+      }
+      deleteConfirmResolverRef.current = resolve
+      setDeleteConfirmDialog({
+        open: true,
+        targetTaskId,
+      })
+    })
+  }, [])
+
+  const resolveDeleteConfirm = useCallback((confirmed: boolean): void => {
+    const resolver = deleteConfirmResolverRef.current
+    deleteConfirmResolverRef.current = null
+    setDeleteConfirmDialog((prev) => ({
+      ...prev,
+      open: false,
+    }))
+    resolver?.(confirmed)
+  }, [])
+
   const stopPlayingAudio = useCallback(() => {
     setPlayingAudio((prev) => {
       if (prev?.url) {
@@ -230,6 +261,10 @@ function App() {
     return () => {
       if (playingAudioUrlRef.current) {
         URL.revokeObjectURL(playingAudioUrlRef.current)
+      }
+      if (deleteConfirmResolverRef.current) {
+        deleteConfirmResolverRef.current(false)
+        deleteConfirmResolverRef.current = null
       }
       if (resumeConfirmResolverRef.current) {
         resumeConfirmResolverRef.current(false)
@@ -363,12 +398,14 @@ function App() {
   }
 
   async function handleDeleteHistoryTask(taskId: string): Promise<void> {
+    const confirmed = await requestDeleteConfirm(taskId)
+    if (!confirmed) return
+
     await handleDeleteHistoryTaskAction({
       taskId,
       activeTaskId: taskState.activeTaskId,
       historyQuery: historyState.query,
-      confirmDelete: (targetTaskId) =>
-        window.confirm(t('history.deleteConfirm', { taskId: targetTaskId })),
+      confirmDelete: () => true,
       refreshHistory: loadHistory,
       ipcClient,
       setHistoryState,
@@ -712,6 +749,15 @@ function App() {
           {activeRoute === 'about' && <AboutPage t={t} />}
         </div>
       </div>
+      <ConfirmDialog
+        open={deleteConfirmDialog.open}
+        title={t('history.deleteConfirmTitle')}
+        description={t('history.deleteConfirm', { taskId: deleteConfirmDialog.targetTaskId })}
+        confirmLabel={t('history.delete')}
+        cancelLabel={t('common.cancel')}
+        onCancel={() => resolveDeleteConfirm(false)}
+        onConfirm={() => resolveDeleteConfirm(true)}
+      />
       <ConfirmDialog
         open={resumeConfirmDialog.open}
         title={t('history.resumeOverrideTitle')}

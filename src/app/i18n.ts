@@ -67,6 +67,7 @@ const zhCNMessages = {
   'history.pageInfo': '第 {page} / {totalPages} 页（共 {total} 条）',
   'history.prev': '上一页',
   'history.next': '下一页',
+  'history.deleteConfirmTitle': '确认删除任务？',
   'history.deleteConfirm': '确定删除任务 {taskId}？这会移除数据库记录和本地产物。',
   'history.resumeOverrideTitle': '切换正在执行的任务？',
   'history.resumeOverrideConfirm':
@@ -247,6 +248,7 @@ const zhTWMessages: Messages = {
   'history.pageInfo': '第 {page} / {totalPages} 頁（共 {total} 筆）',
   'history.prev': '上一頁',
   'history.next': '下一頁',
+  'history.deleteConfirmTitle': '確認刪除任務？',
   'history.deleteConfirm': '確定刪除任務 {taskId}？這會移除資料庫記錄和本地產物。',
   'history.resumeOverrideTitle': '切換正在執行的任務？',
   'history.resumeOverrideConfirm':
