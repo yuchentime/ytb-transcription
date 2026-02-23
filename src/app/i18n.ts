@@ -155,6 +155,7 @@ const zhMessages = {
   'settings.provider.piper': '本地语音合成（Piper）',
   'settings.piper.localModelHint': 'Piper 使用本地模型，不依赖云端 API Key/Base URL。',
   'settings.piper.installHint': '首次使用可一键安装 Piper 运行环境与默认音色模型（自动下载）。',
+  'settings.piperModelMismatchHint': '请重新安装 Piper 模型',
 
   'status.all': '全部',
   'status.idle': '空闲',
@@ -370,6 +371,7 @@ const enMessages: Messages = {
   'settings.provider.piper': 'Local TTS (Piper)',
   'settings.piper.localModelHint': 'Piper uses local models and does not rely on cloud API Key/Base URL.',
   'settings.piper.installHint': 'For first-time use, you can install the Piper runtime and default voice model with one click (auto-download).',
+  'settings.piperModelMismatchHint': 'Please reinstall the Piper model.',
 
   'status.all': 'All',
   'status.idle': 'Idle',

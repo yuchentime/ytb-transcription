@@ -214,6 +214,9 @@ export function TaskPage(props: TaskPageProps) {
 
   // Check if task is active (running or has progress)
   const isTaskActive = props.model.taskRunning || props.model.activeTaskId !== '' || props.model.overallProgress > 0
+  const shouldShowFinalOutput =
+    !!props.model.ttsAudioUrl && !props.model.taskRunning && props.model.activeStatus === 'completed'
+  const shouldShowProgress = isTaskActive && !shouldShowFinalOutput
 
   return (
     <>
@@ -289,7 +292,7 @@ export function TaskPage(props: TaskPageProps) {
             </div>
 
             {/* Hide progress when audio is ready */}
-            {!props.model.ttsAudioUrl && (
+            {shouldShowProgress && (
               <div className="progress-wrap">
                 <span className="progress-current">
                   {translateTaskStatus(props.model.activeStatus || 'idle', props.t)}
@@ -308,7 +311,7 @@ export function TaskPage(props: TaskPageProps) {
         )}
 
         {/* Final Output Section - only show when audio is ready */}
-        {props.model.ttsAudioUrl && (
+        {shouldShowFinalOutput && (
           <div className="output-final">
             <div className="output-final-header">
               <span className="output-final-badge">{props.t('task.finalOutput')}</span>

@@ -357,8 +357,8 @@ function pickVoiceByLanguage(voices: string[], language: AppSettings['defaultTar
   }
 
   const patternGroups: Record<AppSettings['defaultTargetLanguage'], RegExp[]> = {
-    zh: [/^zh_CN-[^-]+-medium$/i, /^zh_CN-/i, /^zh_/i],
-    en: [/^en_US-lessac-medium$/i, /^en_US-[^-]+-medium$/i, /^en_/i],
+    zh: [/^zh_CN-[^-]+-medium$/i, /^zh_CN-/i],
+    en: [/^en_US-lessac-medium$/i, /^en_US-[^-]+-medium$/i, /^en_US-/i],
     ja: [/^ja_JP-[^-]+-medium$/i, /^ja_JP-/i, /^ja_/i],
   }
 
@@ -381,7 +381,7 @@ async function ensureVoiceModel(params: {
 }): Promise<{ voice: string; modelPath: string; configPath: string }> {
   await fs.mkdir(params.modelsDir, { recursive: true })
   const configuredModelPath = params.settings.piperModelPath.trim()
-  if (configuredModelPath) {
+  if (!params.forceReinstall && configuredModelPath) {
     const configuredConfigPathRaw = params.settings.piperConfigPath.trim()
     const configuredConfigPath = configuredConfigPathRaw || `${configuredModelPath}.json`
     if ((await pathExists(configuredModelPath)) && (await pathExists(configuredConfigPath))) {
@@ -449,10 +449,7 @@ export async function installPiperRuntime(
   const { voice, modelPath, configPath } = await ensureVoiceModel({
     venvPython,
     modelsDir,
-    settings: {
-      ...input.settings,
-      defaultTargetLanguage: 'zh',
-    },
+    settings: input.settings,
     forceReinstall,
   })
 

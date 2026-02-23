@@ -17,6 +17,8 @@ import {
   type PiperProbeCheckResult,
   type PiperProbeResult,
   type ProbePiperPayload,
+  type ResolvePiperModelPayload,
+  type ResolvePiperModelResult,
   type TestTranslateConnectivityPayload,
   type TranslateConnectivityResult,
 } from '../channels'
@@ -58,6 +60,97 @@ function mergeSettingsWithPayload(
       ...((payloadSettings?.retryPolicy as Partial<AppSettings['retryPolicy']> | undefined) ?? {}),
     },
   }
+}
+
+function resolveAppLocale(locale?: string): 'zh' | 'en' {
+  return locale === 'en' ? 'en' : 'zh'
+}
+
+function formatPiperInstallSummary(input: {
+  locale: 'zh' | 'en'
+  releaseTag: string
+  voice: string
+}): string {
+  if (input.locale === 'en') {
+    return `Piper install completed (${input.releaseTag}, voice ${input.voice})`
+  }
+  return `Piper 安装完成（${input.releaseTag}，音色 ${input.voice}）`
+}
+
+function normalizePiperVoiceFromPath(modelPath: string): string {
+  const fileName = path.basename(modelPath)
+  return fileName.replace(/\.onnx$/i, '')
+}
+
+function pickPiperVoiceByLanguage(
+  voices: string[],
+  language: AppSettings['ttsTargetLanguage'],
+): string | null {
+  const patternGroups: Record<AppSettings['ttsTargetLanguage'], RegExp[]> = {
+    zh: [/^zh_CN-[^-]+-medium$/i, /^zh_CN-/i],
+    en: [/^en_US-lessac-medium$/i, /^en_US-[^-]+-medium$/i, /^en_US-/i],
+  }
+  for (const pattern of patternGroups[language]) {
+    const found = voices.find((voice) => pattern.test(voice))
+    if (found) return found
+  }
+  return null
+}
+
+async function resolveInstalledPiperModel(params: {
+  dataRoot: string
+  language: AppSettings['ttsTargetLanguage']
+  configuredModelPath: string
+}): Promise<ResolvePiperModelResult> {
+  const normalizeResult = (
+    found: boolean,
+    modelPath: string,
+    configPath: string,
+  ): ResolvePiperModelResult => ({
+    found,
+    language: params.language,
+    voice: modelPath ? normalizePiperVoiceFromPath(modelPath) : '',
+    modelPath,
+    configPath,
+  })
+
+  const configuredModelPath = params.configuredModelPath.trim()
+  if (configuredModelPath) {
+    const configuredConfigPath = `${configuredModelPath}.json`
+    const configuredVoice = normalizePiperVoiceFromPath(configuredModelPath)
+    const configuredMatched = pickPiperVoiceByLanguage([configuredVoice], params.language)
+    if (
+      configuredMatched &&
+      (await fileExists(configuredModelPath)) &&
+      (await fileExists(configuredConfigPath))
+    ) {
+      return normalizeResult(true, configuredModelPath, configuredConfigPath)
+    }
+  }
+
+  const modelsDir = path.join(params.dataRoot, 'piper', 'models')
+  const entries = await fs.readdir(modelsDir, { withFileTypes: true }).catch(() => [])
+  const installedModelPaths = entries
+    .filter((entry) => entry.isFile() && /\.onnx$/i.test(entry.name))
+    .map((entry) => path.join(modelsDir, entry.name))
+    .sort((left, right) => left.localeCompare(right))
+  const installedVoices = installedModelPaths.map((item) => normalizePiperVoiceFromPath(item))
+  const matchedVoice = pickPiperVoiceByLanguage(installedVoices, params.language)
+  if (!matchedVoice) {
+    return normalizeResult(false, '', '')
+  }
+
+  const modelPath = installedModelPaths.find(
+    (item) => normalizePiperVoiceFromPath(item) === matchedVoice,
+  )
+  if (!modelPath) {
+    return normalizeResult(false, '', '')
+  }
+  const configPath = `${modelPath}.json`
+  if (!(await fileExists(configPath))) {
+    return normalizeResult(false, '', '')
+  }
+  return normalizeResult(true, modelPath, configPath)
 }
 
 async function fileExists(targetPath: string): Promise<boolean> {
@@ -242,8 +335,13 @@ export function registerSystemHandlers(): void {
           piperConfigPath: installed.piperConfigPath,
         })
 
+        const locale = resolveAppLocale(payload.appLocale)
         return {
-          summary: `Piper 安装完成（${installed.releaseTag}，音色 ${installed.voice}）`,
+          summary: formatPiperInstallSummary({
+            locale,
+            releaseTag: installed.releaseTag,
+            voice: installed.voice,
+          }),
           releaseTag: installed.releaseTag,
           voice: installed.voice,
           piperExecutablePath: installed.piperExecutablePath,
@@ -257,6 +355,30 @@ export function registerSystemHandlers(): void {
       } finally {
         piperInstallInFlight = null
       }
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.systemResolvePiperModel,
+    async (_event, payload: ResolvePiperModelPayload): Promise<ResolvePiperModelResult> => {
+      if (!payload || (payload.language !== 'zh' && payload.language !== 'en')) {
+        throw new Error('language must be zh or en')
+      }
+      const { settingsDao, dbPath } = getDatabaseContext()
+      const settings = settingsDao.getSettings()
+      const dataRoot = path.dirname(dbPath)
+      const resolved = await resolveInstalledPiperModel({
+        dataRoot,
+        language: payload.language,
+        configuredModelPath: settings.piperModelPath,
+      })
+      if (resolved.found) {
+        settingsDao.upsertSettings({
+          piperModelPath: resolved.modelPath,
+          piperConfigPath: resolved.configPath,
+        })
+      }
+      return resolved
     },
   )
 

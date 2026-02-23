@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../../electron/core/db/types'
 import type {
   PiperInstallResult,
   PiperProbeResult,
+  ResolvePiperModelResult,
   TranslateConnectivityResult,
 } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
@@ -38,6 +39,7 @@ interface SettingsPageActions {
   onSave(): Promise<void>
   onProbePiper(settings: AppSettings): Promise<PiperProbeResult>
   onInstallPiper(settings: AppSettings, forceReinstall?: boolean): Promise<PiperInstallResult>
+  onResolvePiperModel(language: AppSettings['ttsTargetLanguage']): Promise<ResolvePiperModelResult>
   onTestTranslateConnectivity(settings: AppSettings): Promise<TranslateConnectivityResult>
   clearSaveSuccess(): void
   clearSaveError(): void
@@ -51,18 +53,17 @@ interface SettingsPageProps {
 
 export function SettingsPage(props: SettingsPageProps) {
   const { settings } = props.model
-  const { setSettings } = props.actions
+  const { setSettings, onResolvePiperModel } = props.actions
   const [probeLoading, setProbeLoading] = useState(false)
   const [probeResult, setProbeResult] = useState<PiperProbeResult | null>(null)
   const [probeError, setProbeError] = useState('')
   const [installLoading, setInstallLoading] = useState(false)
-  const [installResult, setInstallResult] = useState<PiperInstallResult | null>(null)
   const [installError, setInstallError] = useState('')
   const [installSuccessToastVisible, setInstallSuccessToastVisible] = useState(false)
   const [installErrorToastVisible, setInstallErrorToastVisible] = useState(false)
   const [translateTestLoading, setTranslateTestLoading] = useState(false)
   const [translateTestStatus, setTranslateTestStatus] = useState<'idle' | 'success' | 'error'>('idle')
-  const isPiperInstalled = Boolean(settings.piperModelPath.trim()) || probeResult?.ok === true || installResult !== null
+  const isPiperInstalled = Boolean(settings.piperModelPath.trim()) || probeResult?.ok === true
 
   useEffect(() => {
     setTranslateTestStatus('idle')
@@ -133,6 +134,57 @@ export function SettingsPage(props: SettingsPageProps) {
     }
   }
 
+  const matchesPiperTargetLanguage = (
+    modelPath: string,
+    targetLanguage: AppSettings['ttsTargetLanguage'],
+  ): boolean => {
+    const fileName = modelPath.trim().split(/[\\/]/).pop() ?? ''
+    const modelName = fileName.replace(/\.onnx$/i, '')
+    if (!modelName) return false
+    if (targetLanguage === 'zh') return /^zh_CN-/i.test(modelName)
+    if (targetLanguage === 'en') return /^en_US-/i.test(modelName)
+    return false
+  }
+
+  const piperModelMatchesTargetLanguage = matchesPiperTargetLanguage(
+    settings.piperModelPath,
+    settings.ttsTargetLanguage,
+  )
+
+  const syncPiperModelByTargetLanguage = useCallback(
+    async (targetLanguage: AppSettings['ttsTargetLanguage']): Promise<void> => {
+      try {
+        const resolved = await onResolvePiperModel(targetLanguage)
+        if (!resolved.found) return
+        setSettings((prev) => {
+          if (prev.ttsProvider !== 'piper' || prev.ttsTargetLanguage !== targetLanguage) {
+            return prev
+          }
+          if (
+            prev.piperModelPath === resolved.modelPath &&
+            prev.piperConfigPath === resolved.configPath
+          ) {
+            return prev
+          }
+          return {
+            ...prev,
+            piperModelPath: resolved.modelPath,
+            piperConfigPath: resolved.configPath,
+          }
+        })
+      } catch {
+        // ignore resolve failures and let mismatch hint guide user reinstall
+      }
+    },
+    [onResolvePiperModel, setSettings],
+  )
+
+  useEffect(() => {
+    if (settings.ttsProvider !== 'piper') return
+    if (piperModelMatchesTargetLanguage) return
+    void syncPiperModelByTargetLanguage(settings.ttsTargetLanguage)
+  }, [piperModelMatchesTargetLanguage, settings.ttsProvider, settings.ttsTargetLanguage, syncPiperModelByTargetLanguage])
+
   async function handleProbePiper(): Promise<void> {
     setProbeLoading(true)
     setProbeError('')
@@ -154,7 +206,6 @@ export function SettingsPage(props: SettingsPageProps) {
     setInstallErrorToastVisible(false)
     try {
       const result = await props.actions.onInstallPiper(settings, forceReinstall)
-      setInstallResult(result)
       const nextSettings: AppSettings = {
         ...settings,
         piperExecutablePath: result.piperExecutablePath,
@@ -172,7 +223,6 @@ export function SettingsPage(props: SettingsPageProps) {
       setProbeError('')
       setInstallSuccessToastVisible(true)
     } catch (error) {
-      setInstallResult(null)
       setInstallError(error instanceof Error ? error.message : String(error))
       setInstallErrorToastVisible(true)
     } finally {
@@ -434,30 +484,38 @@ export function SettingsPage(props: SettingsPageProps) {
           )}
 
           {/* TTS Target Language - controls voice preset filtering */}
-          {settings.ttsProvider !== 'piper' && (
-            <label>
-              {props.t('settings.ttsTargetLanguage')}
-              <select
-                value={settings.ttsTargetLanguage}
-                onChange={(event) => {
-                  const newTargetLanguage = event.target.value as 'zh' | 'en'
-                  // Filter voices by target language and auto-select first available
+          <label>
+            {props.t('settings.ttsTargetLanguage')}
+            <select
+              value={settings.ttsTargetLanguage}
+              onChange={(event) => {
+                const newTargetLanguage = event.target.value as 'zh' | 'en'
+                setSettings((prev) => {
+                  if (prev.ttsProvider === 'piper') {
+                    return {
+                      ...prev,
+                      ttsTargetLanguage: newTargetLanguage,
+                    }
+                  }
                   const filteredVoices = props.model.voiceProfiles.filter(
                     (voice) => voice.language === newTargetLanguage || voice.language === 'multi'
                   )
                   const firstVoiceId = filteredVoices[0]?.id ?? ''
-                  setSettings((prev) => ({
+                  return {
                     ...prev,
                     ttsTargetLanguage: newTargetLanguage,
                     ttsVoiceId: firstVoiceId,
-                  }))
-                }}
-              >
-                <option value="zh">{props.t('lang.zh')}</option>
-                <option value="en">English</option>
-              </select>
-            </label>
-          )}
+                  }
+                })
+                if (settings.ttsProvider === 'piper') {
+                  void syncPiperModelByTargetLanguage(newTargetLanguage)
+                }
+              }}
+            >
+              <option value="zh">{props.t('lang.zh')}</option>
+              <option value="en">English</option>
+            </select>
+          </label>
 
           {/* Voice Preset Panel */}
           {settings.ttsProvider !== 'piper' && (
@@ -498,6 +556,9 @@ export function SettingsPage(props: SettingsPageProps) {
             <div className="full">
               <p className="hint">{props.t('settings.piper.localModelHint')}</p>
               <p className="hint">{props.t('settings.piper.installHint')}</p>
+              {!piperModelMatchesTargetLanguage && (
+                <p className="error">{props.t('settings.piperModelMismatchHint')}</p>
+              )}
               <div className="actions">
                 <button
                   className="btn primary"
@@ -527,13 +588,6 @@ export function SettingsPage(props: SettingsPageProps) {
                 )}
               </div>
               {installError && <p className="error">{installError}</p>}
-              {installResult && (
-                <div className="hint">
-                  <p>{installResult.summary}</p>
-                  <p>Release: {installResult.releaseTag}</p>
-                  <p>Voice: {installResult.voice}</p>
-                </div>
-              )}
             </div>
           )}
         </div>

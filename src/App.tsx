@@ -4,6 +4,7 @@ import type { AppSettings, TaskStatus } from '../electron/core/db/types'
 import type {
   PiperInstallResult,
   PiperProbeResult,
+  ResolvePiperModelResult,
   TaskStatusEventPayload,
   TranslateConnectivityResult,
 } from '../electron/ipc/channels'
@@ -522,14 +523,24 @@ function App() {
   }
 
   async function installPiper(settings: AppSettings, forceReinstall = false): Promise<PiperInstallResult> {
+    const piperTargetLanguage: AppSettings['defaultTargetLanguage'] =
+      settings.ttsTargetLanguage === 'en' ? 'en' : 'zh'
     return await ipcClient.system.installPiper({
       settings: {
         ...settings,
-        defaultTargetLanguage: taskState.form.targetLanguage,
+        defaultTargetLanguage: piperTargetLanguage,
       },
       forceReinstall,
+      appLocale: locale,
     })
   }
+
+  const resolvePiperModel = useCallback(
+    async (language: AppSettings['ttsTargetLanguage']): Promise<ResolvePiperModelResult> => {
+      return await ipcClient.system.resolvePiperModel({ language })
+    },
+    [],
+  )
 
   async function testTranslateConnectivity(settings: AppSettings): Promise<TranslateConnectivityResult> {
     return await ipcClient.system.testTranslateConnectivity({
@@ -766,6 +777,7 @@ function App() {
     onSave: saveSettings,
     onProbePiper: probePiper,
     onInstallPiper: installPiper,
+    onResolvePiperModel: resolvePiperModel,
     onTestTranslateConnectivity: testTranslateConnectivity,
     clearSaveSuccess: () =>
       setSettingsState((prev) => ({

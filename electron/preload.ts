@@ -61,6 +61,7 @@ const api: RendererAPI = {
     exportTaskArtifacts: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemExportTaskArtifacts, payload),
     probePiper: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemProbePiper, payload),
     installPiper: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemInstallPiper, payload),
+    resolvePiperModel: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemResolvePiperModel, payload),
     testTranslateConnectivity: (payload) =>
       ipcRenderer.invoke(IPC_CHANNELS.systemTestTranslateConnectivity, payload),
   },

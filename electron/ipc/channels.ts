@@ -39,6 +39,7 @@ export const IPC_CHANNELS = {
   systemExportTaskArtifacts: 'system:exportTaskArtifacts',
   systemProbePiper: 'system:probePiper',
   systemInstallPiper: 'system:installPiper',
+  systemResolvePiperModel: 'system:resolvePiperModel',
   systemTestTranslateConnectivity: 'system:testTranslateConnectivity',
   fileReadAudio: 'file:readAudio',
   fileReadText: 'file:readText',
@@ -141,6 +142,19 @@ export interface ProbePiperPayload {
 export interface InstallPiperPayload {
   settings?: Partial<AppSettings>
   forceReinstall?: boolean
+  appLocale?: 'zh' | 'en'
+}
+
+export interface ResolvePiperModelPayload {
+  language: AppSettings['ttsTargetLanguage']
+}
+
+export interface ResolvePiperModelResult {
+  found: boolean
+  language: AppSettings['ttsTargetLanguage']
+  voice: string
+  modelPath: string
+  configPath: string
 }
 
 export interface TestTranslateConnectivityPayload {
@@ -354,6 +368,7 @@ export interface RendererAPI {
     exportTaskArtifacts(payload: ExportTaskArtifactsPayload): Promise<ExportTaskArtifactsResult>
     probePiper(payload?: ProbePiperPayload): Promise<PiperProbeResult>
     installPiper(payload?: InstallPiperPayload): Promise<PiperInstallResult>
+    resolvePiperModel(payload: ResolvePiperModelPayload): Promise<ResolvePiperModelResult>
     testTranslateConnectivity(payload?: TestTranslateConnectivityPayload): Promise<TranslateConnectivityResult>
   }
   file: {
