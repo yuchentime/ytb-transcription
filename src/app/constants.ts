@@ -1,7 +1,8 @@
 import type { TranslateProvider, TtsProvider } from '../../electron/core/db/types'
+import type { TranslateKey } from './i18n'
 
 // Translation provider options - label is i18n key
-export const TRANSLATE_PROVIDERS: { value: TranslateProvider; labelKey: string }[] = [
+export const TRANSLATE_PROVIDERS: { value: TranslateProvider; labelKey: TranslateKey }[] = [
   { value: 'minimax', labelKey: 'settings.provider.minimax' },
   { value: 'deepseek', labelKey: 'settings.provider.deepseek' },
   { value: 'glm', labelKey: 'settings.provider.glm' },
@@ -10,7 +11,7 @@ export const TRANSLATE_PROVIDERS: { value: TranslateProvider; labelKey: string }
 ]
 
 // TTS provider options - label is i18n key
-export const TTS_PROVIDERS: { value: TtsProvider; labelKey: string }[] = [
+export const TTS_PROVIDERS: { value: TtsProvider; labelKey: TranslateKey }[] = [
   { value: 'minimax', labelKey: 'settings.provider.minimax' },
   { value: 'piper', labelKey: 'settings.provider.piper' },
 ]

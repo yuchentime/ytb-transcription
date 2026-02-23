@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
+import type { TaskRuntimeEventPayload } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
-import { translateTaskStatus } from '../app/i18n'
+import { translateTaskStatus, translateRuntimeStatus } from '../app/i18n'
 
 interface TaskFormState {
   youtubeUrl: string
@@ -44,6 +45,10 @@ interface TaskPageModel {
   /** 当前下载速度（仅在 downloading 阶段有效） */
   downloadSpeed?: string
   processingYoutubeUrl: string
+  /** 运行环境准备弹窗可见性 */
+  isRuntimeModalVisible: boolean
+  /** 运行环境组件状态映射 */
+  runtimeComponentStatus: Record<string, TaskRuntimeEventPayload>
 }
 
 interface TaskPageActions {
@@ -118,6 +123,103 @@ function CheckIcon({ className }: { className?: string }) {
   )
 }
 
+// Loader Icon Component
+function LoaderIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  )
+}
+
+// Runtime Preparing Modal Component
+interface RuntimePreparingModalProps {
+  isVisible: boolean
+  componentStatus: Record<string, TaskRuntimeEventPayload>
+  t: TranslateFn
+}
+
+function RuntimePreparingModal({ isVisible, componentStatus, t }: RuntimePreparingModalProps) {
+  if (!isVisible) return null
+
+  const components = [
+    { key: 'yt-dlp', label: t('runtime.component.yt-dlp') },
+    { key: 'ffmpeg', label: t('runtime.component.ffmpeg') },
+    { key: 'python', label: t('runtime.component.python') },
+    { key: 'whisper', label: t('runtime.component.whisper') },
+    { key: 'deno', label: t('runtime.component.deno') },
+  ] as const
+
+  const getStatusIcon = (status: TaskRuntimeEventPayload['status']) => {
+    switch (status) {
+      case 'ready':
+        return <CheckIcon className="status-icon ready" />
+      case 'error':
+        return <span className="status-icon error">!</span>
+      case 'downloading':
+      case 'installing':
+      case 'checking':
+      default:
+        return <LoaderIcon className="status-icon loading" />
+    }
+  }
+
+  const getStatusClass = (status: TaskRuntimeEventPayload['status']) => {
+    switch (status) {
+      case 'ready':
+        return 'ready'
+      case 'error':
+        return 'error'
+      case 'downloading':
+      case 'installing':
+        return 'active'
+      case 'checking':
+      default:
+        return 'pending'
+    }
+  }
+
+  return (
+    <div className="runtime-modal-overlay">
+      <div className="runtime-modal">
+        <div className="runtime-modal-header">
+          <LoaderIcon className="runtime-modal-spinner" />
+          <h3>{t('runtime.preparingTitle')}</h3>
+        </div>
+        <p className="runtime-modal-message">{t('runtime.preparingMessage')}</p>
+        <div className="runtime-components-list">
+          {components.map(({ key, label }) => {
+            const status = componentStatus[key]?.status ?? 'checking'
+            const message = componentStatus[key]?.message ?? ''
+            return (
+              <div key={key} className={`runtime-component-item ${getStatusClass(status)}`}>
+                <div className="runtime-component-header">
+                  {getStatusIcon(status)}
+                  <span className="runtime-component-name">{label}</span>
+                  <span className="runtime-component-status">{translateRuntimeStatus(status, t)}</span>
+                </div>
+                {message && status !== 'ready' && (
+                  <p className="runtime-component-message">{message}</p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function CopyIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -179,6 +281,12 @@ export function TaskPage(props: TaskPageProps) {
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
   const [copySuccess, setCopySuccess] = useState(false)
 
+  // Runtime modal state - track when any component is actively downloading/installing
+  const hasActiveRuntimeWork = Object.values(props.model.runtimeComponentStatus).some(
+    (event) => event.status === 'downloading' || event.status === 'installing' || event.status === 'checking'
+  )
+  const shouldShowRuntimeModal = props.model.isRuntimeModalVisible && hasActiveRuntimeWork
+
   const isTaskInProgress =
     props.model.taskRunning ||
     (props.model.activeStatus !== '' &&
@@ -226,6 +334,13 @@ export function TaskPage(props: TaskPageProps) {
 
   return (
     <>
+      {/* Runtime Preparing Modal */}
+      <RuntimePreparingModal
+        isVisible={shouldShowRuntimeModal}
+        componentStatus={props.model.runtimeComponentStatus}
+        t={props.t}
+      />
+
       <section className={`panel main-panel task-panel ${isTaskActive ? 'task-active' : ''}`}>
         {!isTaskActive && <h1 className="task-title">{props.t('task.title')}</h1>}
 

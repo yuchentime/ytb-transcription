@@ -1715,3 +1715,174 @@ input:read-only {
   max-height: 200px;
   overflow-y: auto;
 }
+
+/* Runtime Preparing Modal */
+.runtime-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  animation: runtimeOverlayIn 0.2s ease-out;
+}
+
+.runtime-modal {
+  width: min(480px, 100%);
+  max-height: min(600px, calc(100vh - 40px));
+  overflow-y: auto;
+  border-radius: 12px;
+  padding: 24px;
+  background: #fff;
+  border: 2px solid #000;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
+  animation: runtimeModalIn 0.25s ease-out;
+}
+
+.runtime-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.runtime-modal-spinner {
+  animation: spin 1.5s linear infinite;
+  color: #000;
+}
+
+.runtime-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #000;
+}
+
+.runtime-modal-message {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: #666;
+  line-height: 1.5;
+}
+
+.runtime-components-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.runtime-component-item {
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  background: #fafafa;
+  transition: all 0.2s ease;
+}
+
+.runtime-component-item.ready {
+  border-color: #22c55e;
+  background: #f0fdf4;
+}
+
+.runtime-component-item.error {
+  border-color: #dc2626;
+  background: #fef2f2;
+}
+
+.runtime-component-item.active {
+  border-color: #000;
+  background: #fff;
+}
+
+.runtime-component-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-icon.ready {
+  color: #22c55e;
+}
+
+.status-icon.error {
+  color: #dc2626;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.status-icon.loading {
+  animation: spin 1.5s linear infinite;
+  color: #666;
+}
+
+.runtime-component-name {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  color: #000;
+}
+
+.runtime-component-status {
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+}
+
+.runtime-component-message {
+  margin: 8px 0 0 30px;
+  font-size: 11px;
+  color: #888;
+  line-height: 1.4;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes runtimeOverlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes runtimeModalIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .runtime-modal {
+    padding: 20px;
+  }
+
+  .runtime-modal-header h3 {
+    font-size: 16px;
+  }
+}

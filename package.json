@@ -1,7 +1,7 @@
 {
-  "name": "ytb-transcription",
+  "name": "YTB2Voice",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,6 +28,7 @@
     "@vitejs/plugin-react": "^4.2.1",
     "electron": "^30.0.1",
     "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9",
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
@@ -38,8 +39,9 @@
   },
   "main": "dist-electron/main.js",
   "build": {
-    "appId": "com.yourcompany.ytb-transcription",
-    "productName": "YouTube Transcription",
+    "appId": "com.ytb2voice.app",
+    "productName": "YTB2Voice",
+    "icon": "build/icons/icon.icns",
     "directories": {
       "output": "release"
     },
@@ -49,22 +51,28 @@
     ],
     "mac": {
       "category": "public.app-category.utilities",
+      "icon": "build/icons/icon.icns",
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
-        },
-        {
-          "target": "dmg",
-          "arch": ["x64"]
+          "arch": [
+            "arm64"
+          ]
         }
-      ]
+      ],
+      "artifactName": "${productName}-${version}-Apple-Silicon.${ext}"
+    },
+    "dmg": {
+      "title": "${productName} Installer",
+      "icon": "build/icons/icon.icns"
     },
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     }

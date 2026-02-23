@@ -32,7 +32,55 @@ function getYtDlpDownloadUrl(): string {
   if (process.platform === 'win32') {
     return 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe'
   }
+  if (process.platform === 'darwin') {
+    return 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos'
+  }
+  if (process.platform === 'linux') {
+    return 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux'
+  }
   return 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp'
+}
+
+async function isLegacyPythonYtDlp(filePath: string): Promise<boolean> {
+  let handle: Awaited<ReturnType<typeof fs.open>> | null = null
+  try {
+    handle = await fs.open(filePath, 'r')
+    const buffer = Buffer.alloc(256)
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+    const content = buffer.subarray(0, bytesRead).toString('utf8')
+    const firstLine = content.split(/\r?\n/, 1)[0] ?? ''
+    return firstLine.startsWith('#!') && /python/i.test(firstLine)
+  } catch {
+    return false
+  } finally {
+    if (handle) {
+      await handle.close()
+    }
+  }
+}
+
+async function probeYtDlp(ytDlpPath: string): Promise<{ ok: boolean; errorMessage?: string }> {
+  try {
+    await runCommand({
+      command: ytDlpPath,
+      args: ['--version'],
+      timeoutMs: 15_000,
+    })
+    return { ok: true }
+  } catch (error) {
+    return {
+      ok: false,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+async function removePathIfExists(targetPath: string): Promise<void> {
+  try {
+    await fs.rm(targetPath, { recursive: true, force: true })
+  } catch {
+    // ignore removal errors and let follow-up operations report concrete failures
+  }
 }
 
 async function ensureYtDlp(toolsDir: string, options?: EnsureToolchainOptions): Promise<string> {
@@ -44,6 +92,31 @@ async function ensureYtDlp(toolsDir: string, options?: EnsureToolchainOptions): 
   const ytDlpPath = path.join(toolsDir, getYtDlpBinaryName())
   try {
     await fs.access(ytDlpPath)
+    const legacyPythonWrapper = await isLegacyPythonYtDlp(ytDlpPath)
+    if (legacyPythonWrapper) {
+      options?.reporter?.({
+        component: 'yt-dlp',
+        status: 'installing',
+        message: 'Detected legacy Python-based yt-dlp wrapper, upgrading to standalone binary',
+      })
+      await removePathIfExists(ytDlpPath)
+      throw new Error('legacy yt-dlp wrapper detected')
+    }
+
+    const probe = await probeYtDlp(ytDlpPath)
+    if (!probe.ok) {
+      const unsupportedPython = /unsupported version of python/i.test(probe.errorMessage ?? '')
+      options?.reporter?.({
+        component: 'yt-dlp',
+        status: 'installing',
+        message: unsupportedPython
+          ? 'Cached yt-dlp depends on unsupported Python, reinstalling standalone binary'
+          : 'Cached yt-dlp is not runnable, reinstalling',
+      })
+      await removePathIfExists(ytDlpPath)
+      throw new Error('cached yt-dlp not runnable')
+    }
+
     options?.reporter?.({
       component: 'yt-dlp',
       status: 'ready',
@@ -73,6 +146,18 @@ async function ensureYtDlp(toolsDir: string, options?: EnsureToolchainOptions): 
   if (process.platform !== 'win32') {
     await fs.chmod(ytDlpPath, 0o755)
   }
+
+  const probe = await probeYtDlp(ytDlpPath)
+  if (!probe.ok) {
+    await removePathIfExists(ytDlpPath)
+    options?.reporter?.({
+      component: 'yt-dlp',
+      status: 'error',
+      message: `yt-dlp verification failed after download`,
+    })
+    throw new Error(`yt-dlp downloaded but failed to run: ${probe.errorMessage ?? 'unknown error'}`)
+  }
+
   options?.reporter?.({
     component: 'yt-dlp',
     status: 'ready',
@@ -320,21 +405,10 @@ async function ensureFfmpeg(toolsDir: string, options?: EnsureToolchainOptions):
   return ffmpegPath
 }
 
-async function findPython(): Promise<string> {
-  const candidates = process.platform === 'win32' ? ['python', 'py'] : ['python3', 'python']
-  for (const candidate of candidates) {
-    try {
-      await runCommand({
-        command: candidate,
-        args: ['--version'],
-      })
-      return candidate
-    } catch {
-      // try next
-    }
-  }
-  throw new Error('Python is required for whisper but was not found')
-}
+const MIN_SUPPORTED_PYTHON = {
+  major: 3,
+  minor: 10,
+} as const
 
 interface GitHubReleaseAsset {
   name: string
@@ -429,29 +503,70 @@ async function findPortablePythonBinary(portableDir: string): Promise<string | n
   return null
 }
 
+async function getPythonVersion(pythonPath: string): Promise<{ major: number; minor: number; patch: number } | null> {
+  const lines: string[] = []
+  try {
+    await runCommand({
+      command: pythonPath,
+      args: ['-c', 'import sys;print(f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}")'],
+      timeoutMs: 15_000,
+      onStdoutLine: (line) => lines.push(line),
+    })
+  } catch {
+    return null
+  }
+
+  const raw = lines[lines.length - 1] ?? ''
+  const match = raw.match(/^(\d+)\.(\d+)\.(\d+)$/)
+  if (!match) return null
+
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+  }
+}
+
+function isPythonVersionSupported(version: { major: number; minor: number }): boolean {
+  if (version.major > MIN_SUPPORTED_PYTHON.major) return true
+  if (version.major < MIN_SUPPORTED_PYTHON.major) return false
+  return version.minor >= MIN_SUPPORTED_PYTHON.minor
+}
+
 async function installPortablePython(toolsDir: string, options?: EnsureToolchainOptions): Promise<string> {
   options?.reporter?.({
     component: 'python',
     status: 'checking',
-    message: 'Checking portable Python',
+    message: 'Checking managed Python runtime',
   })
   const portableDir = path.join(toolsDir, 'python-portable')
   await fs.mkdir(portableDir, { recursive: true })
 
   const existing = await findPortablePythonBinary(portableDir)
   if (existing) {
+    const version = await getPythonVersion(existing)
+    if (version && isPythonVersionSupported(version)) {
+      options?.reporter?.({
+        component: 'python',
+        status: 'ready',
+        message: `Using cached managed Python: ${existing} (${version.major}.${version.minor}.${version.patch})`,
+      })
+      return existing
+    }
+
     options?.reporter?.({
       component: 'python',
-      status: 'ready',
-      message: `Using cached portable Python: ${existing}`,
+      status: 'installing',
+      message: 'Cached managed Python is missing or unsupported, reinstalling',
     })
-    return existing
+    await fs.rm(portableDir, { recursive: true, force: true })
+    await fs.mkdir(portableDir, { recursive: true })
   }
 
   options?.reporter?.({
     component: 'python',
     status: 'downloading',
-    message: 'Downloading portable Python runtime',
+    message: 'Downloading managed Python runtime',
   })
   const downloadUrl = await resolvePortablePythonAssetUrl()
   const archivePath = path.join(toolsDir, 'python-portable.tar.gz')
@@ -476,10 +591,23 @@ async function installPortablePython(toolsDir: string, options?: EnsureToolchain
   if (process.platform !== 'win32') {
     await fs.chmod(installed, 0o755)
   }
+
+  const version = await getPythonVersion(installed)
+  if (!version || !isPythonVersionSupported(version)) {
+    options?.reporter?.({
+      component: 'python',
+      status: 'error',
+      message: 'Managed Python version is unsupported after install',
+    })
+    throw new Error(
+      `Managed Python must be >= ${MIN_SUPPORTED_PYTHON.major}.${MIN_SUPPORTED_PYTHON.minor}, got ${version ? `${version.major}.${version.minor}.${version.patch}` : 'unknown'}`,
+    )
+  }
+
   options?.reporter?.({
     component: 'python',
     status: 'ready',
-    message: `Portable Python installed: ${installed}`,
+    message: `Managed Python installed: ${installed} (${version.major}.${version.minor}.${version.patch})`,
   })
   return installed
 }
@@ -488,24 +616,9 @@ async function findOrInstallPython(toolsDir: string, options?: EnsureToolchainOp
   options?.reporter?.({
     component: 'python',
     status: 'checking',
-    message: 'Checking system Python runtime',
+    message: 'Preparing managed Python runtime',
   })
-  try {
-    const systemPython = await findPython()
-    options?.reporter?.({
-      component: 'python',
-      status: 'ready',
-      message: `Using system Python: ${systemPython}`,
-    })
-    return systemPython
-  } catch {
-    options?.reporter?.({
-      component: 'python',
-      status: 'installing',
-      message: 'System Python not found, switching to portable Python',
-    })
-    return await installPortablePython(toolsDir, options)
-  }
+  return await installPortablePython(toolsDir, options)
 }
 
 function getVenvPythonPath(venvDir: string): string {
@@ -527,10 +640,39 @@ async function ensureWhisperInstalled(
   })
   const venvDir = path.join(toolsDir, 'py-whisper')
   const venvPython = getVenvPythonPath(venvDir)
+  const bootstrapMarkerPath = path.join(venvDir, '.bootstrap-python-path')
+  let shouldCreateVenv = false
 
   try {
     await fs.access(venvPython)
   } catch {
+    shouldCreateVenv = true
+  }
+
+  if (!shouldCreateVenv) {
+    try {
+      const marker = (await fs.readFile(bootstrapMarkerPath, 'utf8')).trim()
+      if (marker !== bootstrapPython) {
+        options?.reporter?.({
+          component: 'whisper',
+          status: 'installing',
+          message: 'Refreshing whisper venv to use managed Python runtime',
+        })
+        await fs.rm(venvDir, { recursive: true, force: true })
+        shouldCreateVenv = true
+      }
+    } catch {
+      options?.reporter?.({
+        component: 'whisper',
+        status: 'installing',
+        message: 'Refreshing whisper venv to managed runtime',
+      })
+      await fs.rm(venvDir, { recursive: true, force: true })
+      shouldCreateVenv = true
+    }
+  }
+
+  if (shouldCreateVenv) {
     options?.reporter?.({
       component: 'whisper',
       status: 'installing',
@@ -540,6 +682,7 @@ async function ensureWhisperInstalled(
       command: bootstrapPython,
       args: ['-m', 'venv', venvDir],
     })
+    await fs.writeFile(bootstrapMarkerPath, bootstrapPython, 'utf8')
   }
 
   let openaiWhisperInstalled = false

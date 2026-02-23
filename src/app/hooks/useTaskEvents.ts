@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import type { RendererAPI, TaskStatusEventPayload } from '../../../electron/ipc/channels'
+import type { RendererAPI, TaskRuntimeEventPayload, TaskStatusEventPayload } from '../../../electron/ipc/channels'
 import type { TranslateFn } from '../i18n'
 import { translateTaskStatus } from '../i18n'
 import { loadTaskContentAction } from '../actions'
@@ -188,6 +188,31 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       void refreshSegmentsAndRecovery(payload.taskId)
     })
 
+    // Handle runtime events - show modal when components are being prepared
+    const offRuntime = ipcClient.task.onRuntime((payload) => {
+      if (payload.taskId !== activeTaskId && activeTaskId) return
+      setTaskState((prev) => {
+        // Update component status
+        const updatedStatus: Record<string, TaskRuntimeEventPayload> = {
+          ...prev.runtimeComponentStatus,
+          [payload.component]: payload,
+        }
+
+        // Determine if modal should be visible
+        // Show modal if any component is in checking/downloading/installing state
+        const hasActiveWork = Object.values(updatedStatus).some(
+          (event) => event.status === 'checking' || event.status === 'downloading' || event.status === 'installing'
+        )
+
+        return {
+          ...prev,
+          runtimeComponentStatus: updatedStatus,
+          // Show modal when there's active work and we're in early stages
+          isRuntimeModalVisible: hasActiveWork,
+        }
+      })
+    })
+
     return () => {
       if (historyRefreshTimer) {
         clearTimeout(historyRefreshTimer)
@@ -200,6 +225,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       offLog()
       offCompleted()
       offFailed()
+      offRuntime()
     }
   }, [activeTaskId, historyQuery, ipcClient, onTaskStatus, pushLog, refreshHistory, setTaskState, t])
 }

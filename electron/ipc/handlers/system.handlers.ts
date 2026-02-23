@@ -275,7 +275,7 @@ export function registerSystemHandlers(): void {
 
       const timestamp = new Date().toISOString().replace(/[.:]/g, '-')
       const taskLabel = sanitizeFileNameSegment(task.youtubeTitle ?? '') || payload.taskId
-      const exportDir = path.join(app.getPath('downloads'), 'ytb-transcription-exports', `${taskLabel}-${timestamp}`)
+      const exportDir = path.join(app.getPath('downloads'), 'YTB2Voice-exports', `${taskLabel}-${timestamp}`)
       await fs.mkdir(exportDir, { recursive: true })
 
       const exportedFiles: string[] = []

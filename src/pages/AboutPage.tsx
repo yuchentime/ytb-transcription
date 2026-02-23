@@ -11,7 +11,7 @@ export function AboutPage(props: AboutPageProps) {
       
       <div className="about-content">
         <div className="about-avatar">
-          <img src="/avatar.jpg" alt="avatar" />
+          <img src="./avatar.jpg" alt="avatar" />
         </div>
         
         <div className="about-info">

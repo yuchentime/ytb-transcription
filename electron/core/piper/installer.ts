@@ -8,7 +8,7 @@ const PYTHON_STANDALONE_RELEASE_API =
   'https://api.github.com/repos/indygreg/python-build-standalone/releases/latest'
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
-  'User-Agent': 'ytb-transcription',
+  'User-Agent': 'YTB2Voice',
 } as const
 
 interface GitHubReleaseAsset {

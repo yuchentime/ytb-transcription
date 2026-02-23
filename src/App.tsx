@@ -831,6 +831,8 @@ function App() {
     translationContent: taskState.translationContent,
     downloadSpeed: taskState.downloadSpeed,
     processingYoutubeUrl: taskState.processingYoutubeUrl,
+    isRuntimeModalVisible: taskState.isRuntimeModalVisible,
+    runtimeComponentStatus: taskState.runtimeComponentStatus,
   }
   const taskPageActions = {
     setTaskForm: setTaskFormData,

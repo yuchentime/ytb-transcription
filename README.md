@@ -1,4 +1,4 @@
-# ytb-transcription
+# YTB2Voice
 
 本项目是一个桌面端工具（Electron + React + TypeScript），用于把 YouTube 视频处理成可播放、可下载的目标语言语音。
 

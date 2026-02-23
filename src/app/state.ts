@@ -6,6 +6,7 @@ import type {
   TaskStatus,
   VoiceProfile,
 } from '../../electron/core/db/types'
+import type { TaskRuntimeEventPayload } from '../../electron/ipc/channels'
 import { DEFAULT_SETTINGS } from './utils'
 
 export interface TaskFormState {
@@ -66,6 +67,10 @@ export interface TaskState {
   downloadSpeed?: string
   /** 当前处理中任务的 YouTube 链接 */
   processingYoutubeUrl: string
+  /** 运行环境准备弹窗是否可见 */
+  isRuntimeModalVisible: boolean
+  /** 运行环境组件状态映射 */
+  runtimeComponentStatus: Record<string, TaskRuntimeEventPayload>
 }
 
 export interface HistoryState {
@@ -116,6 +121,8 @@ export function createInitialTaskState(): TaskState {
     transcriptContent: undefined,
     translationContent: undefined,
     processingYoutubeUrl: '',
+    isRuntimeModalVisible: false,
+    runtimeComponentStatus: {},
   }
 }
 

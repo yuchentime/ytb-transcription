@@ -176,6 +176,15 @@ const zhMessages = {
   'runtime.ready': '就绪',
   'runtime.error': '错误',
 
+  'runtime.preparingTitle': '正在准备运行环境',
+  'runtime.preparingMessage': '首次使用需要下载必要的运行环境资源，请稍候...',
+  'runtime.component.yt-dlp': '视频下载器',
+  'runtime.component.ffmpeg': '音频处理',
+  'runtime.component.python': 'Python 运行时',
+  'runtime.component.whisper': '语音转录',
+  'runtime.component.deno': 'Deno 运行时',
+  'runtime.component.engine': '任务引擎',
+
   'lang.all': '全部',
   'lang.zh': '中文',
   'lang.zhCN': '简体中文',
@@ -217,7 +226,7 @@ const zhMessages = {
   'common.hyphen': '-',
 } as const
 
-type TranslateKey = keyof typeof zhMessages
+export type TranslateKey = keyof typeof zhMessages
 type Messages = Record<TranslateKey, string>
 
 const enMessages: Messages = {
@@ -391,6 +400,15 @@ const enMessages: Messages = {
   'runtime.installing': 'Installing',
   'runtime.ready': 'Ready',
   'runtime.error': 'Error',
+
+  'runtime.preparingTitle': 'Preparing Runtime Environment',
+  'runtime.preparingMessage': 'First-time use requires downloading necessary runtime resources, please wait...',
+  'runtime.component.yt-dlp': 'Video Downloader',
+  'runtime.component.ffmpeg': 'Audio Processor',
+  'runtime.component.python': 'Python Runtime',
+  'runtime.component.whisper': 'Speech Transcription',
+  'runtime.component.deno': 'Deno Runtime',
+  'runtime.component.engine': 'Task Engine',
 
   'lang.all': 'All',
   'lang.zh': 'Chinese',

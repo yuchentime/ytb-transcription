@@ -6,7 +6,9 @@
       "Bash(npm run build:*)",
       "Bash(kill:*)",
       "WebFetch(domain:platform.minimaxi.com)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(npm rebuild:*)",
+      "Bash(npm install:*)"
     ]
   }
 }
