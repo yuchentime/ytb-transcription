@@ -5,8 +5,10 @@ import { app } from 'electron'
 import { runMigrations } from './migrate'
 import {
   ArtifactDao,
+  BatchDao,
   SettingsDao,
   TaskDao,
+  TaskQueueDao,
   TaskRecoveryDao,
   TaskSegmentDao,
   TaskStepDao,
@@ -20,6 +22,8 @@ export interface DatabaseContext {
   taskSegmentDao: TaskSegmentDao
   taskRecoveryDao: TaskRecoveryDao
   artifactDao: ArtifactDao
+  batchDao: BatchDao
+  taskQueueDao: TaskQueueDao
   settingsDao: SettingsDao
 }
 
@@ -48,6 +52,8 @@ export function initDatabase(options?: { dataRoot?: string; dbPath?: string }): 
   const taskSegmentDao = new TaskSegmentDao(db)
   const taskRecoveryDao = new TaskRecoveryDao(db)
   const artifactDao = new ArtifactDao(db)
+  const batchDao = new BatchDao(db)
+  const taskQueueDao = new TaskQueueDao(db)
   const settingsDao = new SettingsDao(db)
   settingsDao.initializeDefaults()
 
@@ -59,6 +65,8 @@ export function initDatabase(options?: { dataRoot?: string; dbPath?: string }): 
     taskSegmentDao,
     taskRecoveryDao,
     artifactDao,
+    batchDao,
+    taskQueueDao,
     settingsDao,
   }
 

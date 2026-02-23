@@ -1,9 +1,12 @@
 import type {
   AppSettings,
   ArtifactRecord,
+  BatchDetail,
+  BatchProgress,
   CreateTaskInput,
   HistoryListResult,
   HistoryQuery,
+  QueueSnapshot,
   RecoveryAction,
   RecoveryPlan,
   TaskRecord,
@@ -33,13 +36,19 @@ export const IPC_CHANNELS = {
   voicesList: 'voices:list',
   voicesValidateParams: 'voices:validateParams',
   systemOpenPath: 'system:openPath',
-  systemExportDiagnostics: 'system:exportDiagnostics',
   systemExportTaskArtifacts: 'system:exportTaskArtifacts',
   systemProbePiper: 'system:probePiper',
   systemInstallPiper: 'system:installPiper',
   systemTestTranslateConnectivity: 'system:testTranslateConnectivity',
   fileReadAudio: 'file:readAudio',
   fileReadText: 'file:readText',
+  batchCreate: 'batch:create',
+  batchGet: 'batch:get',
+  queueList: 'queue:list',
+  queuePause: 'queue:pause',
+  queueResume: 'queue:resume',
+  queueReorder: 'queue:reorder',
+  queueRemove: 'queue:remove',
   taskStatus: 'task:status',
   taskProgress: 'task:progress',
   taskSegmentProgress: 'task:segmentProgress',
@@ -49,6 +58,10 @@ export const IPC_CHANNELS = {
   taskCompleted: 'task:completed',
   taskFailed: 'task:failed',
   taskRuntime: 'task:runtime',
+  queueUpdated: 'queue:updated',
+  queueTaskMoved: 'queue:taskMoved',
+  batchProgress: 'batch:progress',
+  batchCompleted: 'batch:completed',
 } as const
 
 export interface TaskIdPayload {
@@ -57,6 +70,38 @@ export interface TaskIdPayload {
 
 export interface RetrySegmentsPayload extends TaskIdPayload {
   segmentIds: string[]
+}
+
+export type BatchConfig = Omit<CreateTaskInput, 'youtubeUrl' | 'youtubeTitle'>
+
+export interface BatchCreatePayload {
+  urls: string[]
+  sharedConfig: BatchConfig
+  name?: string
+}
+
+export interface BatchCreateResult {
+  batchId: string
+  taskIds: string[]
+  accepted: number
+  rejected: number
+  rejectedItems: Array<{
+    url: string
+    reason: string
+  }>
+}
+
+export interface BatchGetPayload {
+  batchId: string
+}
+
+export interface QueueReorderPayload {
+  taskId: string
+  toIndex: number
+}
+
+export interface QueueRemovePayload {
+  taskId: string
 }
 
 export interface TaskActionResult {
@@ -78,14 +123,6 @@ export interface OpenPathPayload {
 
 export interface OpenPathResult {
   ok: boolean
-}
-
-export interface ExportDiagnosticsPayload {
-  taskId?: string
-}
-
-export interface ExportDiagnosticsResult {
-  filePath: string
 }
 
 export interface ExportTaskArtifactsPayload {
@@ -217,6 +254,30 @@ export interface TaskRuntimeEventPayload {
   timestamp: string
 }
 
+export interface QueueUpdatedEventPayload {
+  paused: boolean
+  waiting: number
+  running: number
+  completed: number
+  failed: number
+  updatedAt: string
+}
+
+export interface QueueTaskMovedEventPayload {
+  taskId: string
+  fromIndex: number
+  toIndex: number
+}
+
+export interface BatchProgressEventPayload extends BatchProgress {}
+
+export interface BatchCompletedEventPayload {
+  batchId: string
+  total: number
+  completed: number
+  failed: number
+}
+
 export interface ResumeFromCheckpointResult {
   accepted: boolean
   fromStage: string
@@ -265,6 +326,21 @@ export interface RendererAPI {
     list(query?: HistoryQuery): Promise<HistoryListResult>
     delete(payload: TaskIdPayload): Promise<HistoryDeleteResult>
   }
+  batch: {
+    create(payload: BatchCreatePayload): Promise<BatchCreateResult>
+    get(payload: BatchGetPayload): Promise<BatchDetail>
+    onProgress(listener: (payload: BatchProgressEventPayload) => void): () => void
+    onCompleted(listener: (payload: BatchCompletedEventPayload) => void): () => void
+  }
+  queue: {
+    list(): Promise<QueueSnapshot>
+    pause(): Promise<{ paused: boolean }>
+    resume(): Promise<{ resumed: boolean }>
+    reorder(payload: QueueReorderPayload): Promise<{ ok: boolean }>
+    remove(payload: QueueRemovePayload): Promise<{ removed: boolean }>
+    onUpdated(listener: (payload: QueueUpdatedEventPayload) => void): () => void
+    onTaskMoved(listener: (payload: QueueTaskMovedEventPayload) => void): () => void
+  }
   settings: {
     get(): Promise<AppSettings>
     update(patch: Partial<AppSettings>): Promise<AppSettings>
@@ -275,7 +351,6 @@ export interface RendererAPI {
   }
   system: {
     openPath(payload: OpenPathPayload): Promise<OpenPathResult>
-    exportDiagnostics(payload?: ExportDiagnosticsPayload): Promise<ExportDiagnosticsResult>
     exportTaskArtifacts(payload: ExportTaskArtifactsPayload): Promise<ExportTaskArtifactsResult>
     probePiper(payload?: ProbePiperPayload): Promise<PiperProbeResult>
     installPiper(payload?: InstallPiperPayload): Promise<PiperInstallResult>

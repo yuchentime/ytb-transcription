@@ -33,6 +33,21 @@ const api: RendererAPI = {
     list: (query) => ipcRenderer.invoke(IPC_CHANNELS.historyList, query),
     delete: (payload) => ipcRenderer.invoke(IPC_CHANNELS.historyDelete, payload),
   },
+  batch: {
+    create: (payload) => ipcRenderer.invoke(IPC_CHANNELS.batchCreate, payload),
+    get: (payload) => ipcRenderer.invoke(IPC_CHANNELS.batchGet, payload),
+    onProgress: (listener) => subscribe(IPC_CHANNELS.batchProgress, listener),
+    onCompleted: (listener) => subscribe(IPC_CHANNELS.batchCompleted, listener),
+  },
+  queue: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.queueList),
+    pause: () => ipcRenderer.invoke(IPC_CHANNELS.queuePause),
+    resume: () => ipcRenderer.invoke(IPC_CHANNELS.queueResume),
+    reorder: (payload) => ipcRenderer.invoke(IPC_CHANNELS.queueReorder, payload),
+    remove: (payload) => ipcRenderer.invoke(IPC_CHANNELS.queueRemove, payload),
+    onUpdated: (listener) => subscribe(IPC_CHANNELS.queueUpdated, listener),
+    onTaskMoved: (listener) => subscribe(IPC_CHANNELS.queueTaskMoved, listener),
+  },
   settings: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
     update: (patch) => ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
@@ -43,7 +58,6 @@ const api: RendererAPI = {
   },
   system: {
     openPath: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemOpenPath, payload),
-    exportDiagnostics: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemExportDiagnostics, payload),
     exportTaskArtifacts: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemExportTaskArtifacts, payload),
     probePiper: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemProbePiper, payload),
     installPiper: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemInstallPiper, payload),

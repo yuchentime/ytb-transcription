@@ -1,5 +1,7 @@
+import { registerBatchHandlers } from './batch.handlers'
 import { registerFileHandlers } from './file.handlers'
 import { registerHistoryHandlers } from './history.handlers'
+import { registerQueueHandlers } from './queue.handlers'
 import { registerSettingsHandlers } from './settings.handlers'
 import { registerSystemHandlers } from './system.handlers'
 import { registerTaskHandlers } from './task.handlers'
@@ -12,6 +14,8 @@ export function registerIpcHandlers(): void {
   if (registered) return
   registerTaskHandlers()
   registerTaskRecoveryHandlers()
+  registerBatchHandlers()
+  registerQueueHandlers()
   registerHistoryHandlers()
   registerSettingsHandlers()
   registerVoicesHandlers()

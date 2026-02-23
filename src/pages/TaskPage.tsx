@@ -45,13 +45,13 @@ interface TaskPageModel {
   translationContent?: string
   /** 当前下载速度（仅在 downloading 阶段有效） */
   downloadSpeed?: string
+  processingYoutubeUrl: string
 }
 
 interface TaskPageActions {
   setTaskForm: Dispatch<SetStateAction<TaskFormState>>
   onStartTask(): Promise<void>
   onCancelTask(): Promise<void>
-  onExportDiagnostics(taskId: string): Promise<void>
   onDownloadAudio(): Promise<void>
   onOpenOutputDirectory(): Promise<void>
   onRetrySingleSegment(segmentId: string): Promise<void>
@@ -296,13 +296,6 @@ export function TaskPage(props: TaskPageProps) {
           >
             {props.t('task.cancel')}
           </button>
-          <button
-            className="btn"
-            disabled={!props.model.activeTaskId}
-            onClick={() => void props.actions.onExportDiagnostics(props.model.activeTaskId)}
-          >
-            {props.t('task.exportDiagnostics')}
-          </button>
           {props.model.taskError && <span className="error">{props.model.taskError}</span>}
         </div>
 
@@ -314,6 +307,12 @@ export function TaskPage(props: TaskPageProps) {
             <span>
               {props.t('task.statusLabel')}:{' '}
               <strong>{translateTaskStatus(props.model.activeStatus, props.t)}</strong>
+            </span>
+            <span className={`processing-task-chip ${props.model.processingYoutubeUrl ? 'active' : ''}`}>
+              {props.t('task.processingTask')}:{' '}
+              <strong title={props.model.processingYoutubeUrl || props.t('common.hyphen')}>
+                {props.model.processingYoutubeUrl || props.t('common.hyphen')}
+              </strong>
             </span>
           </div>
 

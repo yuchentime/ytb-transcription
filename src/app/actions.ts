@@ -299,22 +299,14 @@ export async function startTaskAction(
       refreshHistory(query: HistoryQueryState): Promise<void>
       historyQuery: HistoryQueryState
     },
-): Promise<void> {
+): Promise<boolean> {
   const { taskForm, settings, ipcClient, setTaskState, setActiveRoute, refreshHistory, historyQuery, t } = params
 
-  if (!taskForm.youtubeUrl.trim()) return
+  if (!taskForm.youtubeUrl.trim()) return false
 
   setTaskState((prev) => ({
     ...prev,
     error: '',
-    output: {},
-    stageProgress: {},
-    segments: [],
-    recoveryActions: [],
-    logs: [],
-    transcriptContent: undefined,
-    translationContent: undefined,
-    downloadSpeed: undefined,
   }))
 
   try {
@@ -330,78 +322,80 @@ export async function startTaskAction(
       }
     }
 
-    const task = await ipcClient.task.create({
-      youtubeUrl: taskForm.youtubeUrl.trim(),
-      targetLanguage: taskForm.targetLanguage,
-      whisperModel: settings.defaultWhisperModel,
-      translateProvider: settings.translateProvider,
-      ttsProvider: settings.ttsProvider,
-      translateModelId: settings.translateModelId,
-      ttsModelId: settings.ttsModelId,
-      ttsVoice: taskForm.ttsVoiceId,
-      modelConfigSnapshot: {
+    const createResult = await ipcClient.batch.create({
+      urls: [taskForm.youtubeUrl.trim()],
+      sharedConfig: {
+        targetLanguage: taskForm.targetLanguage,
+        whisperModel: settings.defaultWhisperModel,
         translateProvider: settings.translateProvider,
         ttsProvider: settings.ttsProvider,
-        minimaxApiBaseUrl: settings.minimaxApiBaseUrl,
-        deepseekApiBaseUrl: settings.deepseekApiBaseUrl,
-        glmApiBaseUrl: settings.glmApiBaseUrl,
-        kimiApiBaseUrl: settings.kimiApiBaseUrl,
-        customApiBaseUrl: settings.customApiBaseUrl,
-        segmentationStrategy: 'punctuation',
-        segmentationOptions: {
-          maxCharsPerSegment: 900,
+        translateModelId: settings.translateModelId,
+        ttsModelId: settings.ttsModelId,
+        ttsVoice: taskForm.ttsVoiceId,
+        modelConfigSnapshot: {
+          translateProvider: settings.translateProvider,
+          ttsProvider: settings.ttsProvider,
+          minimaxApiBaseUrl: settings.minimaxApiBaseUrl,
+          deepseekApiBaseUrl: settings.deepseekApiBaseUrl,
+          glmApiBaseUrl: settings.glmApiBaseUrl,
+          kimiApiBaseUrl: settings.kimiApiBaseUrl,
+          customApiBaseUrl: settings.customApiBaseUrl,
+          segmentationStrategy: 'punctuation',
+          segmentationOptions: {
+            maxCharsPerSegment: 900,
+          },
+          translationContextChars: 160,
+          translateRequestTimeoutMs: 120000,
+          autoPolishLongText: true,
+          polishMinDurationSec: 600,
+          polishContextChars: 180,
+          polishTargetSegmentLength: 900,
+          transcribeChunkEnabled: true,
+          transcribeChunkMinDurationSec: 600,
+          transcribeChunkDurationSec: 240,
+          transcribeChunkOverlapSec: 1.2,
+          transcribeConcurrency: 2,
+          ttsSplitThresholdChars: 3000,
+          ttsTargetSegmentChars: 900,
+          ttsVoiceId: taskForm.ttsVoiceId,
+          ttsSpeed: settings.ttsSpeed,
+          ttsPitch: settings.ttsPitch,
+          ttsVolume: settings.ttsVolume,
+          piperExecutablePath: settings.piperExecutablePath,
+          piperModelPath: settings.piperModelPath,
+          piperConfigPath: settings.piperConfigPath,
+          piperSpeakerId: settings.piperSpeakerId,
+          piperLengthScale: settings.piperLengthScale,
+          piperNoiseScale: settings.piperNoiseScale,
+          piperNoiseW: settings.piperNoiseW,
         },
-        translationContextChars: 160,
-        translateRequestTimeoutMs: 120000,
-        autoPolishLongText: true,
-        polishMinDurationSec: 600,
-        polishContextChars: 180,
-        polishTargetSegmentLength: 900,
-        transcribeChunkEnabled: true,
-        transcribeChunkMinDurationSec: 600,
-        transcribeChunkDurationSec: 240,
-        transcribeChunkOverlapSec: 1.2,
-        transcribeConcurrency: 2,
-        ttsSplitThresholdChars: 3000,
-        ttsTargetSegmentChars: 900,
-        ttsVoiceId: taskForm.ttsVoiceId,
-        ttsSpeed: settings.ttsSpeed,
-        ttsPitch: settings.ttsPitch,
-        ttsVolume: settings.ttsVolume,
-        piperExecutablePath: settings.piperExecutablePath,
-        piperModelPath: settings.piperModelPath,
-        piperConfigPath: settings.piperConfigPath,
-        piperSpeakerId: settings.piperSpeakerId,
-        piperLengthScale: settings.piperLengthScale,
-        piperNoiseScale: settings.piperNoiseScale,
-        piperNoiseW: settings.piperNoiseW,
       },
     })
 
-    setTaskState((prev) => ({
-      ...prev,
-      activeTaskId: task.id,
-      activeStatus: task.status,
-      segments: [],
-      recoveryActions: [],
-    }))
-
-    const result = await ipcClient.task.start({ taskId: task.id })
-    if (!result.accepted) {
-      throw new Error(result.reason ?? t('error.taskNotAccepted'))
+    if (createResult.accepted <= 0 || createResult.taskIds.length === 0) {
+      const firstRejected = createResult.rejectedItems[0]
+      throw new Error(firstRejected?.reason ?? t('error.taskNotAccepted'))
     }
 
     setTaskState((prev) => ({
       ...prev,
-      running: true,
+      activeTaskId: prev.running ? prev.activeTaskId : createResult.taskIds[0],
+      activeStatus: prev.running ? prev.activeStatus : 'queued',
+      form: {
+        ...prev.form,
+        youtubeUrl: '',
+      },
     }))
+
     setActiveRoute('task')
     void refreshHistory(historyQuery)
+    return true
   } catch (error) {
     setTaskState((prev) => ({
       ...prev,
       error: getErrorMessage(error, t('error.startTask')),
     }))
+    return false
   }
 }
 
@@ -569,34 +563,6 @@ export async function handleOpenOutputDirectoryAction(
       stage: 'system',
       level: 'error',
       text: t('error.openPath', { message: toUnknownErrorMessage(error) }),
-    })
-  }
-}
-
-export async function handleExportDiagnosticsAction(
-  params: {
-    taskId?: string
-    ipcClient: RendererAPI
-  } & LogDeps &
-    LocalizedDeps,
-): Promise<void> {
-  const { taskId, ipcClient, pushLog, t } = params
-
-  try {
-    const result = await ipcClient.system.exportDiagnostics(taskId ? { taskId } : undefined)
-    pushLog({
-      time: new Date().toISOString(),
-      stage: 'system',
-      level: 'info',
-      text: t('log.diagnosticsExported', { filePath: result.filePath }),
-    })
-    await ipcClient.system.openPath({ path: result.filePath })
-  } catch (error) {
-    pushLog({
-      time: new Date().toISOString(),
-      stage: 'system',
-      level: 'error',
-      text: t('error.exportDiagnostics', { message: toUnknownErrorMessage(error) }),
     })
   }
 }

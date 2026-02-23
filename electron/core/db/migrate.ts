@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import type Database from 'better-sqlite3'
 import { SCHEMA_SQL } from './schema'
 
-const LATEST_SCHEMA_VERSION = 4
+const LATEST_SCHEMA_VERSION = 5
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 function resolveSchemaPath(): string | null {
@@ -117,6 +117,22 @@ function applyVersion4(db: Database.Database): void {
   applyMigration()
 }
 
+function applyVersion5(db: Database.Database): void {
+  const migrationPath = resolveMigrationPath('005_add_batch_queue_tables.sql')
+  if (!migrationPath) {
+    throw new Error('Cannot find migration file: 005_add_batch_queue_tables.sql')
+  }
+  const migrationSql = fs.readFileSync(migrationPath, 'utf-8')
+  const now = new Date().toISOString()
+
+  const applyMigration = db.transaction(() => {
+    db.exec(migrationSql)
+    db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(5, now)
+  })
+
+  applyMigration()
+}
+
 export function runMigrations(db: Database.Database): void {
   ensureMigrationsTable(db)
 
@@ -141,5 +157,9 @@ export function runMigrations(db: Database.Database): void {
 
   if (currentVersion < 4) {
     applyVersion4(db)
+  }
+
+  if (currentVersion < 5) {
+    applyVersion5(db)
   }
 }

@@ -7,7 +7,6 @@ import {
   cancelTaskAction,
   handleDeleteHistoryTaskAction,
   handleDownloadAudioAction,
-  handleExportDiagnosticsAction,
   handleOpenOutputDirectoryAction,
   loadHistoryAction,
   loadSettingsAction,
@@ -41,11 +40,14 @@ import { useTaskAudio } from './app/hooks/useTaskAudio'
 import { useTaskEvents } from './app/hooks/useTaskEvents'
 import { SidebarMenu } from './components/SidebarMenu'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { Toast } from './components/Toast'
 import { AboutPage } from './pages/AboutPage'
 import { HistoryPage } from './pages/HistoryPage'
+import { QueuePage } from './pages/QueuePage'
 import { SettingsPage } from './pages/SettingsPage'
 import { TaskPage } from './pages/TaskPage'
 import { ipcClient } from './services/ipcClient'
+import { createInitialQueueState } from './stores/queue.store'
 import './App.css'
 
 function App() {
@@ -54,6 +56,11 @@ function App() {
   const [settingsState, setSettingsState] = useState(createInitialSettingsState)
   const [taskState, setTaskState] = useState<TaskState>(createInitialTaskState)
   const [historyState, setHistoryState] = useState<HistoryState>(createInitialHistoryState)
+  const [queueState, setQueueState] = useState(createInitialQueueState)
+  const [queueSubmitToast, setQueueSubmitToast] = useState<{ visible: boolean; key: number }>({
+    visible: false,
+    key: 0,
+  })
   const [playingAudio, setPlayingAudio] = useState<{ taskId: string; url: string; title: string } | null>(null)
   const playingAudioUrlRef = useRef<string>('')
   const [resumeConfirmDialog, setResumeConfirmDialog] = useState<{
@@ -122,8 +129,8 @@ function App() {
   }, [settingsState.data.piperModelPath, settingsState.data.ttsModelId, settingsState.data.ttsProvider, settingsState.voiceProfiles, taskState.form])
 
   const isStartDisabled = useMemo(() => {
-    return taskState.running || taskFormErrors.length > 0
-  }, [taskState.running, taskFormErrors.length])
+    return taskFormErrors.length > 0
+  }, [taskFormErrors.length])
 
   const setSettingsData: Dispatch<SetStateAction<AppSettings>> = (updater) => {
     setSettingsState((prev) => ({
@@ -237,6 +244,53 @@ function App() {
     })
   }, [pushLog, t])
 
+  const refreshQueueSnapshot = useCallback(async (): Promise<void> => {
+    setQueueState((prev) => ({
+      ...prev,
+      loading: true,
+      error: '',
+    }))
+
+    try {
+      const snapshot = await ipcClient.queue.list()
+      const runningTaskId = snapshot.running[0]?.taskId
+      let processingYoutubeUrl = ''
+      let runningTaskStatus: TaskStatus | '' = ''
+
+      if (runningTaskId) {
+        const detail = await ipcClient.task.get({ taskId: runningTaskId }).catch(() => null)
+        if (detail) {
+          processingYoutubeUrl = detail.task.youtubeUrl
+          runningTaskStatus = detail.task.status
+        }
+      }
+
+      setQueueState((prev) => ({
+        ...prev,
+        snapshot,
+        loading: false,
+      }))
+
+      setTaskState((prev) => ({
+        ...prev,
+        activeTaskId: runningTaskId ?? prev.activeTaskId,
+        activeStatus: runningTaskStatus || prev.activeStatus,
+        running: Boolean(runningTaskId),
+        processingYoutubeUrl,
+      }))
+    } catch (error) {
+      setQueueState((prev) => ({
+        ...prev,
+        error: error instanceof Error ? error.message : '加载队列失败',
+        loading: false,
+      }))
+      setTaskState((prev) => ({
+        ...prev,
+        processingYoutubeUrl: '',
+      }))
+    }
+  }, [])
+
   useEffect(() => {
     void loadHistory(historyState.query)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,6 +343,61 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    void refreshQueueSnapshot()
+  }, [refreshQueueSnapshot])
+
+  useEffect(() => {
+    const offQueueUpdated = ipcClient.queue.onUpdated((payload) => {
+      setQueueState((prev) => ({
+        ...prev,
+        updatedSummary: payload,
+      }))
+      void refreshQueueSnapshot()
+    })
+
+    const offQueueTaskMoved = ipcClient.queue.onTaskMoved(() => {
+      void refreshQueueSnapshot()
+    })
+
+    const offBatchProgress = ipcClient.batch.onProgress((payload) => {
+      setQueueState((prev) => ({
+        ...prev,
+        batchProgressMap: {
+          ...prev.batchProgressMap,
+          [payload.batchId]: payload,
+        },
+      }))
+    })
+
+    const offBatchCompleted = ipcClient.batch.onCompleted((payload) => {
+      setQueueState((prev) => {
+        const existing = prev.batchProgressMap[payload.batchId]
+        if (!existing) return prev
+        return {
+          ...prev,
+          batchProgressMap: {
+            ...prev.batchProgressMap,
+            [payload.batchId]: {
+              ...existing,
+              completed: payload.completed,
+              failed: payload.failed,
+              percent: 100,
+            },
+          },
+        }
+      })
+      void refreshQueueSnapshot()
+    })
+
+    return () => {
+      offQueueUpdated()
+      offQueueTaskMoved()
+      offBatchProgress()
+      offBatchCompleted()
+    }
+  }, [refreshQueueSnapshot])
 
   useTaskEvents({
     ipcClient,
@@ -343,7 +452,8 @@ function App() {
   }
 
   async function startTask(): Promise<void> {
-    await startTaskAction({
+    const hadRunningTask = taskState.running || queueState.snapshot.running.length > 0
+    const submitted = await startTaskAction({
       taskForm: taskState.form,
       settings: settingsState.data,
       ipcClient,
@@ -353,6 +463,16 @@ function App() {
       historyQuery: historyState.query,
       t,
     })
+
+    if (!submitted) return
+
+    await refreshQueueSnapshot()
+    if (hadRunningTask) {
+      setQueueSubmitToast((prev) => ({
+        visible: true,
+        key: prev.key + 1,
+      }))
+    }
   }
 
   async function cancelTask(): Promise<void> {
@@ -362,6 +482,26 @@ function App() {
       setTaskState,
       t,
     })
+  }
+
+  async function pauseQueue(): Promise<void> {
+    await ipcClient.queue.pause()
+    await refreshQueueSnapshot()
+  }
+
+  async function resumeQueue(): Promise<void> {
+    await ipcClient.queue.resume()
+    await refreshQueueSnapshot()
+  }
+
+  async function reorderQueueTask(taskId: string, toIndex: number): Promise<void> {
+    await ipcClient.queue.reorder({ taskId, toIndex })
+    await refreshQueueSnapshot()
+  }
+
+  async function removeQueueTask(taskId: string): Promise<void> {
+    await ipcClient.queue.remove({ taskId })
+    await refreshQueueSnapshot()
   }
 
   async function handleDownloadAudio(): Promise<void> {
@@ -376,15 +516,6 @@ function App() {
   async function handleOpenOutputDirectory(): Promise<void> {
     await handleOpenOutputDirectoryAction({
       output: taskState.output,
-      ipcClient,
-      pushLog,
-      t,
-    })
-  }
-
-  async function handleExportDiagnostics(taskId?: string): Promise<void> {
-    await handleExportDiagnosticsAction({
-      taskId,
       ipcClient,
       pushLog,
       t,
@@ -599,15 +730,40 @@ function App() {
     transcriptContent: taskState.transcriptContent,
     translationContent: taskState.translationContent,
     downloadSpeed: taskState.downloadSpeed,
+    processingYoutubeUrl: taskState.processingYoutubeUrl,
   }
   const taskPageActions = {
     setTaskForm: setTaskFormData,
     onStartTask: startTask,
     onCancelTask: cancelTask,
-    onExportDiagnostics: (taskId: string) => handleExportDiagnostics(taskId),
     onDownloadAudio: handleDownloadAudio,
     onOpenOutputDirectory: handleOpenOutputDirectory,
     onRetrySingleSegment: (segmentId: string) => handleRetryFailedSegments([segmentId]),
+  }
+
+  const queuePageModel = {
+    paused: queueState.snapshot.paused,
+    loading: queueState.loading,
+    error: queueState.error,
+    waitingCount: queueState.snapshot.waiting.length,
+    runningCount: queueState.snapshot.running.length,
+    completedCount: queueState.snapshot.completed.length,
+    failedCount: queueState.snapshot.failed.length,
+    updatedAt: queueState.updatedSummary?.updatedAt ?? queueState.snapshot.updatedAt,
+    snapshot: {
+      waiting: queueState.snapshot.waiting,
+      running: queueState.snapshot.running,
+      completed: queueState.snapshot.completed,
+      failed: queueState.snapshot.failed,
+    },
+    batchProgressMap: queueState.batchProgressMap,
+  }
+  const queuePageActions = {
+    onPause: pauseQueue,
+    onResume: resumeQueue,
+    onRefresh: refreshQueueSnapshot,
+    onReorder: reorderQueueTask,
+    onRemove: removeQueueTask,
   }
 
   const historyPageModel = {
@@ -742,6 +898,8 @@ function App() {
 
           {activeRoute === 'task' && <TaskPage model={taskPageModel} actions={taskPageActions} t={t} />}
 
+          {activeRoute === 'queue' && <QueuePage model={queuePageModel} actions={queuePageActions} />}
+
           {activeRoute === 'history' && (
             <HistoryPage model={historyPageModel} actions={historyPageActions} t={t} />
           )}
@@ -771,6 +929,18 @@ function App() {
         cancelLabel={t('common.cancel')}
         onCancel={() => resolveResumeOverrideConfirm(false)}
         onConfirm={() => resolveResumeOverrideConfirm(true)}
+      />
+      <Toast
+        key={queueSubmitToast.key}
+        message={t('task.queuedToast')}
+        visible={queueSubmitToast.visible}
+        onClose={() =>
+          setQueueSubmitToast((prev) => ({
+            ...prev,
+            visible: false,
+          }))
+        }
+        type="success"
       />
       {playingAudio && (
         <div className="floating-audio-player" role="region" aria-label={t('history.floatingPlayerAriaLabel')}>

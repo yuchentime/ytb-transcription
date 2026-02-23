@@ -64,6 +64,8 @@ export interface TaskState {
   translationContent?: string
   /** 当前下载速度（仅在 downloading 阶段有效） */
   downloadSpeed?: string
+  /** 当前处理中任务的 YouTube 链接 */
+  processingYoutubeUrl: string
 }
 
 export interface HistoryState {
@@ -113,6 +115,7 @@ export function createInitialTaskState(): TaskState {
     ttsAudioUrl: '',
     transcriptContent: undefined,
     translationContent: undefined,
+    processingYoutubeUrl: '',
   }
 }
 

@@ -15,6 +15,7 @@ const zhCNMessages = {
   'menu.ariaMainNavigation': '主导航',
 
   'route.task': '任务',
+  'route.queue': '队列',
   'route.history': '历史',
   'route.settings': '设置',
   'route.about': '关于我',
@@ -23,11 +24,12 @@ const zhCNMessages = {
   'task.youtubeUrl': 'YouTube 链接',
   'task.youtubeUrlPlaceholder': 'https://www.youtube.com/watch?v=...',
   'task.targetLanguage': '目标语言',
-  'task.start': '开始任务',
+  'task.start': '提交任务',
   'task.cancel': '取消任务',
-  'task.exportDiagnostics': '导出诊断',
   'task.idLabel': '任务 ID',
   'task.statusLabel': '状态',
+  'task.processingTask': '处理中任务',
+  'task.queuedToast': '已提交任务至队列',
   'task.runtime': '运行时',
   'task.outputTranscript': '转录',
   'task.outputTranslation': '翻译',
@@ -63,7 +65,6 @@ const zhCNMessages = {
   'history.retry': '重试',
   'history.downloadArtifacts': '下载',
   'history.delete': '删除',
-  'history.exportDiagnostics': '导出诊断',
   'history.pageInfo': '第 {page} / {totalPages} 页（共 {total} 条）',
   'history.prev': '上一页',
   'history.next': '下一页',
@@ -160,7 +161,6 @@ const zhCNMessages = {
   'error.taskNotAccepted': '任务未被接受',
   'error.downloadAudio': '下载音频失败：{message}',
   'error.openPath': '打开路径失败：{message}',
-  'error.exportDiagnostics': '导出诊断失败：{message}',
   'error.deleteTask': '删除任务失败',
   'error.noExportableArtifacts': '未找到可导出的音频、转录或翻译文件',
   'error.downloadArtifacts': '导出文件失败：{message}',
@@ -173,7 +173,6 @@ const zhCNMessages = {
   'log.settingsSaved': '设置已保存',
   'log.statusChanged': '状态 -> {status}',
   'log.taskCompleted': '任务完成',
-  'log.diagnosticsExported': '诊断已导出：{filePath}',
   'log.deletedTask': '已删除任务：{taskId}',
   'log.artifactsExported': '已导出任务产物：{taskId}（{count} 个文件）',
   'log.retryRequested': '已发起重试：{taskId}',
@@ -196,6 +195,7 @@ const zhTWMessages: Messages = {
   'menu.ariaMainNavigation': '主導航',
 
   'route.task': '任務',
+  'route.queue': '隊列',
   'route.history': '歷史',
   'route.settings': '設定',
   'route.about': '關於我',
@@ -204,11 +204,12 @@ const zhTWMessages: Messages = {
   'task.youtubeUrl': 'YouTube 連結',
   'task.youtubeUrlPlaceholder': 'https://www.youtube.com/watch?v=...',
   'task.targetLanguage': '目標語言',
-  'task.start': '開始任務',
+  'task.start': '提交任務',
   'task.cancel': '取消任務',
-  'task.exportDiagnostics': '匯出診斷',
   'task.idLabel': '任務 ID',
   'task.statusLabel': '狀態',
+  'task.processingTask': '處理中任務',
+  'task.queuedToast': '已提交任務至隊列',
   'task.runtime': '執行時',
   'task.outputTranscript': '轉錄',
   'task.outputTranslation': '翻譯',
@@ -244,7 +245,6 @@ const zhTWMessages: Messages = {
   'history.retry': '重試',
   'history.downloadArtifacts': '下載',
   'history.delete': '刪除',
-  'history.exportDiagnostics': '匯出診斷',
   'history.pageInfo': '第 {page} / {totalPages} 頁（共 {total} 筆）',
   'history.prev': '上一頁',
   'history.next': '下一頁',
@@ -341,7 +341,6 @@ const zhTWMessages: Messages = {
   'error.taskNotAccepted': '任務未被接受',
   'error.downloadAudio': '下載音訊失敗：{message}',
   'error.openPath': '開啟路徑失敗：{message}',
-  'error.exportDiagnostics': '匯出診斷失敗：{message}',
   'error.deleteTask': '刪除任務失敗',
   'error.noExportableArtifacts': '未找到可匯出的音訊、轉錄或翻譯檔案',
   'error.downloadArtifacts': '匯出檔案失敗：{message}',
@@ -354,7 +353,6 @@ const zhTWMessages: Messages = {
   'log.settingsSaved': '設定已儲存',
   'log.statusChanged': '狀態 -> {status}',
   'log.taskCompleted': '任務完成',
-  'log.diagnosticsExported': '診斷已匯出：{filePath}',
   'log.deletedTask': '已刪除任務：{taskId}',
   'log.artifactsExported': '已匯出任務產物：{taskId}（{count} 個檔案）',
   'log.retryRequested': '已發起重試：{taskId}',
@@ -393,8 +391,9 @@ const RUNTIME_STATUS_KEYS: Record<'checking' | 'downloading' | 'installing' | 'r
   error: 'runtime.error',
 }
 
-const ROUTE_KEYS: Record<'task' | 'history' | 'settings' | 'about', TranslateKey> = {
+const ROUTE_KEYS: Record<'task' | 'queue' | 'history' | 'settings' | 'about', TranslateKey> = {
   task: 'route.task',
+  queue: 'route.queue',
   history: 'route.history',
   settings: 'route.settings',
   about: 'route.about',
@@ -470,7 +469,10 @@ export function translateRuntimeStatus(
   return t(RUNTIME_STATUS_KEYS[status])
 }
 
-export function translateRouteLabel(route: 'task' | 'history' | 'settings' | 'about', t: TranslateFn): string {
+export function translateRouteLabel(
+  route: 'task' | 'queue' | 'history' | 'settings' | 'about',
+  t: TranslateFn,
+): string {
   return t(ROUTE_KEYS[route])
 }
 

@@ -34,6 +34,9 @@ export type SegmentStatus = 'pending' | 'running' | 'success' | 'failed'
 export type SegmentStageName = 'translating' | 'synthesizing'
 export type SegmentationStrategy = 'punctuation' | 'sentence' | 'duration'
 export type RecoveryErrorKind = 'retryable' | 'non-retryable' | 'config-invalid'
+export type BatchStatus = 'created' | 'running' | 'completed' | 'failed' | 'partial'
+export type BatchItemStatus = 'accepted' | 'rejected' | 'queued' | 'running' | 'completed' | 'failed'
+export type QueueStatus = 'waiting' | 'running' | 'completed' | 'failed' | 'removed'
 
 export interface SegmentationOptions {
   maxCharsPerSegment?: number
@@ -188,6 +191,69 @@ export interface HistoryListResult {
   total: number
   page: number
   pageSize: number
+}
+
+export interface BatchRecord {
+  id: string
+  name: string | null
+  totalCount: number
+  acceptedCount: number
+  rejectedCount: number
+  status: BatchStatus
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export interface BatchItemRecord {
+  id: number
+  batchId: string
+  taskId: string | null
+  youtubeUrl: string
+  status: BatchItemStatus
+  rejectReason: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BatchProgress {
+  batchId: string
+  total: number
+  queued: number
+  running: number
+  completed: number
+  failed: number
+  percent: number
+}
+
+export interface BatchDetail {
+  batch: BatchRecord
+  items: BatchItemRecord[]
+  progress: BatchProgress
+}
+
+export interface QueueTaskRecord {
+  taskId: string
+  youtubeUrl: string
+  batchId: string | null
+  queueStatus: QueueStatus
+  priority: number
+  queueIndex: number
+  enqueuedAt: string
+  startedAt: string | null
+  heartbeatAt: string | null
+  finishedAt: string | null
+  workerSlot: number | null
+  lastErrorCode: string | null
+}
+
+export interface QueueSnapshot {
+  waiting: QueueTaskRecord[]
+  running: QueueTaskRecord[]
+  completed: QueueTaskRecord[]
+  failed: QueueTaskRecord[]
+  paused: boolean
+  updatedAt: string
 }
 
 export interface AppSettings {

@@ -1,4 +1,4 @@
-export type AppRoute = 'task' | 'history' | 'settings' | 'about'
+export type AppRoute = 'task' | 'queue' | 'history' | 'settings' | 'about'
 
 export interface AppRouteItem {
   key: AppRoute
@@ -6,6 +6,7 @@ export interface AppRouteItem {
 
 export const APP_ROUTES: AppRouteItem[] = [
   { key: 'task' },
+  { key: 'queue' },
   { key: 'history' },
   { key: 'settings' },
   { key: 'about' },
