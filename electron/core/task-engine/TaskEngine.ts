@@ -91,6 +91,10 @@ import {
 } from './utils'
 
 
+/**
+ * Orchestrates the end-to-end task pipeline, including stage execution, retries,
+ * checkpoints, resume decisions, and runtime event emission.
+ */
 export class TaskEngine {
   private readonly emitter = new EventEmitter()
   private runningTaskId: string | null = null
@@ -100,6 +104,7 @@ export class TaskEngine {
   private readonly checkpointStore: CheckpointStore
   private readonly recoveryPlanner: RecoveryPlanner
 
+  /** Initialize TaskEngine with DAO dependencies and recovery helpers. */
   constructor(
     private readonly deps: {
       taskDao: TaskDao
@@ -116,6 +121,7 @@ export class TaskEngine {
     this.recoveryPlanner = new RecoveryPlanner(deps.taskSegmentDao, deps.taskRecoveryDao)
   }
 
+  /** Register a typed runtime event listener and return an unsubscribe callback. */
   on<T extends EventName>(event: T, listener: Listener<T>): () => void {
     this.emitter.on(event, listener as (...args: unknown[]) => void)
     return () => {
@@ -123,6 +129,7 @@ export class TaskEngine {
     }
   }
 
+  /** Build a collision-resistant artifact base name. */
   private buildUniqueName(prefix: string): string {
     const normalizedPrefix =
       prefix
@@ -134,11 +141,13 @@ export class TaskEngine {
     return `${normalizedPrefix}-${timestamp}-${token}`
   }
 
+  /** Build a unique file path under a task directory with normalized extension. */
   private buildUniqueFilePath(taskDir: string, prefix: string, extension: string): string {
     const normalizedExtension = extension.startsWith('.') ? extension : `.${extension}`
     return path.join(taskDir, `${this.buildUniqueName(prefix)}${normalizedExtension}`)
   }
 
+  /** Queue and start task execution if no conflicting task is currently running. */
   start(taskId: string): { accepted: boolean; reason?: string } {
     if (this.runningTaskId && this.runningTaskId !== taskId) {
       return { accepted: false, reason: `Task ${this.runningTaskId} is already running` }
@@ -163,22 +172,27 @@ export class TaskEngine {
     return { accepted: true }
   }
 
+  /** Retry a task by reusing the same start flow and validations. */
   retry(taskId: string): { accepted: boolean; reason?: string } {
     return this.start(taskId)
   }
 
+  /** Return the current running task id, if any. */
   getRunningTaskId(): string | null {
     return this.runningTaskId
   }
 
+  /** List all persisted segments that belong to a task. */
   listSegments(taskId: string): TaskSegmentRecord[] {
     return this.deps.taskSegmentDao.listByTask(taskId)
   }
 
+  /** Build a recovery plan based on current task and segment state. */
   getRecoveryPlan(taskId: string): RecoveryPlan {
     return this.recoveryPlanner.createPlan(taskId)
   }
 
+  /** Schedule partial rerun for selected segments and start the task. */
   retrySegments(taskId: string, segmentIds: string[]): { accepted: boolean; reason?: string } {
     const prepared = this.prepareRetrySegments(taskId, segmentIds)
     if (!prepared.accepted) {
@@ -192,6 +206,7 @@ export class TaskEngine {
     return started
   }
 
+  /** Validate and record pending segment retry requests before task start. */
   prepareRetrySegments(taskId: string, segmentIds: string[]): { accepted: boolean; reason?: string } {
     if (!Array.isArray(segmentIds) || segmentIds.length === 0) {
       return { accepted: false, reason: 'segmentIds is required' }
@@ -212,6 +227,7 @@ export class TaskEngine {
     return { accepted: true }
   }
 
+  /** Resume a task from checkpoint metadata and immediately start execution. */
   resumeFromCheckpoint(taskId: string): { accepted: boolean; fromStage: string; reason?: string } {
     const prepared = this.prepareResumeFromCheckpoint(taskId)
     if (!prepared.accepted) {
@@ -229,6 +245,7 @@ export class TaskEngine {
     }
   }
 
+  /** Resolve resume stage and retry set from checkpoint or artifact fallback. */
   prepareResumeFromCheckpoint(taskId: string): { accepted: boolean; fromStage: string; reason?: string } {
     if (this.runningTaskId === taskId) {
       return { accepted: false, fromStage: 'downloading', reason: 'Task is already running' }
@@ -291,11 +308,13 @@ export class TaskEngine {
     }
   }
 
+  /** Clear cached resume and retry requests for the specified task. */
   clearPendingExecutionRequests(taskId: string): void {
     this.retrySegmentRequests.delete(taskId)
     this.resumeFromStageRequests.delete(taskId)
   }
 
+  /** Request cancellation for queued/running tasks and persist canceled status. */
   cancel(taskId: string): { canceled: boolean } {
     const task = this.deps.taskDao.getTaskById(taskId)
     if (task.status === 'queued' && this.runningTaskId !== taskId) {
@@ -317,6 +336,7 @@ export class TaskEngine {
     return { canceled: false }
   }
 
+  /** Execute the full stage pipeline and finalize task state. */
   private async runTask(taskId: string): Promise<void> {
     const context: TaskExecutionContext = {
       taskId,
@@ -377,6 +397,7 @@ export class TaskEngine {
     }
   }
 
+  /** Recover known artifact paths into runtime context before stage execution. */
   private hydrateContextFromArtifacts(context: TaskExecutionContext): void {
     const artifacts = this.deps.artifactDao.listArtifacts(context.taskId)
     for (let index = artifacts.length - 1; index >= 0; index -= 1) {
@@ -395,6 +416,7 @@ export class TaskEngine {
     }
   }
 
+  /** Prepare required toolchain binaries and stream runtime readiness events. */
   private async ensureResources(context: TaskExecutionContext): Promise<void> {
     this.emit('log', {
       taskId: context.taskId,
@@ -423,6 +445,7 @@ export class TaskEngine {
     })
   }
 
+  /** Emit sanitized provider/model endpoint configuration logs for diagnostics. */
   private emitProviderResolutionLog(taskId: string): void {
     const settings = this.resolveExecutionSettings(taskId)
     const translateEndpoint = normalizeEndpointForLog(resolveTranslateApiBaseUrl(settings))
@@ -446,6 +469,7 @@ export class TaskEngine {
     })
   }
 
+  /** Run one stage with lifecycle bookkeeping, error handling, and cancellation. */
   private async runStage(context: TaskExecutionContext, stage: StepName): Promise<boolean> {
     if (this.cancelRequested.has(context.taskId)) {
       this.markCanceled(context.taskId)
@@ -532,6 +556,7 @@ export class TaskEngine {
     return false
   }
 
+  /** Download source video with yt-dlp, including auth and fallback strategies. */
   private async executeDownloading(context: TaskExecutionContext): Promise<void> {
     const task = this.deps.taskDao.getTaskById(context.taskId)
     const settings = this.deps.settingsDao.getSettings()
@@ -660,6 +685,7 @@ export class TaskEngine {
     })
   }
 
+  /** Extract mono 16k wav audio from downloaded video using ffmpeg. */
   private async executeExtracting(context: TaskExecutionContext): Promise<void> {
     if (!context.videoPath) throw new Error('videoPath is missing')
     if (!context.toolchain) throw new Error('toolchain is not ready')
@@ -693,6 +719,7 @@ export class TaskEngine {
     })
   }
 
+  /** Emit structured transcribing-stage log records. */
   private emitTranscribingLog(
     taskId: string,
     level: 'info' | 'warn' | 'error',
@@ -707,6 +734,7 @@ export class TaskEngine {
     })
   }
 
+  /** Ensure whisper model assets exist locally and verify checksum when possible. */
   private async ensureWhisperModelReady(context: TaskExecutionContext, modelName: string): Promise<string> {
     const modelDir = path.join(this.deps.dataRoot, 'cache', 'whisper')
     await fs.mkdir(modelDir, { recursive: true })
@@ -801,6 +829,7 @@ export class TaskEngine {
     )
   }
 
+  /** Resolve translation context window size from task snapshot with bounds. */
   private resolveTranslationContextChars(taskId: string): number {
     const task = this.deps.taskDao.getTaskById(taskId)
     const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
@@ -809,6 +838,7 @@ export class TaskEngine {
     )
   }
 
+  /** Resolve per-request translation timeout from task snapshot with bounds. */
   private resolveTranslateRequestTimeoutMs(taskId: string): number {
     const task = this.deps.taskDao.getTaskById(taskId)
     const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
@@ -817,6 +847,7 @@ export class TaskEngine {
     )
   }
 
+  /** Resolve token threshold used to split translation input into segments. */
   private resolveTranslateSplitThresholdTokens(taskId: string): number {
     const task = this.deps.taskDao.getTaskById(taskId)
     const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
@@ -830,6 +861,7 @@ export class TaskEngine {
     )
   }
 
+  /** Resolve TTS text segmentation thresholds from task snapshot. */
   private resolveTtsSegmentationConfig(taskId: string): {
     splitThresholdChars: number
     targetSegmentChars: number
@@ -866,20 +898,24 @@ export class TaskEngine {
     }
   }
 
+  /** Extract provider-specific missing-content code from error text. */
   private getMissingContentCode(errorMessage: string): string | null {
     const matched = errorMessage.match(/missing content\s*\(([^)]+)\)/i)
     if (!matched) return null
     return matched[1]?.trim() ?? null
   }
 
+  /** Determine whether an error represents an empty-response provider failure. */
   private isMissingContentError(errorMessage: string): boolean {
     return this.getMissingContentCode(errorMessage) !== null
   }
 
+  /** Decide if translation text must be split by token budget. */
   private shouldSplitTranslationByContextWindow(sourceText: string, splitThresholdTokens: number): boolean {
     return estimateTokenCount(sourceText) > splitThresholdTokens
   }
 
+  /** Build translation segments using token-aware chunking when needed. */
   private buildTranslationSegments(params: {
     sourceText: string
     splitThresholdTokens: number
@@ -893,6 +929,7 @@ export class TaskEngine {
     return buildSegmentsFromChunkTexts(chunkTexts)
   }
 
+  /** Build TTS segments optimized for provider limits and punctuation boundaries. */
   private buildTtsSegments(params: {
     sourceText: string
     splitThresholdChars: number
@@ -910,6 +947,7 @@ export class TaskEngine {
     return buildSegmentsFromChunkTexts(chunkTexts)
   }
 
+  /** Resolve optional translation polishing behavior for long content. */
   private resolvePolishConfig(taskId: string): {
     autoPolishLongText: boolean
     minDurationSec: number
@@ -940,6 +978,7 @@ export class TaskEngine {
     }
   }
 
+  /** Resolve chunked transcription config and safety limits. */
   private resolveTranscribeChunkConfig(taskId: string): {
     enabled: boolean
     minDurationSec: number
@@ -973,6 +1012,7 @@ export class TaskEngine {
     }
   }
 
+  /** Resolve safe transcription concurrency based on backend/device constraints. */
   private resolveTranscribeConcurrency(
     taskId: string,
     backend: 'mlx' | 'openai-whisper',
@@ -988,6 +1028,7 @@ export class TaskEngine {
     return Math.max(1, Math.min(backendSafeDefault, Math.max(1, totalChunks)))
   }
 
+  /** Build time ranges for chunked audio transcription with overlap. */
   private buildAudioChunkPlan(
     durationSec: number,
     chunkDurationSec: number,
@@ -1010,6 +1051,7 @@ export class TaskEngine {
     return plan
   }
 
+  /** Probe audio duration by parsing ffmpeg metadata output. */
   private async probeAudioDurationSec(audioPath: string, ffmpegPath: string): Promise<number | null> {
     const stderrLines: string[] = []
     await runCommand({
@@ -1028,6 +1070,7 @@ export class TaskEngine {
   }
 
 
+  /** Transcribe audio with backend fallback, retries, and optional chunk mode. */
   private async executeTranscribing(context: TaskExecutionContext): Promise<void> {
     if (!context.audioPath) throw new Error('audioPath is missing')
     if (!context.toolchain) throw new Error('toolchain is not ready')
@@ -1525,6 +1568,7 @@ export class TaskEngine {
     }
   }
 
+  /** Resolve text segmentation strategy used after translation. */
   private resolveSegmentationConfig(taskId: string): {
     strategy: SegmentationStrategy
     options: SegmentationOptions
@@ -1551,10 +1595,12 @@ export class TaskEngine {
     }
   }
 
+  /** Get pending segment retry ids for the current task execution. */
   private resolveRetrySet(taskId: string): Set<string> | null {
     return this.retrySegmentRequests.get(taskId) ?? null
   }
 
+  /** Create or reuse stage segment records while ensuring source shape consistency. */
   private async ensureStageSegments(
     taskId: string,
     stageName: SegmentStageName,
@@ -1583,6 +1629,7 @@ export class TaskEngine {
     return existing
   }
 
+  /** Build comparable checkpoint configuration snapshot for recovery decisions. */
   private buildCheckpointConfig(taskId: string): Record<string, unknown> {
     const task = this.deps.taskDao.getTaskById(taskId)
     const settings = this.resolveExecutionSettings(taskId)
@@ -1637,6 +1684,7 @@ export class TaskEngine {
     }
   }
 
+  /** Normalize checkpoint stage name from either column or snapshot payload. */
   private resolveCheckpointStage(
     stageName: string,
     snapshotJson: Record<string, unknown>,
@@ -1646,6 +1694,7 @@ export class TaskEngine {
     return normalizeCheckpointStageName(snapshotJson.stageName)
   }
 
+  /** Compare checkpoint config keys against current runtime config. */
   private listCheckpointConfigMismatches(
     taskId: string,
     snapshotConfig: unknown,
@@ -1669,6 +1718,7 @@ export class TaskEngine {
     return mismatches
   }
 
+  /** Detect TTS config drift that requires restarting synthesizing segments. */
   private shouldResetSynthesisProgress(
     taskId: string,
     resumeStage: StepName,
@@ -1711,6 +1761,7 @@ export class TaskEngine {
     return true
   }
 
+  /** Merge checkpoint failed ids with unresolved stage segments. */
   private resolveResumeRetrySet(
     taskId: string,
     stageName: StepName,
@@ -1731,6 +1782,7 @@ export class TaskEngine {
     return retrySet
   }
 
+  /** Infer resume stage from existing artifacts when checkpoint is missing. */
   private resolveFallbackResumeStage(taskId: string): StepName {
     const artifactTypes = new Set<ArtifactTypeForResume>(
       this.deps.artifactDao
@@ -1749,6 +1801,7 @@ export class TaskEngine {
     return 'downloading'
   }
 
+  /** Pick preferred resume stage from latest failed/running/last step record. */
   private resolvePreferredResumeStage(taskId: string): StepName | null {
     const steps = this.deps.taskStepDao.listSteps(taskId)
     for (let index = steps.length - 1; index >= 0; index -= 1) {
@@ -1761,6 +1814,7 @@ export class TaskEngine {
     return steps[steps.length - 1]?.stepName ?? null
   }
 
+  /** Validate stage segment ordering and source text consistency. */
   private assertStageSegmentIntegrity(
     stageName: SegmentStageName,
     dbSegments: TaskSegmentRecord[],
@@ -1794,6 +1848,7 @@ export class TaskEngine {
     return ordered
   }
 
+  /** Resolve bounded TTS segment concurrency based on provider and config. */
   private resolveTtsConcurrency(taskId: string, totalSegments: number): number {
     const settings = this.resolveExecutionSettings(taskId)
     const task = this.deps.taskDao.getTaskById(taskId)
@@ -1807,6 +1862,7 @@ export class TaskEngine {
     return Math.max(1, Math.min(providerCap, configured, Math.max(1, totalSegments)))
   }
 
+  /** Read a fresh settings snapshot before executing external providers. */
   private resolveExecutionSettings(taskId: string): AppSettings {
     this.deps.taskDao.getTaskById(taskId)
     return {
@@ -1814,6 +1870,7 @@ export class TaskEngine {
     }
   }
 
+  /** Translate transcript segments with retries, checkpoints, and integrity checks. */
   private async executeTranslating(context: TaskExecutionContext): Promise<void> {
     if (!context.transcriptPath) throw new Error('transcriptPath is missing')
     const task = this.deps.taskDao.getTaskById(context.taskId)
@@ -2021,6 +2078,7 @@ export class TaskEngine {
     })
   }
 
+  /** Synthesize translated text into segment audio and concatenate outputs. */
   private async executeSynthesizing(context: TaskExecutionContext): Promise<void> {
     if (!context.translationPath) throw new Error('translationPath is missing')
     if (!context.toolchain) throw new Error('toolchain is not ready')
@@ -2213,6 +2271,7 @@ export class TaskEngine {
     })
   }
 
+  /** Produce final TTS artifact by promoting the raw synthesized audio file. */
   private async executeMerging(context: TaskExecutionContext): Promise<void> {
     if (!context.ttsRawPath) throw new Error('ttsRawPath is missing')
     const finalPath = this.buildUniqueFilePath(context.taskDir, 'tts-final-audio', 'mp3')
@@ -2220,6 +2279,7 @@ export class TaskEngine {
     context.finalTtsPath = finalPath
   }
 
+  /** Persist canceled state and emit task cancellation events. */
   private markCanceled(taskId: string): void {
     this.deps.taskDao.updateTaskStatus(taskId, 'canceled', {
       completedAt: new Date().toISOString(),
@@ -2236,6 +2296,7 @@ export class TaskEngine {
     })
   }
 
+  /** Emit typed task-engine events through the internal event emitter. */
   private emit<T extends EventName>(event: T, payload: TaskEngineEvents[T]): void {
     this.emitter.emit(event, payload)
   }
