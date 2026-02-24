@@ -12,6 +12,8 @@ export interface RunCommandOptions {
   onSpawn?: (child: ChildProcessWithoutNullStreams) => void
 }
 
+const COMMAND_ERROR_EXCERPT_LINES = 40
+
 function createLineBuffer(onLine?: (line: string) => void): {
   push: (chunk: string) => void
   flush: () => void
@@ -54,7 +56,7 @@ export async function runCommand(options: RunCommandOptions): Promise<{ code: nu
   const appendExcerpt = (target: string[], line: string): void => {
     if (!line) return
     target.push(line)
-    if (target.length > 8) {
+    if (target.length > COMMAND_ERROR_EXCERPT_LINES) {
       target.shift()
     }
   }

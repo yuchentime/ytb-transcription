@@ -573,7 +573,46 @@ export class TaskEngine {
       'worst',
       '-o',
       outputTemplate,
+      '--print',
+      'before_dl:__YTB_META_TITLE__%(title)s',
+      '--print',
+      'before_dl:__YTB_META_AUTHOR__%(uploader)s',
     ]
+    let youtubeTitle = task.youtubeTitle?.trim() ?? ''
+    let youtubeAuthor = task.youtubeAuthor?.trim() ?? ''
+    const normalizeMetadataValue = (value: string): string | null => {
+      const normalized = value.trim()
+      if (!normalized || normalized.toLowerCase() === 'na') {
+        return null
+      }
+      return normalized
+    }
+    const syncTaskMetadata = (patch: { youtubeTitle?: string | null; youtubeAuthor?: string | null }): void => {
+      const nextTitle = patch.youtubeTitle !== undefined ? (patch.youtubeTitle ?? '') : youtubeTitle
+      const nextAuthor = patch.youtubeAuthor !== undefined ? (patch.youtubeAuthor ?? '') : youtubeAuthor
+      if (nextTitle === youtubeTitle && nextAuthor === youtubeAuthor) {
+        return
+      }
+      this.deps.taskDao.updateTaskMetadata(context.taskId, {
+        youtubeTitle: patch.youtubeTitle !== undefined ? nextTitle || null : undefined,
+        youtubeAuthor: patch.youtubeAuthor !== undefined ? nextAuthor || null : undefined,
+      })
+      youtubeTitle = nextTitle
+      youtubeAuthor = nextAuthor
+    }
+    const consumeMetadataLine = (line: string): boolean => {
+      if (line.startsWith('__YTB_META_TITLE__')) {
+        const parsed = normalizeMetadataValue(line.slice('__YTB_META_TITLE__'.length))
+        syncTaskMetadata({ youtubeTitle: parsed })
+        return true
+      }
+      if (line.startsWith('__YTB_META_AUTHOR__')) {
+        const parsed = normalizeMetadataValue(line.slice('__YTB_META_AUTHOR__'.length))
+        syncTaskMetadata({ youtubeAuthor: parsed })
+        return true
+      }
+      return false
+    }
 
     if (settings.ytDlpAuthMode === 'browser_cookies') {
       baseArgs.push('--cookies-from-browser', settings.ytDlpCookiesBrowser)
@@ -609,6 +648,9 @@ export class TaskEngine {
         cwd: context.taskDir,
         isCanceled: () => this.cancelRequested.has(context.taskId),
         onStdoutLine: (line) => {
+          if (consumeMetadataLine(line)) {
+            return
+          }
           const percent = parsePercent(line)
           if (percent !== null) {
             // 解析下载速度
@@ -626,6 +668,9 @@ export class TaskEngine {
           }
         },
         onStderrLine: (line) => {
+          if (consumeMetadataLine(line)) {
+            return
+          }
           stderrLines.push(line)
           this.emit('log', {
             taskId: context.taskId,
@@ -855,7 +900,7 @@ export class TaskEngine {
       toSafeNumber(
         snapshot.translateSplitThresholdTokens,
         DEFAULT_TRANSLATE_SPLIT_THRESHOLD_TOKENS,
-        8_000,
+        2_000,
         DEFAULT_TRANSLATE_CONTEXT_WINDOW_TOKENS,
       ),
     )
@@ -908,6 +953,71 @@ export class TaskEngine {
   /** Determine whether an error represents an empty-response provider failure. */
   private isMissingContentError(errorMessage: string): boolean {
     return this.getMissingContentCode(errorMessage) !== null
+  }
+
+  /** Determine whether translation failure indicates truncation or incomplete output. */
+  private isTranslationIncompleteError(errorMessage: string): boolean {
+    const normalized = errorMessage.trim().toLowerCase()
+    if (!normalized) return false
+    if (this.isMissingContentError(errorMessage)) return true
+    return (
+      normalized.includes('truncated') ||
+      normalized.includes('finish_reason=length') ||
+      normalized.includes('finish_reason=max_tokens') ||
+      normalized.includes('translation appears incomplete') ||
+      normalized.includes('untranslated')
+    )
+  }
+
+  /** Validate translated content shape to block large untranslated carry-over for zh/ja. */
+  private validateTranslatedSegment(params: {
+    sourceText: string
+    translatedText: string
+    targetLanguage: string
+  }): string | null {
+    const normalizedSource = params.sourceText.trim()
+    const normalizedTarget = params.translatedText.trim()
+    if (!normalizedTarget) {
+      return 'Translation appears incomplete: empty translated content'
+    }
+    if (normalizedSource.length < 220 || normalizedTarget.length < 180) {
+      return null
+    }
+
+    const sourceAsciiCount = normalizedSource.match(/[A-Za-z]/g)?.length ?? 0
+    const targetAsciiCount = normalizedTarget.match(/[A-Za-z]/g)?.length ?? 0
+    const sourceAsciiRatio = sourceAsciiCount / Math.max(1, normalizedSource.length)
+    const targetAsciiRatio = targetAsciiCount / Math.max(1, normalizedTarget.length)
+    const targetLanguage = params.targetLanguage.trim().toLowerCase()
+
+    const targetZhCount =
+      normalizedTarget.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/gu)?.length ?? 0
+    const targetJaCount =
+      normalizedTarget.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/gu)?.length ??
+      0
+
+    const hasLongLatinRun =
+      /[A-Za-z][A-Za-z\s,.;:!?'"()-]{120,}/.test(normalizedTarget) && sourceAsciiRatio >= 0.4
+    if (targetLanguage === 'zh') {
+      const targetZhRatio = targetZhCount / Math.max(1, normalizedTarget.length)
+      if (
+        hasLongLatinRun ||
+        (sourceAsciiCount >= 80 && sourceAsciiRatio >= 0.4 && targetZhRatio < 0.18 && targetAsciiRatio > 0.55)
+      ) {
+        return 'Translation appears incomplete: output still contains large untranslated source text'
+      }
+    }
+    if (targetLanguage === 'ja') {
+      const targetJaRatio = targetJaCount / Math.max(1, normalizedTarget.length)
+      if (
+        hasLongLatinRun ||
+        (sourceAsciiCount >= 80 && sourceAsciiRatio >= 0.4 && targetJaRatio < 0.12 && targetAsciiRatio > 0.6)
+      ) {
+        return 'Translation appears incomplete: output still contains large untranslated source text'
+      }
+    }
+
+    return null
   }
 
   /** Decide if translation text must be split by token budget. */
@@ -1878,185 +1988,253 @@ export class TaskEngine {
     const translationContextChars = this.resolveTranslationContextChars(context.taskId)
     const translateRequestTimeoutMs = this.resolveTranslateRequestTimeoutMs(context.taskId)
     const polishConfig = this.resolvePolishConfig(context.taskId)
-    const translateSplitThresholdTokens = this.resolveTranslateSplitThresholdTokens(context.taskId)
     const sourceText = await fs.readFile(context.transcriptPath, 'utf-8')
     const segmentation = this.resolveSegmentationConfig(context.taskId)
-    const segments = this.buildTranslationSegments({
-      sourceText,
-      splitThresholdTokens: translateSplitThresholdTokens,
-    })
-    assertSegmentIntegrity(sourceText, segments)
     const sourceTokenCount = estimateTokenCount(sourceText)
-    this.emit('log', {
-      taskId: context.taskId,
-      stage: 'translating',
-      level: 'info',
-      text: `Translation window policy: sourceTokens=${sourceTokenCount}, splitThresholdTokens=${translateSplitThresholdTokens}, segments=${segments.length}`,
-      timestamp: new Date().toISOString(),
-    })
-
     const retrySet = this.resolveRetrySet(context.taskId)
-    const stageSegments = await this.ensureStageSegments(context.taskId, 'translating', segments)
-    const total = stageSegments.length
-    let completed = stageSegments.filter((segment) => segment.status === 'success').length
-    const failedSegmentErrors: string[] = []
-
     const maxAttempts = Math.max(1, settings.retryPolicy.translate + 1)
-    for (const segment of stageSegments) {
-      if (this.cancelRequested.has(context.taskId)) {
-        throw new Error('Task canceled')
-      }
-      if (segment.status === 'success' && (!retrySet || !retrySet.has(segment.id))) {
-        continue
-      }
-      if (retrySet && !retrySet.has(segment.id)) {
-        continue
-      }
+    const fallbackSplitThresholdTokens = 3_000
+    let splitThresholdTokens = this.resolveTranslateSplitThresholdTokens(context.taskId)
+    let autoResegmented = false
+    let orderedSegments: TaskSegmentRecord[] | null = null
 
-      this.deps.taskSegmentDao.markSegmentRunning(segment.id)
-      let translatedText: string | null = null
-      let lastError: unknown = null
-      const segmentSourceText = segment.sourceText ?? ''
-      const previousSegmentText =
-        segment.segmentIndex > 0
-          ? stageSegments[segment.segmentIndex - 1]?.sourceText ?? ''
-          : ''
+    while (!orderedSegments) {
+      const segments = this.buildTranslationSegments({
+        sourceText,
+        splitThresholdTokens,
+      })
+      assertSegmentIntegrity(sourceText, segments)
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'translating',
+        level: 'info',
+        text: `Translation window policy: sourceTokens=${sourceTokenCount}, splitThresholdTokens=${splitThresholdTokens}, segments=${segments.length}, autoResegmented=${autoResegmented}`,
+        timestamp: new Date().toISOString(),
+      })
 
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        const attemptStartedAt = Date.now()
+      const stageSegments = await this.ensureStageSegments(context.taskId, 'translating', segments)
+      const effectiveRetrySet =
+        retrySet && stageSegments.some((segment) => retrySet.has(segment.id))
+          ? retrySet
+          : null
+      if (retrySet && !effectiveRetrySet) {
         this.emit('log', {
           taskId: context.taskId,
           stage: 'translating',
           level: 'info',
-          text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt}/${maxAttempts} (chars=${segmentSourceText.length}, timeoutMs=${translateRequestTimeoutMs})`,
+          text: 'Retry segment ids are stale after segment rebuild; fallback to rerun unresolved translation segments',
           timestamp: new Date().toISOString(),
         })
-        try {
-          translatedText = await translateText({
-            settings,
-            sourceText: segmentSourceText,
-            targetLanguage: task.targetLanguage,
-            timeoutMs: translateRequestTimeoutMs,
-            context: {
-              previousText: trimContextWindow(previousSegmentText, translationContextChars, true),
-              segmentIndex: segment.segmentIndex,
-              totalSegments: total,
-            },
-          })
+      }
+      const total = stageSegments.length
+      let completed = stageSegments.filter((segment) => segment.status === 'success').length
+      const failedSegmentErrors: string[] = []
+      let hasIncompleteFailure = false
+      let firstMissingContentFailure: { segmentIndex: number; code: string } | null = null
+
+      for (const segment of stageSegments) {
+        if (this.cancelRequested.has(context.taskId)) {
+          throw new Error('Task canceled')
+        }
+        if (segment.status === 'success' && (!effectiveRetrySet || !effectiveRetrySet.has(segment.id))) {
+          continue
+        }
+        if (effectiveRetrySet && !effectiveRetrySet.has(segment.id)) {
+          continue
+        }
+
+        this.deps.taskSegmentDao.markSegmentRunning(segment.id)
+        let translatedText: string | null = null
+        let lastError: unknown = null
+        const segmentSourceText = segment.sourceText ?? ''
+        const previousSegmentText =
+          segment.segmentIndex > 0
+            ? stageSegments[segment.segmentIndex - 1]?.sourceText ?? ''
+            : ''
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          const attemptStartedAt = Date.now()
           this.emit('log', {
             taskId: context.taskId,
             stage: 'translating',
             level: 'info',
-            text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt} succeeded in ${
-              Date.now() - attemptStartedAt
-            }ms`,
+            text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt}/${maxAttempts} (chars=${segmentSourceText.length}, timeoutMs=${translateRequestTimeoutMs})`,
             timestamp: new Date().toISOString(),
           })
-          break
-        } catch (error) {
-          lastError = error
-          const message = error instanceof Error ? error.message : String(error)
-          this.emit('log', {
+          try {
+            const candidate = await translateText({
+              settings,
+              sourceText: segmentSourceText,
+              targetLanguage: task.targetLanguage,
+              timeoutMs: translateRequestTimeoutMs,
+              context: {
+                previousText: trimContextWindow(previousSegmentText, translationContextChars, true),
+                segmentIndex: segment.segmentIndex,
+                totalSegments: total,
+              },
+            })
+            const validationError = this.validateTranslatedSegment({
+              sourceText: segmentSourceText,
+              translatedText: candidate,
+              targetLanguage: task.targetLanguage,
+            })
+            if (validationError) {
+              throw new Error(validationError)
+            }
+            translatedText = candidate
+            this.emit('log', {
+              taskId: context.taskId,
+              stage: 'translating',
+              level: 'info',
+              text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt} succeeded in ${
+                Date.now() - attemptStartedAt
+              }ms`,
+              timestamp: new Date().toISOString(),
+            })
+            break
+          } catch (error) {
+            lastError = error
+            const message = error instanceof Error ? error.message : String(error)
+            this.emit('log', {
+              taskId: context.taskId,
+              stage: 'translating',
+              level: 'warn',
+              text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt} failed in ${
+                Date.now() - attemptStartedAt
+              }ms: ${message}`,
+              timestamp: new Date().toISOString(),
+            })
+
+            const incompleteFailure = this.isTranslationIncompleteError(message)
+            if (incompleteFailure) {
+              hasIncompleteFailure = true
+            }
+            const kind = classifyError('E_TRANSLATE_SEGMENT', message)
+            if (incompleteFailure || kind !== 'retryable' || attempt >= maxAttempts) {
+              break
+            }
+            const isMissingContent = this.isMissingContentError(message)
+            if (isMissingContent) {
+              await sleep(Math.min(60_000, 15_000 * attempt))
+              continue
+            }
+            await sleep(Math.min(4_000, 1000 * (2 ** (attempt - 1))))
+          }
+        }
+
+        if (!translatedText) {
+          const message =
+            lastError instanceof Error ? lastError.message : 'Unknown translating segment error'
+          const isIncomplete = this.isTranslationIncompleteError(message)
+          if (isIncomplete) {
+            hasIncompleteFailure = true
+          }
+          const errorCode = isIncomplete ? 'E_TRANSLATE_INCOMPLETE' : 'E_TRANSLATE_SEGMENT'
+          this.deps.taskSegmentDao.markSegmentFailed(segment.id, {
+            errorCode,
+            errorMessage: message,
+            incrementRetry: true,
+          })
+          this.emit('segmentFailed', {
             taskId: context.taskId,
             stage: 'translating',
-            level: 'warn',
-            text: `Translate segment #${segment.segmentIndex + 1}/${total} attempt ${attempt} failed in ${
-              Date.now() - attemptStartedAt
-            }ms: ${message}`,
-            timestamp: new Date().toISOString(),
+            segmentId: segment.id,
+            errorCode,
+            errorMessage: message,
+            retryable:
+              !isIncomplete &&
+              classifyError('E_TRANSLATE_SEGMENT', message) === 'retryable',
           })
+          failedSegmentErrors.push(
+            `#${segment.segmentIndex + 1}:${message}`,
+          )
 
-          const kind = classifyError('E_TRANSLATE_SEGMENT', message)
-          if (kind !== 'retryable' || attempt >= maxAttempts) {
-            break
+          if (this.isMissingContentError(message) && !firstMissingContentFailure) {
+            firstMissingContentFailure = {
+              segmentIndex: segment.segmentIndex,
+              code: this.getMissingContentCode(message) ?? 'unknown',
+            }
           }
-          const isMissingContent = this.isMissingContentError(message)
-          if (isMissingContent) {
-            await sleep(Math.min(60_000, 15_000 * attempt))
-            continue
-          }
-          await sleep(Math.min(4_000, 1000 * (2 ** (attempt - 1))))
+          continue
         }
-      }
 
-      if (!translatedText) {
-        const message =
-          lastError instanceof Error ? lastError.message : 'Unknown translating segment error'
-        this.deps.taskSegmentDao.markSegmentFailed(segment.id, {
-          errorCode: 'E_TRANSLATE_SEGMENT',
-          errorMessage: message,
-          incrementRetry: true,
+        this.deps.taskSegmentDao.markSegmentSuccess(segment.id, {
+          targetText: translatedText,
         })
-        this.emit('segmentFailed', {
+        this.checkpointStore.saveSegmentCheckpoint({
+          taskId: context.taskId,
+          stageName: 'translating',
+          checkpointSegmentId: segment.id,
+          configSnapshot: this.buildCheckpointConfig(context.taskId),
+        })
+        completed += 1
+        this.emit('segmentProgress', {
           taskId: context.taskId,
           stage: 'translating',
           segmentId: segment.id,
-          errorCode: 'E_TRANSLATE_SEGMENT',
-          errorMessage: message,
-          retryable: classifyError('E_TRANSLATE_SEGMENT', message) === 'retryable',
+          index: segment.segmentIndex + 1,
+          total,
+          percent: Math.round((completed / Math.max(1, total)) * 100),
+          message: `translated ${segment.segmentIndex + 1}/${total}`,
         })
-        failedSegmentErrors.push(
-          `#${segment.segmentIndex + 1}:${message}`,
-        )
-        if (this.isMissingContentError(message)) {
-          const code = this.getMissingContentCode(message) ?? 'unknown'
-          throw new Error(
-            `Translation provider returned empty content (${code}) on segment #${segment.segmentIndex + 1}. Stop early to avoid cascading failures; retry later.`,
-          )
-        }
+      }
+
+      const latestSegments = this.deps.taskSegmentDao.listByTaskAndStage(context.taskId, 'translating')
+      const failed = latestSegments.filter((segment) => segment.status === 'failed')
+      const canAutoResegment =
+        failed.length > 0 &&
+        !autoResegmented &&
+        hasIncompleteFailure &&
+        splitThresholdTokens > fallbackSplitThresholdTokens &&
+        this.shouldSplitTranslationByContextWindow(sourceText, fallbackSplitThresholdTokens)
+      if (canAutoResegment) {
+        this.emit('log', {
+          taskId: context.taskId,
+          stage: 'translating',
+          level: 'warn',
+          text: `Detected incomplete translation output. Auto resegment once: splitThresholdTokens ${splitThresholdTokens} -> ${fallbackSplitThresholdTokens}`,
+          timestamp: new Date().toISOString(),
+        })
+        this.deps.taskSegmentDao.clearByTaskAndStage(context.taskId, 'translating')
+        splitThresholdTokens = fallbackSplitThresholdTokens
+        autoResegmented = true
         continue
       }
 
-      this.deps.taskSegmentDao.markSegmentSuccess(segment.id, {
-        targetText: translatedText,
-      })
-      this.checkpointStore.saveSegmentCheckpoint({
-        taskId: context.taskId,
-        stageName: 'translating',
-        checkpointSegmentId: segment.id,
-        configSnapshot: this.buildCheckpointConfig(context.taskId),
-      })
-      completed += 1
-      this.emit('segmentProgress', {
-        taskId: context.taskId,
-        stage: 'translating',
-        segmentId: segment.id,
-        index: segment.segmentIndex + 1,
-        total,
-        percent: Math.round((completed / Math.max(1, total)) * 100),
-        message: `translated ${segment.segmentIndex + 1}/${total}`,
-      })
+      if (failed.length > 0) {
+        if (firstMissingContentFailure) {
+          throw new Error(
+            `Translation provider returned empty content (${firstMissingContentFailure.code}) on segment #${firstMissingContentFailure.segmentIndex + 1}. Stop early to avoid cascading failures; retry later.`,
+          )
+        }
+        const failedExcerpt = failedSegmentErrors.slice(0, 3).join(' | ')
+        throw new Error(
+          failedExcerpt
+            ? `Translating has ${failed.length} failed segments. ${failedExcerpt}`
+            : `Translating has ${failed.length} failed segments`,
+        )
+      }
+
+      const ordered = this.assertStageSegmentIntegrity('translating', latestSegments, segments)
+      const missing = ordered.find((segment) => !segment.targetText?.trim())
+      if (missing) {
+        throw new Error(`Segment missing translated text: ${missing.id}`)
+      }
+      orderedSegments = ordered
     }
 
-    const latestSegments = this.deps.taskSegmentDao.listByTaskAndStage(context.taskId, 'translating')
-    const failed = latestSegments.filter((segment) => segment.status === 'failed')
-    if (failed.length > 0) {
-      const failedExcerpt = failedSegmentErrors.slice(0, 3).join(' | ')
-      throw new Error(
-        failedExcerpt
-          ? `Translating has ${failed.length} failed segments. ${failedExcerpt}`
-          : `Translating has ${failed.length} failed segments`,
-      )
-    }
-
-    const ordered = this.assertStageSegmentIntegrity('translating', latestSegments, segments)
-    const missing = ordered.find((segment) => !segment.targetText?.trim())
-    if (missing) {
-      throw new Error(`Segment missing translated text: ${missing.id}`)
-    }
-
-    const translated = joinTranslatedChunks(ordered.map((segment) => segment.targetText ?? ''))
+    const translated = joinTranslatedChunks(orderedSegments.map((segment) => segment.targetText ?? ''))
     const estimatedLongByDuration =
       typeof context.audioDurationSec === 'number' &&
       Number.isFinite(context.audioDurationSec) &&
       context.audioDurationSec >= polishConfig.minDurationSec
-    const estimatedLongBySegmentCount = ordered.length >= 120
+    const estimatedLongBySegmentCount = orderedSegments.length >= 120
     if (polishConfig.autoPolishLongText && (estimatedLongByDuration || estimatedLongBySegmentCount)) {
       this.emit('log', {
         taskId: context.taskId,
         stage: 'translating',
         level: 'info',
-        text: `Auto polishing enabled for long content (segments=${ordered.length}, durationSec=${
+        text: `Auto polishing enabled for long content (segments=${orderedSegments.length}, durationSec=${
           context.audioDurationSec ?? 'unknown'
         })`,
         timestamp: new Date().toISOString(),
@@ -2119,6 +2297,19 @@ export class TaskEngine {
 
     const stageSegments = await this.ensureStageSegments(context.taskId, 'synthesizing', baseSegments)
     const retrySet = this.resolveRetrySet(context.taskId)
+    const effectiveRetrySet =
+      retrySet && stageSegments.some((segment) => retrySet.has(segment.id))
+        ? retrySet
+        : null
+    if (retrySet && !effectiveRetrySet) {
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'synthesizing',
+        level: 'info',
+        text: 'Retry segment ids are stale after segment rebuild; fallback to rerun unresolved synthesis segments',
+        timestamp: new Date().toISOString(),
+      })
+    }
     const total = stageSegments.length
     let completed = stageSegments.filter((segment) => segment.status === 'success').length
     const maxAttempts = Math.max(1, settings.retryPolicy.tts + 1)
@@ -2126,8 +2317,8 @@ export class TaskEngine {
     await fs.mkdir(segmentDir, { recursive: true })
 
     const runnableSegments = stageSegments.filter((segment) => {
-      if (segment.status === 'success' && (!retrySet || !retrySet.has(segment.id))) return false
-      if (retrySet && !retrySet.has(segment.id)) return false
+      if (segment.status === 'success' && (!effectiveRetrySet || !effectiveRetrySet.has(segment.id))) return false
+      if (effectiveRetrySet && !effectiveRetrySet.has(segment.id)) return false
       return true
     })
     const mutableErrors: string[] = []

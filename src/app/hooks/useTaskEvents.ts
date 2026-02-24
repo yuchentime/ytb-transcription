@@ -5,7 +5,7 @@ import type { TranslateFn } from '../i18n'
 import { translateTaskStatus } from '../i18n'
 import { loadTaskContentAction } from '../actions'
 import type { HistoryQueryState, LogItem, TaskState } from '../state'
-import { isRunningStatus } from '../utils'
+import { findLatestArtifactPath, isRunningStatus } from '../utils'
 
 interface UseTaskEventsOptions {
   ipcClient: RendererAPI
@@ -62,6 +62,35 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       }
     }
 
+    const loadStageOutputContent = async (
+      taskId: string,
+      stage: 'transcribing' | 'translating',
+    ): Promise<void> => {
+      try {
+        const detail = await ipcClient.task.get({ taskId })
+        const transcriptPath = findLatestArtifactPath(detail.artifacts, 'transcript')
+        const translationPath = findLatestArtifactPath(detail.artifacts, 'translation')
+        if (stage === 'transcribing' && !transcriptPath) {
+          return
+        }
+        if (stage === 'translating' && !translationPath) {
+          return
+        }
+        if (!transcriptPath && !translationPath) {
+          return
+        }
+        await loadTaskContentAction({
+          ipcClient,
+          setTaskState,
+          transcriptPath,
+          translationPath,
+          pushLog,
+        })
+      } catch {
+        // Ignore content refresh failures to keep runtime event stream resilient.
+      }
+    }
+
     const offStatus = ipcClient.task.onStatus((payload) => {
       onTaskStatus?.(payload)
       scheduleHistoryRefresh()
@@ -97,6 +126,12 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         // 更新下载速度（仅在 downloading 阶段）
         downloadSpeed: payload.stage === 'downloading' ? payload.speed : prev.downloadSpeed,
       }))
+      if (
+        payload.percent >= 100 &&
+        (payload.stage === 'transcribing' || payload.stage === 'translating')
+      ) {
+        void loadStageOutputContent(payload.taskId, payload.stage)
+      }
     })
 
     const offSegmentProgress = ipcClient.task.onSegmentProgress((payload) => {

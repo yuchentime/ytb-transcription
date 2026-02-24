@@ -254,6 +254,40 @@ const PIPER_RUNTIME_ENV = {
   PYTHONUTF8: '1',
   PYTHONIOENCODING: 'utf-8',
 } as const
+const PIPER_HF_MIRROR_ENDPOINT = 'https://hf-mirror.com'
+
+function buildPiperRuntimeEnvPlans(hfHome: string): Array<{ label: string; env: NodeJS.ProcessEnv }> {
+  const baseEnv: NodeJS.ProcessEnv = {
+    ...PIPER_RUNTIME_ENV,
+    HF_HOME: hfHome,
+    TRANSFORMERS_CACHE: path.join(hfHome, 'transformers'),
+  }
+  const configuredEndpoint = (process.env.HF_ENDPOINT ?? '').trim()
+  if (configuredEndpoint) {
+    return [
+      {
+        label: configuredEndpoint,
+        env: {
+          ...baseEnv,
+          HF_ENDPOINT: configuredEndpoint,
+        },
+      },
+    ]
+  }
+  return [
+    {
+      label: 'default',
+      env: baseEnv,
+    },
+    {
+      label: PIPER_HF_MIRROR_ENDPOINT,
+      env: {
+        ...baseEnv,
+        HF_ENDPOINT: PIPER_HF_MIRROR_ENDPOINT,
+      },
+    },
+  ]
+}
 
 function resolveProbeLanguageByModelPath(modelPath: string): 'zh' | 'en' | 'ja' | null {
   const name = path.basename(modelPath)
@@ -274,6 +308,27 @@ function buildPiperHealthCheckTexts(params: {
   return ['This is a Piper runtime health check.']
 }
 
+function isPiperNetworkBootstrapError(message: string): boolean {
+  return /(huggingface|hf_hub|Cannot send a request|SSL|Connection|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN)/i.test(
+    message,
+  )
+}
+
+async function hasBertBaseChineseCache(hfHome: string): Promise<boolean> {
+  const hubDir = path.join(hfHome, 'hub')
+  try {
+    const entries = await fs.readdir(hubDir, { withFileTypes: true })
+    return entries.some(
+      (entry) =>
+        entry.isDirectory() &&
+        (entry.name === 'models--google-bert--bert-base-chinese' ||
+          entry.name === 'models--bert-base-chinese'),
+    )
+  } catch {
+    return false
+  }
+}
+
 async function runPiperHealthCheck(params: {
   command: string
   modelPath: string
@@ -282,11 +337,19 @@ async function runPiperHealthCheck(params: {
 }): Promise<{ ok: boolean; message: string }> {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piper-probe-'))
   const outputPath = path.join(tempDir, 'probe.wav')
+  const inputPath = path.join(tempDir, 'probe.txt')
   const dataDir = path.join(path.dirname(params.modelPath), '.piper-data')
+  const hfHome = path.join(dataDir, '.hf-cache')
+  const probeLanguage = resolveProbeLanguageByModelPath(params.modelPath) ?? params.settings.ttsTargetLanguage
+  const g2pwModelPath = path.join(dataDir, 'g2pW', 'g2pw.onnx')
+  const requiresChineseBootstrap =
+    probeLanguage === 'zh' &&
+    (!(await fileExists(g2pwModelPath)) || !(await hasBertBaseChineseCache(hfHome)))
   const textCandidates = buildPiperHealthCheckTexts({
     modelPath: params.modelPath,
     targetLanguage: params.settings.ttsTargetLanguage,
   })
+  const runtimeEnvPlans = buildPiperRuntimeEnvPlans(hfHome)
   const argsBase = ['--model', params.modelPath, '--output_file', outputPath]
 
   if (params.configPath) {
@@ -314,43 +377,65 @@ async function runPiperHealthCheck(params: {
 
   const plans: Array<{ text: string; withSpeaker: boolean }> = []
   const firstText = textCandidates[0] ?? 'This is a Piper runtime health check.'
-  plans.push({ text: firstText, withSpeaker: speakerEnabled })
-  if (speakerEnabled) {
+  if (requiresChineseBootstrap) {
     plans.push({ text: firstText, withSpeaker: false })
+  } else {
+    plans.push({ text: firstText, withSpeaker: speakerEnabled })
+    if (speakerEnabled) {
+      plans.push({ text: firstText, withSpeaker: false })
+    }
+    for (let index = 1; index < textCandidates.length; index += 1) {
+      plans.push({ text: textCandidates[index], withSpeaker: false })
+    }
   }
-  for (let index = 1; index < textCandidates.length; index += 1) {
-    plans.push({ text: textCandidates[index], withSpeaker: false })
-  }
+  const probeTimeoutMs = requiresChineseBootstrap ? 15 * 60 * 1000 : 120_000
 
   try {
     await fs.mkdir(dataDir, { recursive: true }).catch(() => undefined)
-    for (let attempt = 1; attempt <= plans.length; attempt += 1) {
-      const plan = plans[attempt - 1]
+    await fs.mkdir(hfHome, { recursive: true }).catch(() => undefined)
+
+    const allPlans: Array<{ text: string; withSpeaker: boolean; env: NodeJS.ProcessEnv; endpointLabel: string }> =
+      []
+    for (const runtimeEnvPlan of runtimeEnvPlans) {
+      for (const plan of plans) {
+        allPlans.push({
+          text: plan.text,
+          withSpeaker: plan.withSpeaker,
+          env: runtimeEnvPlan.env,
+          endpointLabel: runtimeEnvPlan.label,
+        })
+      }
+    }
+
+    for (let attempt = 1; attempt <= allPlans.length; attempt += 1) {
+      const plan = allPlans[attempt - 1]
       const runArgs = plan.withSpeaker ? [...argsBase, ...speakerArgs] : argsBase
       try {
+        await fs.writeFile(inputPath, `${plan.text}\n`, 'utf8')
         await runCommand({
           command: params.command,
-          args: runArgs,
-          env: PIPER_RUNTIME_ENV,
-          timeoutMs: 120_000,
-          onSpawn: (child) => {
-            child.stdin.end(`${plan.text}\n`)
-          },
+          args: [...runArgs, '--input_file', inputPath],
+          cwd: dataDir,
+          env: plan.env,
+          timeoutMs: probeTimeoutMs,
         })
         break
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         const isRetriable =
           shouldRetryPiperHealthCheck(message) ||
+          isPiperNetworkBootstrapError(message) ||
           isPiperNoChannelsProbeError(message) ||
           (plan.withSpeaker && speakerArgs.length > 0)
-        if (attempt < plans.length && isRetriable) {
+        if (attempt < allPlans.length && isRetriable) {
           continue
         }
         return {
           ok: false,
           message: truncateMessage(
-            attempt > 1 ? `${message} (health check attempts: ${attempt}/${plans.length})` : message,
+            attempt > 1
+              ? `${message} (health check attempts: ${attempt}/${allPlans.length}, endpoint: ${plan.endpointLabel}, bootstrap: ${requiresChineseBootstrap ? 'yes' : 'no'})`
+              : `${message} (endpoint: ${plan.endpointLabel}, bootstrap: ${requiresChineseBootstrap ? 'yes' : 'no'})`,
           ),
         }
       }

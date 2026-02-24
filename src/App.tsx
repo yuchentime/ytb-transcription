@@ -2,9 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TaskStatus } from '../electron/core/db/types'
 import type {
-  PiperInstallResult,
-  PiperProbeResult,
-  ResolvePiperModelResult,
   TaskStatusEventPayload,
   TranslateConnectivityResult,
 } from '../electron/ipc/channels'
@@ -135,22 +132,15 @@ function App() {
   const taskFormErrors = useMemo(() => {
     const errors: string[] = []
     const voiceId = taskState.form.ttsVoiceId.trim()
-    const isPiperTts = settingsState.data.ttsProvider === 'piper'
 
     const youtubeUrl = taskState.form.youtubeUrl.trim()
     if (!youtubeUrl || !isValidYoutubeUrl(youtubeUrl)) {
       errors.push(t('validation.youtubeUrlRequired'))
     }
-    if (!isPiperTts && !settingsState.data.ttsModelId.trim()) {
-      errors.push(t('validation.ttsModelRequired'))
-    }
-    if (isPiperTts && !settingsState.data.piperModelPath.trim()) {
-      errors.push(t('validation.piperModelPathRequired'))
-    }
-    if (!isPiperTts && !voiceId) {
+    if (!voiceId) {
       errors.push(t('validation.voicePresetRequired'))
     }
-    if (!isPiperTts && voiceId && settingsState.voiceProfiles.length > 0) {
+    if (voiceId && settingsState.data.ttsProvider === 'minimax' && settingsState.voiceProfiles.length > 0) {
       const selectedVoice = settingsState.voiceProfiles.find((voice) => voice.id === voiceId)
       const ttsTargetLang = settingsState.data.ttsTargetLanguage ?? 'zh'
       if (!selectedVoice) {
@@ -167,7 +157,13 @@ function App() {
     }
 
     return errors
-  }, [t, settingsState.data.piperModelPath, settingsState.data.ttsModelId, settingsState.data.ttsProvider, settingsState.data.ttsTargetLanguage, settingsState.voiceProfiles, taskState.form])
+  }, [
+    t,
+    settingsState.data.ttsProvider,
+    settingsState.data.ttsTargetLanguage,
+    settingsState.voiceProfiles,
+    taskState.form,
+  ])
 
   const isStartDisabled = useMemo(() => {
     return taskFormErrors.length > 0 || taskState.runtimeBootstrapStatus !== 'ready'
@@ -580,30 +576,6 @@ function App() {
     })
   }
 
-  async function probePiper(settings: AppSettings): Promise<PiperProbeResult> {
-    return await ipcClient.system.probePiper({ settings })
-  }
-
-  async function installPiper(settings: AppSettings, forceReinstall = false): Promise<PiperInstallResult> {
-    const piperTargetLanguage: AppSettings['defaultTargetLanguage'] =
-      settings.ttsTargetLanguage === 'en' ? 'en' : 'zh'
-    return await ipcClient.system.installPiper({
-      settings: {
-        ...settings,
-        defaultTargetLanguage: piperTargetLanguage,
-      },
-      forceReinstall,
-      appLocale: locale,
-    })
-  }
-
-  const resolvePiperModel = useCallback(
-    async (language: AppSettings['ttsTargetLanguage']): Promise<ResolvePiperModelResult> => {
-      return await ipcClient.system.resolvePiperModel({ language })
-    },
-    [],
-  )
-
   async function testTranslateConnectivity(settings: AppSettings): Promise<TranslateConnectivityResult> {
     return await ipcClient.system.testTranslateConnectivity({
       settings: {
@@ -845,9 +817,6 @@ function App() {
   const settingsPageActions = {
     setSettings: setSettingsData,
     onSave: saveSettings,
-    onProbePiper: probePiper,
-    onInstallPiper: installPiper,
-    onResolvePiperModel: resolvePiperModel,
     onTestTranslateConnectivity: testTranslateConnectivity,
     clearSaveSuccess: () =>
       setSettingsState((prev) => ({
@@ -886,6 +855,8 @@ function App() {
     stages: STAGES,
     taskForm: taskState.form,
     isStartDisabled,
+    isTranslateModelConfigured: settingsState.data.translateModelId.trim().length > 0,
+    isTtsModelConfigured: settingsState.data.ttsModelId.trim().length > 0,
     taskRunning: taskState.running,
     taskError: taskState.error,
     activeTaskId: taskState.activeTaskId,
@@ -1006,7 +977,11 @@ function App() {
           if (prev?.url) {
             URL.revokeObjectURL(prev.url)
           }
-          return { taskId, url, title: task.youtubeTitle || task.youtubeUrl }
+          return {
+            taskId,
+            url,
+            title: taskDetail?.task.youtubeTitle || task.youtubeTitle || task.youtubeUrl,
+          }
         })
       }
     },

@@ -60,6 +60,8 @@ export function HistoryPage(props: HistoryPageProps) {
               <th>{props.t('history.createdAt')}</th>
               <th>{props.t('history.status')}</th>
               <th>{props.t('history.target')}</th>
+              <th>{props.t('history.videoTitle')}</th>
+              <th>{props.t('history.videoAuthor')}</th>
               <th>{props.t('history.url')}</th>
               <th>{props.t('history.actions')}</th>
             </tr>
@@ -67,7 +69,7 @@ export function HistoryPage(props: HistoryPageProps) {
           <tbody>
             {!props.model.historyLoading && props.model.historyItems.length === 0 && (
               <tr>
-                <td colSpan={5} className="hint-cell">
+                <td colSpan={7} className="hint-cell">
                   {props.t('history.noRecords')}
                 </td>
               </tr>
@@ -83,8 +85,14 @@ export function HistoryPage(props: HistoryPageProps) {
                   </span>
                 </td>
                 <td>{translateLanguageLabel(item.targetLanguage, props.t)}</td>
+                <td className="url-cell" title={item.youtubeTitle || props.t('common.hyphen')}>
+                  {item.youtubeTitle || props.t('common.hyphen')}
+                </td>
+                <td className="url-cell" title={item.youtubeAuthor || props.t('common.hyphen')}>
+                  {item.youtubeAuthor || props.t('common.hyphen')}
+                </td>
                 <td className="url-cell" title={item.youtubeUrl}>
-                  {item.youtubeTitle || item.youtubeUrl}
+                  {item.youtubeUrl}
                 </td>
                 <td>
                   <div className="table-actions">

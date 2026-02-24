@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
 import type { TaskRuntimeEventPayload } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
 import { translateTaskStatus } from '../app/i18n'
 import { RuntimePreparingModal } from '../components/RuntimePreparingModal'
+import { Toast } from '../components/Toast'
 
 interface TaskFormState {
   youtubeUrl: string
@@ -30,6 +31,8 @@ interface TaskPageModel {
   stages: readonly string[]
   taskForm: TaskFormState
   isStartDisabled: boolean
+  isTranslateModelConfigured: boolean
+  isTtsModelConfigured: boolean
   taskRunning: boolean
   taskError: string
   activeTaskId: string
@@ -188,6 +191,15 @@ export function TaskPage(props: TaskPageProps) {
   const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false)
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
   const [copySuccess, setCopySuccess] = useState(false)
+  const [configToast, setConfigToast] = useState<{
+    visible: boolean
+    message: string
+    key: number
+  }>({
+    visible: false,
+    message: '',
+    key: 0,
+  })
 
   // Runtime modal is only shown when missing runtime resources need download/install.
   const hasMissingRuntimeResources = Object.values(props.model.runtimeComponentStatus).some(
@@ -195,15 +207,8 @@ export function TaskPage(props: TaskPageProps) {
   )
   const shouldShowRuntimeModal = props.model.isRuntimeModalVisible && hasMissingRuntimeResources
 
-  const isTaskInProgress =
-    props.model.taskRunning ||
-    (props.model.activeStatus !== '' &&
-      props.model.activeStatus !== 'completed' &&
-      props.model.activeStatus !== 'failed' &&
-      props.model.activeStatus !== 'canceled')
-  // Hide previous task results while a new task is in progress.
-  const hasTranscript = !isTaskInProgress && !!props.model.transcriptContent
-  const hasTranslation = !isTaskInProgress && !!props.model.translationContent
+  const hasTranscript = !!props.model.transcriptContent
+  const hasTranslation = !!props.model.translationContent
   const logsCopyLabel = copySuccess ? props.t('task.copyLogsDone') : props.t('task.copyLogs')
   const runtimeBlocked = props.model.runtimeBootstrapStatus !== 'ready'
   const runtimeInlineHint =
@@ -241,11 +246,48 @@ export function TaskPage(props: TaskPageProps) {
     }
   }
 
+  const handleStartTask = (): void => {
+    const missingTranslateModel = !props.model.isTranslateModelConfigured
+    const missingTtsModel = !props.model.isTtsModelConfigured
+    if (missingTranslateModel || missingTtsModel) {
+      const message =
+        missingTranslateModel && missingTtsModel
+          ? `${props.t('validation.translateModelRequired')}；${props.t('validation.ttsModelRequired')}`
+          : missingTranslateModel
+            ? props.t('validation.translateModelRequired')
+            : props.t('validation.ttsModelRequired')
+      setConfigToast((prev) => ({
+        visible: true,
+        message,
+        key: prev.key + 1,
+      }))
+      return
+    }
+
+    if (!props.model.isStartDisabled) {
+      void props.actions.onStartTask()
+    }
+  }
+
   // Check if task is active (running or has progress)
   const isTaskActive = props.model.taskRunning || props.model.activeTaskId !== '' || props.model.overallProgress > 0
   const shouldShowFinalOutput =
     !!props.model.ttsAudioUrl && !props.model.taskRunning && props.model.activeStatus === 'completed'
   const shouldShowProgress = isTaskActive && !shouldShowFinalOutput
+  const isSubmitDisabled =
+    props.model.isStartDisabled && props.model.isTranslateModelConfigured && props.model.isTtsModelConfigured
+
+  useEffect(() => {
+    if (hasTranscript) {
+      setIsTranscriptExpanded(true)
+    }
+  }, [hasTranscript])
+
+  useEffect(() => {
+    if (hasTranslation) {
+      setIsTranslationExpanded(true)
+    }
+  }, [hasTranslation])
 
   return (
     <>
@@ -288,12 +330,8 @@ export function TaskPage(props: TaskPageProps) {
         <div className="task-actions">
           <button
             className="btn primary btn-submit"
-            disabled={props.model.isStartDisabled}
-            onClick={() => {
-              if (!props.model.isStartDisabled) {
-                void props.actions.onStartTask()
-              }
-            }}
+            disabled={isSubmitDisabled}
+            onClick={handleStartTask}
           >
             {props.t('task.start')}
           </button>
@@ -433,6 +471,18 @@ export function TaskPage(props: TaskPageProps) {
         </div>
 
       </section>
+      <Toast
+        key={configToast.key}
+        message={configToast.message}
+        visible={configToast.visible}
+        onClose={() =>
+          setConfigToast((prev) => ({
+            ...prev,
+            visible: false,
+          }))
+        }
+        type="error"
+      />
     </>
   )
 }

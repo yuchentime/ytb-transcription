@@ -12,15 +12,6 @@
     "dist",
     "dist-electron"
   ],
-  "extraResources": [
-    {
-      "from": "resources/piper",
-      "to": "piper",
-      "filter": [
-        "**/*"
-      ]
-    }
-  ],
   "mac": {
     "target": [
       "dmg"
@@ -49,5 +40,10 @@
       "AppImage"
     ],
     "artifactName": "${productName}-Linux-${version}.${ext}"
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "your-github-username",
+    "repo": "ytb-transcription"
   }
 }

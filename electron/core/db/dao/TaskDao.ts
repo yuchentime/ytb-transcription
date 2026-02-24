@@ -6,13 +6,14 @@ interface TaskRow {
   id: string
   youtubeUrl: string
   youtubeTitle: string | null
+  youtubeAuthor: string | null
   status: TaskStatus
   sourceLanguage: string | null
   targetLanguage: string
   whisperModel: string | null
   provider: 'minimax'
   translateProvider: 'minimax' | 'deepseek' | 'glm' | 'kimi' | 'custom'
-  ttsProvider: 'minimax' | 'glm' | 'piper'
+  ttsProvider: 'minimax' | 'openai' | 'glm' | 'piper'
   translateModelId: string | null
   ttsModelId: string | null
   ttsVoice: string | null
@@ -45,14 +46,15 @@ function mapTask(row: TaskRow): TaskRecord {
   const rawTtsProvider = (row.ttsProvider ?? row.provider ?? 'minimax') as string
   const normalizedTtsProvider =
     rawTtsProvider === 'piper' || rawTtsProvider === 'custom'
-      ? 'piper'
-      : rawTtsProvider === 'glm'
-        ? 'glm'
+      ? 'minimax'
+      : rawTtsProvider === 'glm' || rawTtsProvider === 'openai'
+        ? rawTtsProvider
         : 'minimax'
   return {
     id: row.id,
     youtubeUrl: row.youtubeUrl,
     youtubeTitle: row.youtubeTitle,
+    youtubeAuthor: row.youtubeAuthor,
     status: row.status,
     sourceLanguage: row.sourceLanguage,
     targetLanguage: row.targetLanguage,
@@ -85,23 +87,28 @@ export class TaskDao {
 
     // Determine providers - use new fields if provided, fall back to legacy provider field
     const translateProvider = input.translateProvider ?? input.provider ?? 'minimax'
-    const ttsProvider = input.ttsProvider ?? input.provider ?? 'minimax'
+    const requestedTtsProvider = (input.ttsProvider ?? input.provider ?? 'minimax') as string
+    const ttsProvider =
+      requestedTtsProvider === 'piper' || requestedTtsProvider === 'custom'
+        ? 'minimax'
+        : requestedTtsProvider
 
     this.db
       .prepare(
         `
         INSERT INTO tasks(
-          id, youtube_url, youtube_title, status, source_language, target_language, whisper_model,
+          id, youtube_url, youtube_title, youtube_author, status, source_language, target_language, whisper_model,
           provider, translate_provider, tts_provider, translate_model_id, tts_model_id, tts_voice, model_config_snapshot,
           error_code, error_message, created_at, updated_at, completed_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
         id,
         input.youtubeUrl,
         input.youtubeTitle ?? null,
+        input.youtubeAuthor ?? null,
         'idle',
         input.sourceLanguage ?? null,
         input.targetLanguage ?? 'zh',
@@ -193,6 +200,43 @@ export class TaskDao {
     return this.getTaskById(taskId)
   }
 
+  updateTaskMetadata(
+    taskId: string,
+    patch: {
+      youtubeTitle?: string | null
+      youtubeAuthor?: string | null
+    },
+  ): TaskRecord {
+    const now = new Date().toISOString()
+    const hasTitle = patch.youtubeTitle !== undefined
+    const hasAuthor = patch.youtubeAuthor !== undefined
+    if (!hasTitle && !hasAuthor) {
+      return this.getTaskById(taskId)
+    }
+
+    this.db
+      .prepare(
+        `
+        UPDATE tasks
+        SET
+          youtube_title = CASE WHEN ? THEN ? ELSE youtube_title END,
+          youtube_author = CASE WHEN ? THEN ? ELSE youtube_author END,
+          updated_at = ?
+        WHERE id = ?
+      `,
+      )
+      .run(
+        hasTitle ? 1 : 0,
+        hasTitle ? patch.youtubeTitle ?? null : null,
+        hasAuthor ? 1 : 0,
+        hasAuthor ? patch.youtubeAuthor ?? null : null,
+        now,
+        taskId,
+      )
+
+    return this.getTaskById(taskId)
+  }
+
   getTaskById(taskId: string): TaskRecord {
     const row = this.db
       .prepare(
@@ -201,6 +245,7 @@ export class TaskDao {
           id,
           youtube_url AS youtubeUrl,
           youtube_title AS youtubeTitle,
+          youtube_author AS youtubeAuthor,
           status,
           source_language AS sourceLanguage,
           target_language AS targetLanguage,
@@ -248,8 +293,8 @@ export class TaskDao {
 
     if (query.keyword?.trim()) {
       const keyword = `%${query.keyword.trim()}%`
-      where.push('(youtube_url LIKE ? OR IFNULL(youtube_title, \'\') LIKE ?)')
-      params.push(keyword, keyword)
+      where.push('(youtube_url LIKE ? OR IFNULL(youtube_title, \'\') LIKE ? OR IFNULL(youtube_author, \'\') LIKE ?)')
+      params.push(keyword, keyword, keyword)
     }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
@@ -264,6 +309,7 @@ export class TaskDao {
           id,
           youtube_url AS youtubeUrl,
           youtube_title AS youtubeTitle,
+          youtube_author AS youtubeAuthor,
           status,
           source_language AS sourceLanguage,
           target_language AS targetLanguage,
@@ -304,6 +350,7 @@ export class TaskDao {
           id,
           youtube_url AS youtubeUrl,
           youtube_title AS youtubeTitle,
+          youtube_author AS youtubeAuthor,
           status,
           source_language AS sourceLanguage,
           target_language AS targetLanguage,

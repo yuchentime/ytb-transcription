@@ -19,6 +19,7 @@ interface MiniMaxTextResponse {
 
 interface OpenAIChatResponse {
   choices?: Array<{
+    finish_reason?: string | null
     message?: {
       content?: string | Array<{ type?: string; text?: string }>
     }
@@ -85,6 +86,16 @@ interface MiniMaxFileRetrieveResponse {
 
 const DEFAULT_PIPER_INPUT_MAX_CHARS = 220
 const FALLBACK_PIPER_INPUT_MAX_CHARS = 120
+const PIPER_HF_MIRROR_ENDPOINT = 'https://hf-mirror.com'
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath)
+    return true
+  } catch {
+    return false
+  }
+}
 
 function buildPiperInputLines(text: string, maxChars: number): string[] {
   const normalized = text.replace(/\r\n/g, '\n').trim()
@@ -122,6 +133,27 @@ function isPiperNoChannelsError(message: string): boolean {
 
 function isLegacyPythonWaveError(message: string): boolean {
   return /python3\.9[\\/](wave\.py|site-packages)/i.test(message)
+}
+
+function isPiperNetworkBootstrapError(message: string): boolean {
+  return /(huggingface|hf_hub|Cannot send a request|SSL|Connection|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN)/i.test(
+    message,
+  )
+}
+
+async function hasBertBaseChineseCache(hfHome: string): Promise<boolean> {
+  const hubDir = path.join(hfHome, 'hub')
+  try {
+    const entries = await fs.readdir(hubDir, { withFileTypes: true })
+    return entries.some(
+      (entry) =>
+        entry.isDirectory() &&
+        (entry.name === 'models--google-bert--bert-base-chinese' ||
+          entry.name === 'models--bert-base-chinese'),
+    )
+  } catch {
+    return false
+  }
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -296,6 +328,8 @@ function resolveTtsApiKey(
   switch (provider) {
     case 'minimax':
       return settings.minimaxApiKey ?? ''
+    case 'openai':
+      return settings.openaiApiKey ?? ''
     case 'glm':
       return settings.glmApiKey ?? ''
     case 'piper':
@@ -310,6 +344,8 @@ function resolveTtsApiBaseUrl(
   switch (provider) {
     case 'minimax':
       return settings.minimaxApiBaseUrl ?? ''
+    case 'openai':
+      return settings.openaiApiBaseUrl ?? ''
     case 'glm':
       return settings.glmApiBaseUrl ?? ''
     case 'piper':
@@ -462,7 +498,12 @@ async function requestOpenAICompatibleText(params: {
   }
 
   const data = await readJsonWithTimeout<OpenAIChatResponse>(response, params.timeoutMs)
-  const content = extractOpenAIChoiceContent(data.choices?.[0]?.message?.content)
+  const firstChoice = data.choices?.[0]
+  const finishReason = firstChoice?.finish_reason?.trim().toLowerCase()
+  if (finishReason && finishReason !== 'stop') {
+    throw new Error(`${params.provider} text response truncated (finish_reason=${finishReason})`)
+  }
+  const content = extractOpenAIChoiceContent(firstChoice?.message?.content)
   if (!content) {
     const detail =
       data.error?.message?.trim() ||
@@ -612,18 +653,30 @@ async function requestOpenAICompatibleTts(params: {
   if (!baseUrl.trim()) {
     throw new Error(`${params.provider} API base URL is required for TTS`)
   }
+  const fallbackVoice = params.provider === 'glm' ? 'tongtong' : 'alloy'
+  const requestBody =
+    params.provider === 'glm'
+      ? {
+          model: params.settings.ttsModelId,
+          input: params.text,
+          voice: params.settings.ttsVoiceId || fallbackVoice,
+          speed: Math.max(0.5, Math.min(2, params.settings.ttsSpeed ?? 1)),
+          volume: Math.max(0.1, Math.min(10, params.settings.ttsVolume ?? 1)),
+          response_format: 'wav',
+        }
+      : {
+          model: params.settings.ttsModelId,
+          input: params.text,
+          voice: params.settings.ttsVoiceId || fallbackVoice,
+          speed: params.settings.ttsSpeed ?? 1,
+          response_format: 'mp3',
+        }
   const response = await fetchWithTimeout(
     getOpenAICompatibleTtsEndpoint(params.provider, baseUrl),
     {
       method: 'POST',
       headers: buildHeaders(resolveTtsApiKey(params.settings, params.provider)),
-      body: JSON.stringify({
-        model: params.settings.ttsModelId,
-        input: params.text,
-        voice: params.settings.ttsVoiceId || 'alloy',
-        speed: params.settings.ttsSpeed ?? 1,
-        response_format: 'mp3',
-      }),
+      body: JSON.stringify(requestBody),
     },
     Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
   )
@@ -646,7 +699,7 @@ async function requestOpenAICompatibleTts(params: {
       try {
         const decoded = Buffer.from(data.data.trim(), 'base64')
         if (decoded.length > 0) {
-          return { audioBuffer: decoded, extension: 'mp3' }
+          return { audioBuffer: decoded, extension: params.provider === 'glm' ? 'wav' : 'mp3' }
         }
       } catch {
         // noop
@@ -659,7 +712,14 @@ async function requestOpenAICompatibleTts(params: {
   if (audioBuffer.length === 0) {
     throw new Error(`${params.provider} tts response is empty`)
   }
-  const extension = contentType.includes('wav') ? 'wav' : contentType.includes('mpeg') ? 'mp3' : 'mp3'
+  const extension =
+    contentType.includes('wav')
+      ? 'wav'
+      : contentType.includes('mpeg')
+        ? 'mp3'
+        : params.provider === 'glm'
+          ? 'wav'
+          : 'mp3'
   return { audioBuffer, extension }
 }
 
@@ -753,6 +813,7 @@ async function requestPiperTts(params: {
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piper-tts-'))
   const outputPath = path.join(tempDir, 'segment.wav')
+  const inputPath = path.join(tempDir, 'segment.txt')
   const dataDir = path.join(path.dirname(modelPath), '.piper-data')
   await fs.mkdir(dataDir, { recursive: true }).catch(() => undefined)
   const argsBase = ['--model', modelPath, '--output_file', outputPath]
@@ -788,14 +849,72 @@ async function requestPiperTts(params: {
   argsBase.push('--data-dir', dataDir)
   const normalizedText = params.text.trim()
   const maxCharsPlans = [DEFAULT_PIPER_INPUT_MAX_CHARS, FALLBACK_PIPER_INPUT_MAX_CHARS]
-  const piperRuntimeEnv = {
+  const hfHome = path.join(dataDir, '.hf-cache')
+  await fs.mkdir(hfHome, { recursive: true }).catch(() => undefined)
+  const piperIsChineseModel = /^zh_/i.test(path.basename(modelPath))
+  const g2pwModelPath = path.join(dataDir, 'g2pW', 'g2pw.onnx')
+  const requiresChineseBootstrap =
+    piperIsChineseModel &&
+    (!(await pathExists(g2pwModelPath)) || !(await hasBertBaseChineseCache(hfHome)))
+  const piperRuntimeEnvBase: NodeJS.ProcessEnv = {
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
+    HF_HOME: hfHome,
+    TRANSFORMERS_CACHE: path.join(hfHome, 'transformers'),
   }
+  const configuredHfEndpoint = (process.env.HF_ENDPOINT ?? '').trim()
+  const runtimeEnvPlans: NodeJS.ProcessEnv[] = configuredHfEndpoint
+    ? [
+        {
+          ...piperRuntimeEnvBase,
+          HF_ENDPOINT: configuredHfEndpoint,
+        },
+      ]
+    : [
+        piperRuntimeEnvBase,
+        {
+          ...piperRuntimeEnvBase,
+          HF_ENDPOINT: PIPER_HF_MIRROR_ENDPOINT,
+        },
+      ]
 
   try {
     if (!normalizedText) {
       throw new Error('Piper text is empty')
+    }
+
+    if (requiresChineseBootstrap) {
+      const bootstrapInputPath = path.join(tempDir, 'bootstrap.txt')
+      const bootstrapText = '这是 Piper 运行环境健康检查。'
+      await fs.writeFile(bootstrapInputPath, `${bootstrapText}\n`, 'utf8')
+      const bootstrapArgs = [...argsBase, '--input_file', bootstrapInputPath]
+      const bootstrapTimeoutMs = Math.max(15 * 60 * 1000, params.settings.stageTimeoutMs ?? 600_000)
+      let bootstrapError: unknown = null
+
+      for (let envIndex = 0; envIndex < runtimeEnvPlans.length; envIndex += 1) {
+        try {
+          await runCommand({
+            command,
+            args: bootstrapArgs,
+            cwd: dataDir,
+            env: runtimeEnvPlans[envIndex],
+            timeoutMs: bootstrapTimeoutMs,
+          })
+          bootstrapError = null
+          break
+        } catch (error) {
+          bootstrapError = error
+          const message = error instanceof Error ? error.message : String(error)
+          if (isPiperNetworkBootstrapError(message) && envIndex < runtimeEnvPlans.length - 1) {
+            continue
+          }
+          throw error
+        }
+      }
+
+      if (bootstrapError) {
+        throw bootstrapError
+      }
     }
 
     let lastNoChannelsError: unknown = null
@@ -808,37 +927,43 @@ async function requestPiperTts(params: {
 
       const runArgPlans =
         speakerArgs.length > 0 ? [[...argsBase, ...speakerArgs], argsBase] : [argsBase]
+      await fs.writeFile(inputPath, `${inputLines.join('\n')}\n`, 'utf8')
 
       for (let planIndex = 0; planIndex < runArgPlans.length; planIndex += 1) {
-        try {
-          await runCommand({
-            command,
-            args: runArgPlans[planIndex],
-            env: piperRuntimeEnv,
-            timeoutMs: Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
-            onSpawn: (child) => {
-              child.stdin.end(`${inputLines.join('\n')}\n`)
-            },
-          })
-          const audioBuffer = await fs.readFile(outputPath)
-          if (audioBuffer.length === 0) {
-            throw new Error('Piper output is empty')
-          }
-          return { audioBuffer, extension: 'wav' }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          const isNoChannels = isPiperNoChannelsError(message)
-          const isLastArgsPlan = planIndex >= runArgPlans.length - 1
-          const isLastMaxCharsPlan = index >= maxCharsPlans.length - 1
+        for (let envIndex = 0; envIndex < runtimeEnvPlans.length; envIndex += 1) {
+          try {
+            await runCommand({
+              command,
+              args: [...runArgPlans[planIndex], '--input_file', inputPath],
+              cwd: dataDir,
+              env: runtimeEnvPlans[envIndex],
+              timeoutMs: Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
+            })
+            const audioBuffer = await fs.readFile(outputPath)
+            if (audioBuffer.length === 0) {
+              throw new Error('Piper output is empty')
+            }
+            return { audioBuffer, extension: 'wav' }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            const isNoChannels = isPiperNoChannelsError(message)
+            const isNetworkBootstrap = isPiperNetworkBootstrapError(message)
+            const isLastArgsPlan = planIndex >= runArgPlans.length - 1
+            const isLastEnvPlan = envIndex >= runtimeEnvPlans.length - 1
+            const isLastMaxCharsPlan = index >= maxCharsPlans.length - 1
 
-          if (isNoChannels && !isLastArgsPlan) {
-            continue
+            if ((isNoChannels || isNetworkBootstrap) && !isLastEnvPlan) {
+              continue
+            }
+            if (isNoChannels && !isLastArgsPlan) {
+              continue
+            }
+            if (!isNoChannels || isLastMaxCharsPlan) {
+              throw error
+            }
+            lastNoChannelsError = error
+            break
           }
-          if (!isNoChannels || isLastMaxCharsPlan) {
-            throw error
-          }
-          lastNoChannelsError = error
-          break
         }
       }
     }

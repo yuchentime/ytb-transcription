@@ -27,6 +27,8 @@ export function resolveTtsApiBaseUrl(settings: AppSettings): string {
   switch (settings.ttsProvider) {
     case 'minimax':
       return settings.minimaxApiBaseUrl
+    case 'openai':
+      return settings.openaiApiBaseUrl
     case 'glm':
       return settings.glmApiBaseUrl
     case 'piper':
@@ -80,6 +82,8 @@ export function resolveTtsApiKeyState(settings: AppSettings): 'set' | 'missing' 
   const key =
     provider === 'minimax'
       ? settings.minimaxApiKey
+      : provider === 'openai'
+        ? settings.openaiApiKey
       : provider === 'glm'
         ? settings.glmApiKey
         : ''

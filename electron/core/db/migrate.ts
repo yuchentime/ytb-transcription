@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import type Database from 'better-sqlite3'
 import { SCHEMA_SQL } from './schema'
 
-const LATEST_SCHEMA_VERSION = 5
+const LATEST_SCHEMA_VERSION = 6
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 function resolveSchemaPath(): string | null {
@@ -133,6 +133,22 @@ function applyVersion5(db: Database.Database): void {
   applyMigration()
 }
 
+function applyVersion6(db: Database.Database): void {
+  const migrationPath = resolveMigrationPath('006_add_youtube_author.sql')
+  if (!migrationPath) {
+    throw new Error('Cannot find migration file: 006_add_youtube_author.sql')
+  }
+  const migrationSql = fs.readFileSync(migrationPath, 'utf-8')
+  const now = new Date().toISOString()
+
+  const applyMigration = db.transaction(() => {
+    db.exec(migrationSql)
+    db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(6, now)
+  })
+
+  applyMigration()
+}
+
 export function runMigrations(db: Database.Database): void {
   ensureMigrationsTable(db)
 
@@ -161,5 +177,9 @@ export function runMigrations(db: Database.Database): void {
 
   if (currentVersion < 5) {
     applyVersion5(db)
+  }
+
+  if (currentVersion < 6) {
+    applyVersion6(db)
   }
 }

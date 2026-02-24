@@ -35,6 +35,20 @@ function toUnknownErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function normalizeSettingsTtsProvider(settings: AppSettings): AppSettings {
+  if (settings.ttsProvider !== 'piper') {
+    return settings
+  }
+  return {
+    ...settings,
+    ttsProvider: 'minimax',
+  }
+}
+
+function shouldValidateVoicePreset(settings: AppSettings): boolean {
+  return settings.ttsProvider === 'minimax'
+}
+
 export async function loadHistoryAction(
   params: {
     ipcClient: RendererAPI
@@ -166,23 +180,28 @@ export async function loadSettingsAction(
 
   try {
     const result = await ipcClient.settings.get()
+    const normalizedSettings = normalizeSettingsTtsProvider(result)
     const voiceProfiles = await ipcClient.voices.list().catch(() => [])
-    const voiceValidation =
-      result.ttsProvider === 'piper'
-        ? { valid: true, errors: [] }
-        : await ipcClient.voices
+    const voiceValidation = shouldValidateVoicePreset(normalizedSettings)
+      ? await ipcClient.voices
           .validateParams({
-            voiceId: result.ttsVoiceId,
-            speed: result.ttsSpeed,
-            pitch: result.ttsPitch,
-            volume: result.ttsVolume,
+            voiceId: normalizedSettings.ttsVoiceId,
+            speed: normalizedSettings.ttsSpeed,
+            pitch: normalizedSettings.ttsPitch,
+            volume: normalizedSettings.ttsVolume,
           })
           .catch(() => ({ valid: true, errors: [] }))
+      : { valid: true, errors: [] }
+    if (normalizedSettings !== result) {
+      await ipcClient.settings.update({
+        ttsProvider: 'minimax',
+      }).catch(() => undefined)
+    }
     if (!isMounted()) return
 
     setSettingsState((prev) => ({
       ...prev,
-      data: result,
+      data: normalizedSettings,
       voiceProfiles,
       voiceValidationErrors: voiceValidation.errors,
     }))
@@ -190,8 +209,8 @@ export async function loadSettingsAction(
       ...prev,
       form: {
         ...prev.form,
-        targetLanguage: result.ttsTargetLanguage ?? 'zh',
-        ttsVoiceId: result.ttsVoiceId,
+        targetLanguage: normalizedSettings.ttsTargetLanguage ?? 'zh',
+        ttsVoiceId: normalizedSettings.ttsVoiceId,
       },
     }))
   } catch (error) {
@@ -230,11 +249,10 @@ export async function saveSettingsAction(
   }))
 
   try {
-    const saved = await ipcClient.settings.update(settings)
-    const voiceValidation =
-      saved.ttsProvider === 'piper'
-        ? { valid: true, errors: [] }
-        : await ipcClient.voices
+    const payload = normalizeSettingsTtsProvider(settings)
+    const saved = await ipcClient.settings.update(payload)
+    const voiceValidation = shouldValidateVoicePreset(saved)
+      ? await ipcClient.voices
           .validateParams({
             voiceId: saved.ttsVoiceId,
             speed: saved.ttsSpeed,
@@ -242,6 +260,7 @@ export async function saveSettingsAction(
             volume: saved.ttsVolume,
           })
           .catch(() => ({ valid: true, errors: [] }))
+      : { valid: true, errors: [] }
     setSettingsState((prev) => ({
       ...prev,
       data: saved,
@@ -322,13 +341,31 @@ export async function startTaskAction(
     error: '',
   }))
 
+  if (!settings.translateModelId.trim()) {
+    setTaskState((prev) => ({
+      ...prev,
+      error: t('validation.translateModelRequired'),
+    }))
+    return false
+  }
+
+  if (!settings.ttsModelId.trim()) {
+    setTaskState((prev) => ({
+      ...prev,
+      error: t('validation.ttsModelRequired'),
+    }))
+    return false
+  }
+
   try {
-    if (settings.ttsProvider !== 'piper') {
+    const runtimeSettings = normalizeSettingsTtsProvider(settings)
+
+    if (shouldValidateVoicePreset(runtimeSettings)) {
       const voiceValidation = await ipcClient.voices.validateParams({
         voiceId: taskForm.ttsVoiceId,
-        speed: settings.ttsSpeed,
-        pitch: settings.ttsPitch,
-        volume: settings.ttsVolume,
+        speed: runtimeSettings.ttsSpeed,
+        pitch: runtimeSettings.ttsPitch,
+        volume: runtimeSettings.ttsVolume,
       })
       if (!voiceValidation.valid) {
         throw new Error(voiceValidation.errors.join('；') || 'TTS 参数不合法')
@@ -339,26 +376,28 @@ export async function startTaskAction(
       urls: [youtubeUrl],
       sharedConfig: {
         targetLanguage: taskForm.targetLanguage,
-        whisperModel: settings.defaultWhisperModel,
-        translateProvider: settings.translateProvider,
-        ttsProvider: settings.ttsProvider,
-        translateModelId: settings.translateModelId,
-        ttsModelId: settings.ttsModelId,
+        whisperModel: runtimeSettings.defaultWhisperModel,
+        translateProvider: runtimeSettings.translateProvider,
+        ttsProvider: runtimeSettings.ttsProvider,
+        translateModelId: runtimeSettings.translateModelId,
+        ttsModelId: runtimeSettings.ttsModelId,
         ttsVoice: taskForm.ttsVoiceId,
         modelConfigSnapshot: {
-          translateProvider: settings.translateProvider,
-          ttsProvider: settings.ttsProvider,
-          minimaxApiBaseUrl: settings.minimaxApiBaseUrl,
-          deepseekApiBaseUrl: settings.deepseekApiBaseUrl,
-          glmApiBaseUrl: settings.glmApiBaseUrl,
-          kimiApiBaseUrl: settings.kimiApiBaseUrl,
-          customApiBaseUrl: settings.customApiBaseUrl,
+          translateProvider: runtimeSettings.translateProvider,
+          ttsProvider: runtimeSettings.ttsProvider,
+          minimaxApiBaseUrl: runtimeSettings.minimaxApiBaseUrl,
+          deepseekApiBaseUrl: runtimeSettings.deepseekApiBaseUrl,
+          glmApiBaseUrl: runtimeSettings.glmApiBaseUrl,
+          openaiApiBaseUrl: runtimeSettings.openaiApiBaseUrl,
+          kimiApiBaseUrl: runtimeSettings.kimiApiBaseUrl,
+          customApiBaseUrl: runtimeSettings.customApiBaseUrl,
           segmentationStrategy: 'punctuation',
           segmentationOptions: {
             maxCharsPerSegment: 900,
           },
           translationContextChars: 160,
           translateRequestTimeoutMs: 120000,
+          translateSplitThresholdTokens: 8000,
           autoPolishLongText: true,
           polishMinDurationSec: 600,
           polishContextChars: 180,
@@ -371,16 +410,9 @@ export async function startTaskAction(
           ttsSplitThresholdChars: 3000,
           ttsTargetSegmentChars: 900,
           ttsVoiceId: taskForm.ttsVoiceId,
-          ttsSpeed: settings.ttsSpeed,
-          ttsPitch: settings.ttsPitch,
-          ttsVolume: settings.ttsVolume,
-          piperExecutablePath: settings.piperExecutablePath,
-          piperModelPath: settings.piperModelPath,
-          piperConfigPath: settings.piperConfigPath,
-          piperSpeakerId: settings.piperSpeakerId,
-          piperLengthScale: settings.piperLengthScale,
-          piperNoiseScale: settings.piperNoiseScale,
-          piperNoiseW: settings.piperNoiseW,
+          ttsSpeed: runtimeSettings.ttsSpeed,
+          ttsPitch: runtimeSettings.ttsPitch,
+          ttsVolume: runtimeSettings.ttsVolume,
         },
       },
     })

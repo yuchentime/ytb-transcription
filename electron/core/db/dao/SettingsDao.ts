@@ -34,9 +34,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   glmApiKey: '',
   glmApiBaseUrl: 'https://open.bigmodel.cn/api/paas',
 
+  // OpenAI
+  openaiApiKey: '',
+  openaiApiBaseUrl: 'https://api.openai.com/v1',
+
   // Kimi
   kimiApiKey: '',
-  kimiApiBaseUrl: 'https://api.moonshot.cn',
+  kimiApiBaseUrl: 'https://api.moonshot.cn/v1',
 
   // Custom/Local provider (e.g., LM Studio with OpenAI-compatible API)
   customApiKey: '',
@@ -150,7 +154,7 @@ function assertValidTranslateProvider(
 function assertValidTtsProvider(
   provider: unknown,
 ): asserts provider is AppSettings['ttsProvider'] {
-  if (provider === 'minimax' || provider === 'glm' || provider === 'piper') {
+  if (provider === 'minimax' || provider === 'openai' || provider === 'glm' || provider === 'piper') {
     return
   }
   throw new Error('Invalid ttsProvider')
@@ -199,8 +203,8 @@ export class SettingsDao {
     if (!persisted.ttsProvider && merged.provider) {
       merged.ttsProvider = merged.provider as AppSettings['ttsProvider']
     }
-    if ((merged.ttsProvider as unknown) === 'custom') {
-      merged.ttsProvider = 'piper'
+    if ((merged.ttsProvider as unknown) === 'custom' || merged.ttsProvider === 'piper') {
+      merged.ttsProvider = 'minimax'
     }
     return merged
   }
@@ -281,6 +285,7 @@ export class SettingsDao {
       'minimaxApiBaseUrl',
       'deepseekApiBaseUrl',
       'glmApiBaseUrl',
+      'openaiApiBaseUrl',
       'kimiApiBaseUrl',
       'customApiBaseUrl',
     ]
@@ -302,8 +307,8 @@ export class SettingsDao {
     if (candidate.ytDlpAuthMode === 'cookies_file' && !candidate.ytDlpCookiesFilePath.trim()) {
       throw new Error('ytDlpCookiesFilePath is required when ytDlpAuthMode=cookies_file')
     }
-    if (candidate.ttsProvider === 'piper' && !candidate.piperModelPath.trim()) {
-      throw new Error('piperModelPath is required when ttsProvider=piper')
+    if (candidate.ttsProvider === 'piper') {
+      normalizedPatch.ttsProvider = 'minimax'
     }
 
     const now = new Date().toISOString()
@@ -362,26 +367,22 @@ export class SettingsDao {
     }
 
     // Validate TTS provider API key/base URL
-    if (ttsProvider === 'piper') {
-      if (!settings.piperModelPath?.trim()) {
-        errors.push('piperModelPath is required for TTS')
-      }
-    } else {
-      const ttsApiKeyField = this.getApiKeyField(ttsProvider)
-      const ttsBaseUrlField = this.getBaseUrlField(ttsProvider)
-      if (!settings[ttsApiKeyField]) {
-        errors.push(`${ttsProvider} API key is required for TTS`)
-      }
-      if (!settings[ttsBaseUrlField]) {
-        errors.push(`${ttsProvider} API base URL is required for TTS`)
-      }
+    const effectiveTtsProvider: Exclude<AppSettings['ttsProvider'], 'piper'> =
+      ttsProvider === 'piper' ? 'minimax' : ttsProvider
+    const ttsApiKeyField = this.getApiKeyField(effectiveTtsProvider)
+    const ttsBaseUrlField = this.getBaseUrlField(effectiveTtsProvider)
+    if (!settings[ttsApiKeyField]) {
+      errors.push(`${effectiveTtsProvider} API key is required for TTS`)
+    }
+    if (!settings[ttsBaseUrlField]) {
+      errors.push(`${effectiveTtsProvider} API base URL is required for TTS`)
     }
 
     if (!settings.translateModelId) {
       errors.push('translateModelId is required')
     }
 
-    if (ttsProvider !== 'piper' && !settings.ttsModelId) {
+    if (!settings.ttsModelId) {
       errors.push('ttsModelId is required')
     }
 
@@ -396,12 +397,14 @@ export class SettingsDao {
         return 'deepseekApiKey'
       case 'glm':
         return 'glmApiKey'
+      case 'openai':
+        return 'openaiApiKey'
       case 'kimi':
         return 'kimiApiKey'
       case 'custom':
         return 'customApiKey'
       case 'piper':
-        return 'customApiKey'
+        return 'minimaxApiKey'
     }
   }
 
@@ -413,12 +416,14 @@ export class SettingsDao {
         return 'deepseekApiBaseUrl'
       case 'glm':
         return 'glmApiBaseUrl'
+      case 'openai':
+        return 'openaiApiBaseUrl'
       case 'kimi':
         return 'kimiApiBaseUrl'
       case 'custom':
         return 'customApiBaseUrl'
       case 'piper':
-        return 'customApiBaseUrl'
+        return 'minimaxApiBaseUrl'
     }
   }
 }

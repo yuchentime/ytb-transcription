@@ -55,8 +55,9 @@ export const TRANSLATE_MODEL_OPTIONS: Record<Exclude<TranslateProvider, 'custom'
 
 export const TTS_MODEL_OPTIONS: Record<Exclude<TtsProvider, 'piper'>, string[]> = {
   minimax: ['speech-2.8-hd', 'speech-2.6-hd', 'speech-2.8-turbo', 'speech-2.6-turbo', 'speech-02-hd', 'speech-02-turbo'],
-  // GLM TTS models based on bigmodel.cn documentation
-  glm: ['glm-4-voice', 'glm-4-voice-realtime'],
+  openai: ['gpt-4o-mini-tts', 'tts-1-hd', 'tts-1'],
+  // GLM TTS model based on bigmodel.cn text-to-speech documentation
+  glm: ['glm-tts'],
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -86,6 +87,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // GLM
   glmApiKey: '',
   glmApiBaseUrl: 'https://open.bigmodel.cn/api/paas',
+
+  // OpenAI
+  openaiApiKey: '',
+  openaiApiBaseUrl: 'https://api.openai.com/v1',
 
   // Kimi
   kimiApiKey: '',

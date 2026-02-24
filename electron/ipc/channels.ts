@@ -65,6 +65,12 @@ export const IPC_CHANNELS = {
   queueTaskMoved: 'queue:taskMoved',
   batchProgress: 'batch:progress',
   batchCompleted: 'batch:completed',
+  // Auto-update channels
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  updateGetVersion: 'update:getVersion',
+  updateStatus: 'update:status',
 } as const
 
 export interface TaskIdPayload {
@@ -75,7 +81,7 @@ export interface RetrySegmentsPayload extends TaskIdPayload {
   segmentIds: string[]
 }
 
-export type BatchConfig = Omit<CreateTaskInput, 'youtubeUrl' | 'youtubeTitle'>
+export type BatchConfig = Omit<CreateTaskInput, 'youtubeUrl' | 'youtubeTitle' | 'youtubeAuthor'>
 
 export interface BatchCreatePayload {
   urls: string[]
@@ -382,15 +388,33 @@ export interface RendererAPI {
   system: {
     openPath(payload: OpenPathPayload): Promise<OpenPathResult>
     exportTaskArtifacts(payload: ExportTaskArtifactsPayload): Promise<ExportTaskArtifactsResult>
-    probePiper(payload?: ProbePiperPayload): Promise<PiperProbeResult>
     prepareRuntime(): Promise<PrepareRuntimeResult>
     onRuntime(listener: (payload: SystemRuntimeEventPayload) => void): () => void
-    installPiper(payload?: InstallPiperPayload): Promise<PiperInstallResult>
-    resolvePiperModel(payload: ResolvePiperModelPayload): Promise<ResolvePiperModelResult>
     testTranslateConnectivity(payload?: TestTranslateConnectivityPayload): Promise<TranslateConnectivityResult>
   }
   file: {
     readAudio(filePath: string): Promise<AudioFileResult>
     readText(filePath: string): Promise<TextFileResult>
+  }
+  update: {
+    check(): Promise<unknown>
+    download(): Promise<boolean>
+    install(): void
+    getVersion(): Promise<string>
+    onStatus(listener: (payload: UpdateStatusPayload) => void): () => void
+  }
+}
+
+// Update status types
+export interface UpdateStatusPayload {
+  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  data?: {
+    version?: string
+    releaseDate?: string
+    releaseNotes?: string
+    percent?: number
+    transferred?: number
+    total?: number
+    message?: string
   }
 }

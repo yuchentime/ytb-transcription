@@ -59,17 +59,21 @@ const api: RendererAPI = {
   system: {
     openPath: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemOpenPath, payload),
     exportTaskArtifacts: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemExportTaskArtifacts, payload),
-    probePiper: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemProbePiper, payload),
     prepareRuntime: () => ipcRenderer.invoke(IPC_CHANNELS.systemPrepareRuntime),
     onRuntime: (listener) => subscribe(IPC_CHANNELS.systemRuntime, listener),
-    installPiper: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemInstallPiper, payload),
-    resolvePiperModel: (payload) => ipcRenderer.invoke(IPC_CHANNELS.systemResolvePiperModel, payload),
     testTranslateConnectivity: (payload) =>
       ipcRenderer.invoke(IPC_CHANNELS.systemTestTranslateConnectivity, payload),
   },
   file: {
     readAudio: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.fileReadAudio, filePath),
     readText: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.fileReadText, filePath),
+  },
+  update: {
+    check: () => ipcRenderer.invoke(IPC_CHANNELS.updateCheck),
+    download: () => ipcRenderer.invoke(IPC_CHANNELS.updateDownload),
+    install: () => ipcRenderer.invoke(IPC_CHANNELS.updateInstall),
+    getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetVersion),
+    onStatus: (listener) => subscribe(IPC_CHANNELS.updateStatus, listener),
   },
 }
 

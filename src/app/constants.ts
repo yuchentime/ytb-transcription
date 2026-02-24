@@ -13,7 +13,8 @@ export const TRANSLATE_PROVIDERS: { value: TranslateProvider; labelKey: Translat
 // TTS provider options - label is i18n key
 export const TTS_PROVIDERS: { value: TtsProvider; labelKey: TranslateKey }[] = [
   { value: 'minimax', labelKey: 'settings.provider.minimax' },
-  { value: 'piper', labelKey: 'settings.provider.piper' },
+  { value: 'openai', labelKey: 'settings.provider.openai' },
+  { value: 'glm', labelKey: 'settings.provider.glm' },
 ]
 
 // Default base URLs for providers
@@ -21,5 +22,6 @@ export const DEFAULT_BASE_URLS = {
   minimax: 'https://api.minimaxi.com',
   deepseek: 'https://api.deepseek.com',
   glm: 'https://open.bigmodel.cn/api/paas',
+  openai: 'https://api.openai.com/v1',
   kimi: 'https://api.moonshot.cn/v1',
 } as const

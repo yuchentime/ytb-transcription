@@ -28,8 +28,8 @@ export type YtDlpCookiesBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox' | '
 // Translation providers: MiniMax, DeepSeek, GLM, Kimi, and Custom (for local models like LM Studio)
 export type TranslateProvider = 'minimax' | 'deepseek' | 'glm' | 'kimi' | 'custom'
 
-// TTS providers: MiniMax, GLM, and Piper (built-in local TTS)
-export type TtsProvider = 'minimax' | 'glm' | 'piper'
+// TTS providers: MiniMax, OpenAI, GLM, and Piper (built-in local TTS)
+export type TtsProvider = 'minimax' | 'openai' | 'glm' | 'piper'
 export type SegmentStatus = 'pending' | 'running' | 'success' | 'failed'
 export type SegmentStageName = 'translating' | 'synthesizing'
 export type SegmentationStrategy = 'punctuation' | 'sentence' | 'duration'
@@ -47,6 +47,7 @@ export interface SegmentationOptions {
 export interface CreateTaskInput {
   youtubeUrl: string
   youtubeTitle?: string
+  youtubeAuthor?: string
   sourceLanguage?: string | null
   targetLanguage?: string
   whisperModel?: string | null
@@ -69,6 +70,7 @@ export interface TaskRecord {
   id: string
   youtubeUrl: string
   youtubeTitle: string | null
+  youtubeAuthor: string | null
   status: TaskStatus
   sourceLanguage: string | null
   targetLanguage: string
@@ -283,6 +285,10 @@ export interface AppSettings {
   // GLM (for both translation and TTS)
   glmApiKey: string
   glmApiBaseUrl: string
+
+  // OpenAI (for TTS)
+  openaiApiKey: string
+  openaiApiBaseUrl: string
 
   // Kimi
   kimiApiKey: string

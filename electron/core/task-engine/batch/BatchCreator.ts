@@ -3,7 +3,7 @@ import type { CreateTaskInput } from '../../db/types'
 import type { QueueScheduler } from '../queue/QueueScheduler'
 import { BatchValidator } from './BatchValidator'
 
-export interface BatchConfig extends Omit<CreateTaskInput, 'youtubeUrl' | 'youtubeTitle'> {}
+export interface BatchConfig extends Omit<CreateTaskInput, 'youtubeUrl' | 'youtubeTitle' | 'youtubeAuthor'> {}
 
 export interface BatchCreateInput {
   urls: string[]

@@ -309,6 +309,46 @@ label {
   text-decoration: underline;
 }
 
+.about-version-section {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid #e8e8e8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.version-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.version-label {
+  color: #666;
+  font-size: 14px;
+}
+
+.version-number {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.update-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.update-status {
+  font-size: 13px;
+  color: #666;
+  margin: 0;
+}
+
 .settings-group {
   margin-bottom: 24px;
   padding-bottom: 24px;
@@ -1112,7 +1152,7 @@ input:read-only {
 .history-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px;
+  min-width: 1120px;
   font-size: 12px;
 }
 
@@ -1141,12 +1181,22 @@ input:read-only {
 
 .history-table th:nth-child(4),
 .history-table td:nth-child(4) {
+  width: 220px;
+} /* Title */
+
+.history-table th:nth-child(5),
+.history-table td:nth-child(5) {
+  width: 150px;
+} /* Author */
+
+.history-table th:nth-child(6),
+.history-table td:nth-child(6) {
   width: auto;
 } /* URL - flexible */
 
 /* Actions - fixed width to prevent squeezing */
-.history-table th:nth-child(5),
-.history-table td:nth-child(5) {
+.history-table th:nth-child(7),
+.history-table td:nth-child(7) {
   width: 260px;
   min-width: 260px;
 }
@@ -1196,7 +1246,7 @@ input:read-only {
 }
 
 .url-cell {
-  max-width: 150px;
+  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1445,11 +1495,11 @@ input:read-only {
   }
 
   .history-table {
-    min-width: 700px;
+    min-width: 920px;
   }
 
-  .history-table th:nth-child(5),
-  .history-table td:nth-child(5) {
+  .history-table th:nth-child(7),
+  .history-table td:nth-child(7) {
     width: 240px;
     min-width: 240px;
   }
@@ -1484,11 +1534,11 @@ input:read-only {
   }
 
   .history-table {
-    min-width: 600px;
+    min-width: 820px;
   }
 
-  .history-table th:nth-child(5),
-  .history-table td:nth-child(5) {
+  .history-table th:nth-child(7),
+  .history-table td:nth-child(7) {
     width: 220px;
     min-width: 220px;
   }

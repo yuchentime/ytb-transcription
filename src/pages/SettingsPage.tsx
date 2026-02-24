@@ -1,12 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../../electron/core/db/types'
-import type {
-  PiperInstallResult,
-  PiperProbeResult,
-  ResolvePiperModelResult,
-  TranslateConnectivityResult,
-} from '../../electron/ipc/channels'
+import type { TranslateConnectivityResult } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
 import { Toast } from '../components/Toast'
@@ -37,9 +32,6 @@ interface SettingsPageModel {
 interface SettingsPageActions {
   setSettings: Dispatch<SetStateAction<AppSettings>>
   onSave(): Promise<void>
-  onProbePiper(settings: AppSettings): Promise<PiperProbeResult>
-  onInstallPiper(settings: AppSettings, forceReinstall?: boolean): Promise<PiperInstallResult>
-  onResolvePiperModel(language: AppSettings['ttsTargetLanguage']): Promise<ResolvePiperModelResult>
   onTestTranslateConnectivity(settings: AppSettings): Promise<TranslateConnectivityResult>
   clearSaveSuccess(): void
   clearSaveError(): void
@@ -51,19 +43,175 @@ interface SettingsPageProps {
   t: TranslateFn
 }
 
+type CloudTtsProvider = Exclude<TtsProvider, 'piper'>
+
+const OPENAI_TTS_VOICE_PROFILES: SettingsPageModel['voiceProfiles'] = [
+  {
+    id: 'alloy',
+    displayName: 'Alloy (OpenAI)',
+    description: 'Neutral and balanced',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'ash',
+    displayName: 'Ash (OpenAI)',
+    description: 'Deep and steady',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'coral',
+    displayName: 'Coral (OpenAI)',
+    description: 'Warm and clear',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'echo',
+    displayName: 'Echo (OpenAI)',
+    description: 'Bright and energetic',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'sage',
+    displayName: 'Sage (OpenAI)',
+    description: 'Calm and mature',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'shimmer',
+    displayName: 'Shimmer (OpenAI)',
+    description: 'Soft and friendly',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+]
+
+const GLM_TTS_VOICE_PROFILES: SettingsPageModel['voiceProfiles'] = [
+  {
+    id: 'tongtong',
+    displayName: 'Tongtong (GLM)',
+    description: 'Female child',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'chuichui',
+    displayName: 'Chuichui (GLM)',
+    description: 'Male voice',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'xiaochen',
+    displayName: 'Xiaochen (GLM)',
+    description: 'Male voice',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'jam',
+    displayName: 'Jam (GLM)',
+    description: 'Male voice',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'kazi',
+    displayName: 'Kazi (GLM)',
+    description: 'Male voice',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'douji',
+    displayName: 'Douji (GLM)',
+    description: 'Female voice',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'luodo',
+    displayName: 'Luodo (GLM)',
+    description: 'Neutral voice',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+]
+
+const NON_MINIMAX_CLOUD_VOICE_IDS = new Set(
+  [...OPENAI_TTS_VOICE_PROFILES, ...GLM_TTS_VOICE_PROFILES].map((voice) => voice.id),
+)
+
+function filterVoicesByLanguage(
+  voices: SettingsPageModel['voiceProfiles'],
+  targetLanguage: AppSettings['ttsTargetLanguage'],
+): SettingsPageModel['voiceProfiles'] {
+  return voices.filter((voice) => voice.language === targetLanguage || voice.language === 'multi')
+}
+
+function getVoiceProfilesForProvider(
+  provider: CloudTtsProvider,
+  voices: SettingsPageModel['voiceProfiles'],
+  targetLanguage: AppSettings['ttsTargetLanguage'],
+): SettingsPageModel['voiceProfiles'] {
+  const providerVoices = (() => {
+    switch (provider) {
+      case 'openai':
+        return OPENAI_TTS_VOICE_PROFILES
+      case 'glm':
+        return GLM_TTS_VOICE_PROFILES
+      case 'minimax':
+        return voices.filter((voice) => !NON_MINIMAX_CLOUD_VOICE_IDS.has(voice.id))
+    }
+  })()
+  return filterVoicesByLanguage(providerVoices, targetLanguage)
+}
+
+function normalizeTtsProvider(provider: TtsProvider): CloudTtsProvider {
+  return provider === 'piper' ? 'minimax' : provider
+}
+
 export function SettingsPage(props: SettingsPageProps) {
   const { settings } = props.model
-  const { setSettings, onResolvePiperModel } = props.actions
-  const [probeLoading, setProbeLoading] = useState(false)
-  const [probeResult, setProbeResult] = useState<PiperProbeResult | null>(null)
-  const [probeError, setProbeError] = useState('')
-  const [installLoading, setInstallLoading] = useState(false)
-  const [installError, setInstallError] = useState('')
-  const [installSuccessToastVisible, setInstallSuccessToastVisible] = useState(false)
-  const [installErrorToastVisible, setInstallErrorToastVisible] = useState(false)
+  const { setSettings } = props.actions
+  const currentTtsProvider = normalizeTtsProvider(settings.ttsProvider)
+  const availableVoiceProfiles = getVoiceProfilesForProvider(
+    currentTtsProvider,
+    props.model.voiceProfiles,
+    settings.ttsTargetLanguage,
+  )
   const [translateTestLoading, setTranslateTestLoading] = useState(false)
   const [translateTestStatus, setTranslateTestStatus] = useState<'idle' | 'success' | 'error'>('idle')
-  const isPiperInstalled = Boolean(settings.piperModelPath.trim()) || probeResult?.ok === true
 
   useEffect(() => {
     setTranslateTestStatus('idle')
@@ -88,8 +236,7 @@ export function SettingsPage(props: SettingsPageProps) {
     return TRANSLATE_MODEL_OPTIONS[provider] ?? []
   }
 
-  const getTtsModels = (provider: TtsProvider): string[] => {
-    if (provider === 'piper') return []
+  const getTtsModels = (provider: CloudTtsProvider): string[] => {
     return TTS_MODEL_OPTIONS[provider] ?? []
   }
 
@@ -102,14 +249,15 @@ export function SettingsPage(props: SettingsPageProps) {
         return 'deepseekApiKey'
       case 'glm':
         return 'glmApiKey'
+      case 'openai':
+        return 'openaiApiKey'
       case 'kimi':
         return 'kimiApiKey'
       case 'custom':
         // For custom/local providers, use a generic custom API key field
         return 'customApiKey' as keyof AppSettings
-      case 'piper':
-        // Piper does not use API key, keep return type complete for shared helper.
-        return 'customApiKey' as keyof AppSettings
+      default:
+        return 'minimaxApiKey'
     }
   }
 
@@ -122,110 +270,15 @@ export function SettingsPage(props: SettingsPageProps) {
         return 'deepseekApiBaseUrl'
       case 'glm':
         return 'glmApiBaseUrl'
+      case 'openai':
+        return 'openaiApiBaseUrl'
       case 'kimi':
         return 'kimiApiBaseUrl'
       case 'custom':
         // For custom/local providers, use a generic custom base URL field
         return 'customApiBaseUrl' as keyof AppSettings
-      case 'piper':
-        // Piper does not use base URL, keep return type complete for shared helper.
-        return 'customApiBaseUrl' as keyof AppSettings
-    }
-  }
-
-  const matchesPiperTargetLanguage = (
-    modelPath: string,
-    targetLanguage: AppSettings['ttsTargetLanguage'],
-  ): boolean => {
-    const fileName = modelPath.trim().split(/[\\/]/).pop() ?? ''
-    const modelName = fileName.replace(/\.onnx$/i, '')
-    if (!modelName) return false
-    if (targetLanguage === 'zh') return /^zh_CN-/i.test(modelName)
-    if (targetLanguage === 'en') return /^en_US-/i.test(modelName)
-    return false
-  }
-
-  const piperModelMatchesTargetLanguage = matchesPiperTargetLanguage(
-    settings.piperModelPath,
-    settings.ttsTargetLanguage,
-  )
-
-  const syncPiperModelByTargetLanguage = useCallback(
-    async (targetLanguage: AppSettings['ttsTargetLanguage']): Promise<void> => {
-      try {
-        const resolved = await onResolvePiperModel(targetLanguage)
-        if (!resolved.found) return
-        setSettings((prev) => {
-          if (prev.ttsProvider !== 'piper' || prev.ttsTargetLanguage !== targetLanguage) {
-            return prev
-          }
-          if (
-            prev.piperModelPath === resolved.modelPath &&
-            prev.piperConfigPath === resolved.configPath
-          ) {
-            return prev
-          }
-          return {
-            ...prev,
-            piperModelPath: resolved.modelPath,
-            piperConfigPath: resolved.configPath,
-          }
-        })
-      } catch {
-        // ignore resolve failures and let mismatch hint guide user reinstall
-      }
-    },
-    [onResolvePiperModel, setSettings],
-  )
-
-  useEffect(() => {
-    if (settings.ttsProvider !== 'piper') return
-    if (piperModelMatchesTargetLanguage) return
-    void syncPiperModelByTargetLanguage(settings.ttsTargetLanguage)
-  }, [piperModelMatchesTargetLanguage, settings.ttsProvider, settings.ttsTargetLanguage, syncPiperModelByTargetLanguage])
-
-  async function handleProbePiper(): Promise<void> {
-    setProbeLoading(true)
-    setProbeError('')
-    try {
-      const result = await props.actions.onProbePiper(settings)
-      setProbeResult(result)
-    } catch (error) {
-      setProbeResult(null)
-      setProbeError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setProbeLoading(false)
-    }
-  }
-
-  async function handleInstallPiper(forceReinstall = false): Promise<void> {
-    setInstallLoading(true)
-    setInstallError('')
-    setInstallSuccessToastVisible(false)
-    setInstallErrorToastVisible(false)
-    try {
-      const result = await props.actions.onInstallPiper(settings, forceReinstall)
-      const nextSettings: AppSettings = {
-        ...settings,
-        piperExecutablePath: result.piperExecutablePath,
-        piperModelPath: result.piperModelPath,
-        piperConfigPath: result.piperConfigPath,
-      }
-      setSettings((prev) => ({
-        ...prev,
-        piperExecutablePath: result.piperExecutablePath,
-        piperModelPath: result.piperModelPath,
-        piperConfigPath: result.piperConfigPath,
-      }))
-      const probe = await props.actions.onProbePiper(nextSettings)
-      setProbeResult(probe)
-      setProbeError('')
-      setInstallSuccessToastVisible(true)
-    } catch (error) {
-      setInstallError(error instanceof Error ? error.message : String(error))
-      setInstallErrorToastVisible(true)
-    } finally {
-      setInstallLoading(false)
+      default:
+        return 'minimaxApiBaseUrl'
     }
   }
 
@@ -390,26 +443,27 @@ export function SettingsPage(props: SettingsPageProps) {
           <label>
             {props.t('settings.ttsProvider')}
             <select
-              value={settings.ttsProvider}
+              value={currentTtsProvider}
               onChange={(event) => {
-                const newProvider = event.target.value as TtsProvider
+                const newProvider = event.target.value as CloudTtsProvider
                 const availableModels = getTtsModels(newProvider)
                 const currentModelValid = availableModels.includes(settings.ttsModelId)
                 setSettings((prev) => {
-                  if (newProvider === 'piper') {
-                    return {
-                      ...prev,
-                      ttsProvider: newProvider,
-                      ttsModelId: '',
-                    }
-                  }
                   const baseUrlField = getBaseUrlField(newProvider)
                   const defaultBaseUrl = DEFAULT_BASE_URLS[newProvider]
+                  const filteredVoices = getVoiceProfilesForProvider(
+                    newProvider,
+                    props.model.voiceProfiles,
+                    prev.ttsTargetLanguage,
+                  )
+                  const currentVoiceValid = filteredVoices.some((voice) => voice.id === prev.ttsVoiceId)
                   return {
                     ...prev,
                     ttsProvider: newProvider,
                     // Auto-select first available model if current model is not valid for new provider
                     ttsModelId: currentModelValid ? prev.ttsModelId : (availableModels[0] ?? ''),
+                    // Auto-select first compatible voice when provider changes
+                    ttsVoiceId: currentVoiceValid ? prev.ttsVoiceId : (filteredVoices[0]?.id ?? ''),
                     // Auto-set default base URL if empty
                     [baseUrlField]: (prev[baseUrlField] as string) || defaultBaseUrl,
                   }
@@ -424,63 +478,57 @@ export function SettingsPage(props: SettingsPageProps) {
             </select>
           </label>
 
-          {settings.ttsProvider !== 'piper' && (
-            <>
-              {/* TTS Provider API Key */}
-              <label>
-                {props.t('settings.ttsApiKey', { provider: settings.ttsProvider.toUpperCase() })}
-                <input
-                  type="password"
-                  value={settings[getApiKeyField(settings.ttsProvider)] as string}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      [getApiKeyField(prev.ttsProvider)]: event.target.value,
-                    }))
-                  }
-                  placeholder="sk-..."
-                />
-              </label>
+          {/* TTS Provider API Key */}
+          <label>
+            {props.t('settings.ttsApiKey', { provider: currentTtsProvider.toUpperCase() })}
+            <input
+              type="password"
+              value={settings[getApiKeyField(currentTtsProvider)] as string}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  [getApiKeyField(currentTtsProvider)]: event.target.value,
+                }))
+              }
+              placeholder="sk-..."
+            />
+          </label>
 
-              {/* TTS Provider Base URL */}
-              <label>
-                {props.t('settings.ttsBaseUrl', { provider: settings.ttsProvider.toUpperCase() })}
-                <input
-                  type="text"
-                  value={settings[getBaseUrlField(settings.ttsProvider)] as string}
-                  onChange={(event) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      [getBaseUrlField(prev.ttsProvider)]: event.target.value.trim(),
-                    }))
-                  }
-                  placeholder={DEFAULT_BASE_URLS[settings.ttsProvider]}
-                />
-              </label>
-            </>
-          )}
+          {/* TTS Provider Base URL */}
+          <label>
+            {props.t('settings.ttsBaseUrl', { provider: currentTtsProvider.toUpperCase() })}
+            <input
+              type="text"
+              value={settings[getBaseUrlField(currentTtsProvider)] as string}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  [getBaseUrlField(currentTtsProvider)]: event.target.value.trim(),
+                }))
+              }
+              placeholder={DEFAULT_BASE_URLS[currentTtsProvider]}
+            />
+          </label>
 
-          {settings.ttsProvider !== 'piper' && (
-            <label>
-              {props.t('settings.ttsModelId')}
-              <select
-                value={settings.ttsModelId}
-                onChange={(event) =>
-                  setSettings((prev) => ({
-                    ...prev,
-                    ttsModelId: event.target.value,
-                  }))
-                }
-              >
-                <option value="">{props.t('settings.selectModel')}</option>
-                {getTtsModels(settings.ttsProvider).map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          <label>
+            {props.t('settings.ttsModelId')}
+            <select
+              value={settings.ttsModelId}
+              onChange={(event) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  ttsModelId: event.target.value,
+                }))
+              }
+            >
+              <option value="">{props.t('settings.selectModel')}</option>
+              {getTtsModels(currentTtsProvider).map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          </label>
 
           {/* TTS Target Language - controls voice preset filtering */}
           <label>
@@ -490,25 +538,18 @@ export function SettingsPage(props: SettingsPageProps) {
               onChange={(event) => {
                 const newTargetLanguage = event.target.value as 'zh' | 'en'
                 setSettings((prev) => {
-                  if (prev.ttsProvider === 'piper') {
-                    return {
-                      ...prev,
-                      ttsTargetLanguage: newTargetLanguage,
-                    }
-                  }
-                  const filteredVoices = props.model.voiceProfiles.filter(
-                    (voice) => voice.language === newTargetLanguage || voice.language === 'multi'
+                  const filteredVoices = getVoiceProfilesForProvider(
+                    normalizeTtsProvider(prev.ttsProvider),
+                    props.model.voiceProfiles,
+                    newTargetLanguage,
                   )
-                  const firstVoiceId = filteredVoices[0]?.id ?? ''
+                  const currentVoiceValid = filteredVoices.some((voice) => voice.id === prev.ttsVoiceId)
                   return {
                     ...prev,
                     ttsTargetLanguage: newTargetLanguage,
-                    ttsVoiceId: firstVoiceId,
+                    ttsVoiceId: currentVoiceValid ? prev.ttsVoiceId : (filteredVoices[0]?.id ?? ''),
                   }
                 })
-                if (settings.ttsProvider === 'piper') {
-                  void syncPiperModelByTargetLanguage(newTargetLanguage)
-                }
               }}
             >
               <option value="zh">{props.t('lang.zh')}</option>
@@ -517,87 +558,36 @@ export function SettingsPage(props: SettingsPageProps) {
           </label>
 
           {/* Voice Preset Panel */}
-          {settings.ttsProvider !== 'piper' && (
-            <div className="full">
-              <VoicePresetPanel
-                voiceId={settings.ttsVoiceId}
-                speed={settings.ttsSpeed}
-                pitch={settings.ttsPitch}
-                volume={settings.ttsVolume}
-                voiceProfiles={props.model.voiceProfiles.filter(
-                  (voice) => voice.language === settings.ttsTargetLanguage || voice.language === 'multi'
-                )}
-                validationErrors={props.model.voiceValidationErrors}
-                showAdvancedParams={false}
-                t={props.t}
-                setVoiceConfig={(updater) =>
-                  setSettings((prev) => {
-                    const base = {
-                      voiceId: prev.ttsVoiceId,
-                      speed: prev.ttsSpeed,
-                      pitch: prev.ttsPitch,
-                      volume: prev.ttsVolume,
-                    }
-                    const next = typeof updater === 'function' ? updater(base) : updater
-                    return {
-                      ...prev,
-                      ttsVoiceId: next.voiceId,
-                      ttsSpeed: next.speed,
-                      ttsPitch: next.pitch,
-                      ttsVolume: next.volume,
-                    }
-                  })
-                }
-              />
-            </div>
-          )}
-          {settings.ttsProvider === 'piper' && (
-            <div className="full">
-              <p className="hint">{props.t('settings.piper.localModelHint')}</p>
-              <p className="hint">{props.t('settings.piper.installHint')}</p>
-              {!piperModelMatchesTargetLanguage && (
-                <p className="error">{props.t('settings.piperModelMismatchHint')}</p>
-              )}
-              <div className="actions">
-                <button
-                  className="btn primary"
-                  type="button"
-                  onClick={() => void handleInstallPiper(isPiperInstalled)}
-                  disabled={installLoading}
-                >
-                  {installLoading
-                    ? props.t('settings.piperInstalling')
-                    : isPiperInstalled
-                      ? props.t('settings.piperReinstall')
-                      : props.t('settings.piperInstall')}
-                </button>
-                <button
-                  className="btn"
-                  type="button"
-                  onClick={() => void handleProbePiper()}
-                  disabled={probeLoading}
-                >
-                  {probeLoading ? props.t('settings.piperProbing') : props.t('settings.piperProbe')}
-                </button>
-                {probeResult?.ok && (
-                  <span className="settings-connectivity-status success">{props.t('settings.piperProbeSuccess')}</span>
-                )}
-                {(probeError || (probeResult && !probeResult.ok)) && (
-                  <span className="settings-connectivity-status error">{props.t('settings.piperProbeFail')}</span>
-                )}
-              </div>
-              {probeResult && (
-                <div className="piper-probe-details">
-                  <p className={probeResult.ok ? 'hint' : 'error'}>{probeResult.summary}</p>
-                  <p className="hint">Binary: {probeResult.binary.message}</p>
-                  <p className="hint">Model: {probeResult.model.message}</p>
-                  <p className="hint">Config: {probeResult.config.message}</p>
-                  {!probeResult.ok && <p className="hint">Binary Path: {probeResult.binary.path}</p>}
-                </div>
-              )}
-              {installError && <p className="error">{installError}</p>}
-            </div>
-          )}
+          <div className="full">
+            <VoicePresetPanel
+              voiceId={settings.ttsVoiceId}
+              speed={settings.ttsSpeed}
+              pitch={settings.ttsPitch}
+              volume={settings.ttsVolume}
+              voiceProfiles={availableVoiceProfiles}
+              validationErrors={currentTtsProvider === 'minimax' ? props.model.voiceValidationErrors : []}
+              showAdvancedParams={false}
+              t={props.t}
+              setVoiceConfig={(updater) =>
+                setSettings((prev) => {
+                  const base = {
+                    voiceId: prev.ttsVoiceId,
+                    speed: prev.ttsSpeed,
+                    pitch: prev.ttsPitch,
+                    volume: prev.ttsVolume,
+                  }
+                  const next = typeof updater === 'function' ? updater(base) : updater
+                  return {
+                    ...prev,
+                    ttsVoiceId: next.voiceId,
+                    ttsSpeed: next.speed,
+                    ttsPitch: next.pitch,
+                    ttsVolume: next.volume,
+                  }
+                })
+              }
+            />
+          </div>
         </div>
       </div>
       
@@ -723,20 +713,6 @@ export function SettingsPage(props: SettingsPageProps) {
         message={props.model.settingsSaveErrorMessage || props.t('settings.saveFailed')}
         visible={props.model.settingsSaveError}
         onClose={props.actions.clearSaveError}
-        type="error"
-      />
-      <Toast
-        message={props.t('settings.piperInstallSuccess')}
-        visible={installSuccessToastVisible}
-        onClose={() => setInstallSuccessToastVisible(false)}
-        duration={3000}
-        type="success"
-      />
-      <Toast
-        message={props.t('settings.piperInstallFailed')}
-        visible={installErrorToastVisible}
-        onClose={() => setInstallErrorToastVisible(false)}
-        duration={3000}
         type="error"
       />
     </section>
