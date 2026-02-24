@@ -21,5 +21,5 @@ export const DEFAULT_BASE_URLS = {
   minimax: 'https://api.minimaxi.com',
   deepseek: 'https://api.deepseek.com',
   glm: 'https://open.bigmodel.cn/api/paas',
-  kimi: 'https://api.moonshot.cn',
+  kimi: 'https://api.moonshot.cn/v1',
 } as const

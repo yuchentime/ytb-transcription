@@ -32,8 +32,25 @@ export const RECOVERABLE_STATUSES: TaskStatus[] = [
 export const TRANSLATE_MODEL_OPTIONS: Record<Exclude<TranslateProvider, 'custom'>, string[]> = {
   minimax: ['MiniMax-M2.5', 'MiniMax-M2.5-highspeed', 'MiniMax-M2.1', 'MiniMax-M2.1-highspeed', 'MiniMax-M2'],
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  glm: ['glm-4-plus', 'glm-4-flash', 'glm-4-air', 'glm-4-airx', 'glm-4-long'],
-  kimi: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+  glm: ['glm-5', 'glm-4.7', 'glm-4.7-flash', 'glm-4.7-flashx', 'glm-4.6', 'glm-4.5-air', 'glm-4.5-airx', 'glm-4.5-flash', 'glm-4-flash-250414', 'glm-4-flashx-250414'],
+  kimi: [
+    // kimi-k2 系列
+    'kimi-k2-0711-preview',
+    'kimi-k2-0905-preview',
+    'kimi-k2-thinking',
+    'kimi-k2-thinking-turbo',
+    'kimi-k2-turbo-preview',
+    'kimi-k2.5',
+    'kimi-latest',
+    // moonshot-v1 系列
+    'moonshot-v1-128k',
+    'moonshot-v1-128k-vision-preview',
+    'moonshot-v1-32k',
+    'moonshot-v1-32k-vision-preview',
+    'moonshot-v1-8k',
+    'moonshot-v1-8k-vision-preview',
+    'moonshot-v1-auto',
+  ],
 }
 
 export const TTS_MODEL_OPTIONS: Record<Exclude<TtsProvider, 'piper'>, string[]> = {
@@ -72,7 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
   // Kimi
   kimiApiKey: '',
-  kimiApiBaseUrl: 'https://api.moonshot.cn',
+  kimiApiBaseUrl: 'https://api.moonshot.cn/v1',
 
   // Custom/Local provider (e.g., LM Studio with OpenAI-compatible API)
   customApiKey: '',
