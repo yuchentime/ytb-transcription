@@ -38,6 +38,8 @@ export const IPC_CHANNELS = {
   systemOpenPath: 'system:openPath',
   systemExportTaskArtifacts: 'system:exportTaskArtifacts',
   systemProbePiper: 'system:probePiper',
+  systemPrepareRuntime: 'system:prepareRuntime',
+  systemRuntime: 'system:runtime',
   systemInstallPiper: 'system:installPiper',
   systemResolvePiperModel: 'system:resolvePiperModel',
   systemTestTranslateConnectivity: 'system:testTranslateConnectivity',
@@ -260,12 +262,26 @@ export interface TaskFailedEventPayload {
   errorMessage: string
 }
 
+export type RuntimeComponent = 'yt-dlp' | 'ffmpeg' | 'python' | 'whisper' | 'deno' | 'engine'
+export type RuntimeStatus = 'checking' | 'downloading' | 'installing' | 'ready' | 'error'
+
 export interface TaskRuntimeEventPayload {
   taskId: string
-  component: 'yt-dlp' | 'ffmpeg' | 'python' | 'whisper' | 'deno' | 'engine'
-  status: 'checking' | 'downloading' | 'installing' | 'ready' | 'error'
+  component: RuntimeComponent
+  status: RuntimeStatus
   message: string
   timestamp: string
+}
+
+export interface SystemRuntimeEventPayload {
+  component: RuntimeComponent
+  status: RuntimeStatus
+  message: string
+  timestamp: string
+}
+
+export interface PrepareRuntimeResult {
+  ready: boolean
 }
 
 export interface QueueUpdatedEventPayload {
@@ -367,6 +383,8 @@ export interface RendererAPI {
     openPath(payload: OpenPathPayload): Promise<OpenPathResult>
     exportTaskArtifacts(payload: ExportTaskArtifactsPayload): Promise<ExportTaskArtifactsResult>
     probePiper(payload?: ProbePiperPayload): Promise<PiperProbeResult>
+    prepareRuntime(): Promise<PrepareRuntimeResult>
+    onRuntime(listener: (payload: SystemRuntimeEventPayload) => void): () => void
     installPiper(payload?: InstallPiperPayload): Promise<PiperInstallResult>
     resolvePiperModel(payload: ResolvePiperModelPayload): Promise<ResolvePiperModelResult>
     testTranslateConnectivity(payload?: TestTranslateConnectivityPayload): Promise<TranslateConnectivityResult>

@@ -589,6 +589,17 @@ input:read-only {
   color: #b91c1c;
 }
 
+.piper-probe-details {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.piper-probe-details p {
+  margin: 0;
+}
+
 .btn {
   padding: 8px 14px;
   font-size: 13px;
@@ -1764,6 +1775,17 @@ input:read-only {
   gap: 16px;
   width: 100%;
   margin-bottom: 24px;
+}
+
+.task-runtime-hint {
+  margin: -8px 0 20px;
+  text-align: center;
+  color: #475569;
+  font-size: 13px;
+}
+
+.task-runtime-hint.runtime-error {
+  color: #b91c1c;
 }
 
 .btn-submit {

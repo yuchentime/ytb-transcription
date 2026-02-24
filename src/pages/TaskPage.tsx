@@ -50,6 +50,10 @@ interface TaskPageModel {
   isRuntimeModalVisible: boolean
   /** 运行环境组件状态映射 */
   runtimeComponentStatus: Record<string, TaskRuntimeEventPayload>
+  /** 首次启动运行环境预检状态 */
+  runtimeBootstrapStatus: 'idle' | 'preparing' | 'ready' | 'error'
+  /** 首次启动运行环境预检错误信息 */
+  runtimeBootstrapMessage: string
 }
 
 interface TaskPageActions {
@@ -201,6 +205,13 @@ export function TaskPage(props: TaskPageProps) {
   const hasTranscript = !isTaskInProgress && !!props.model.transcriptContent
   const hasTranslation = !isTaskInProgress && !!props.model.translationContent
   const logsCopyLabel = copySuccess ? props.t('task.copyLogsDone') : props.t('task.copyLogs')
+  const runtimeBlocked = props.model.runtimeBootstrapStatus !== 'ready'
+  const runtimeInlineHint =
+    props.model.runtimeBootstrapStatus === 'error'
+      ? props.t('task.runtimeErrorInline', {
+          message: props.model.runtimeBootstrapMessage || props.t('common.hyphen'),
+        })
+      : props.t('task.runtimePreparingInline')
 
   const handleCopyLogs = async (): Promise<void> => {
     if (props.model.logs.length === 0) return
@@ -296,6 +307,13 @@ export function TaskPage(props: TaskPageProps) {
           )}
           {props.model.taskError && <span className="error">{props.model.taskError}</span>}
         </div>
+        {runtimeBlocked && (
+          <p
+            className={`task-runtime-hint ${props.model.runtimeBootstrapStatus === 'error' ? 'runtime-error' : ''}`}
+          >
+            {runtimeInlineHint}
+          </p>
+        )}
 
         {/* Only show status bar when task is active */}
         {isTaskActive && (

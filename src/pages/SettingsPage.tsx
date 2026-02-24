@@ -586,6 +586,15 @@ export function SettingsPage(props: SettingsPageProps) {
                   <span className="settings-connectivity-status error">{props.t('settings.piperProbeFail')}</span>
                 )}
               </div>
+              {probeResult && (
+                <div className="piper-probe-details">
+                  <p className={probeResult.ok ? 'hint' : 'error'}>{probeResult.summary}</p>
+                  <p className="hint">Binary: {probeResult.binary.message}</p>
+                  <p className="hint">Model: {probeResult.model.message}</p>
+                  <p className="hint">Config: {probeResult.config.message}</p>
+                  {!probeResult.ok && <p className="hint">Binary Path: {probeResult.binary.path}</p>}
+                </div>
+              )}
               {installError && <p className="error">{installError}</p>}
             </div>
           )}
@@ -606,7 +615,7 @@ export function SettingsPage(props: SettingsPageProps) {
                 role="img"
                 tabIndex={0}
               >
-                !
+                ?
               </span>
             </span>
             <select

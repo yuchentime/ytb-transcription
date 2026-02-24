@@ -12,17 +12,28 @@ export interface RunCommandOptions {
   onSpawn?: (child: ChildProcessWithoutNullStreams) => void
 }
 
-function createLineBuffer(onLine?: (line: string) => void): (chunk: string) => void {
+function createLineBuffer(onLine?: (line: string) => void): {
+  push: (chunk: string) => void
+  flush: () => void
+} {
   let buffer = ''
-  return (chunk: string) => {
-    if (!onLine) return
-    buffer += chunk
-    const parts = buffer.split(/\r?\n/)
-    buffer = parts.pop() ?? ''
-    for (const line of parts) {
-      const trimmed = line.trim()
+  return {
+    push: (chunk: string) => {
+      if (!onLine) return
+      buffer += chunk
+      const parts = buffer.split(/\r?\n/)
+      buffer = parts.pop() ?? ''
+      for (const line of parts) {
+        const trimmed = line.trim()
+        if (trimmed) onLine(trimmed)
+      }
+    },
+    flush: () => {
+      if (!onLine) return
+      const trimmed = buffer.trim()
       if (trimmed) onLine(trimmed)
-    }
+      buffer = ''
+    },
   }
 }
 
@@ -48,17 +59,17 @@ export async function runCommand(options: RunCommandOptions): Promise<{ code: nu
     }
   }
 
-  const pushStdout = createLineBuffer((line) => {
+  const stdoutBuffer = createLineBuffer((line) => {
     appendExcerpt(stdoutExcerpt, line)
     options.onStdoutLine?.(line)
   })
-  const pushStderr = createLineBuffer((line) => {
+  const stderrBuffer = createLineBuffer((line) => {
     appendExcerpt(stderrExcerpt, line)
     options.onStderrLine?.(line)
   })
 
-  child.stdout.on('data', (chunk: Buffer) => pushStdout(chunk.toString()))
-  child.stderr.on('data', (chunk: Buffer) => pushStderr(chunk.toString()))
+  child.stdout.on('data', (chunk: Buffer) => stdoutBuffer.push(chunk.toString()))
+  child.stderr.on('data', (chunk: Buffer) => stderrBuffer.push(chunk.toString()))
 
   return await new Promise<{ code: number }>((resolve, reject) => {
     let canceled = false
@@ -84,6 +95,8 @@ export async function runCommand(options: RunCommandOptions): Promise<{ code: nu
     })
 
     child.on('close', (code) => {
+      stdoutBuffer.flush()
+      stderrBuffer.flush()
       clearInterval(cancelInterval)
       if (timeoutTimer) clearTimeout(timeoutTimer)
       if (options.isCanceled?.()) {

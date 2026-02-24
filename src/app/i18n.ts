@@ -57,6 +57,8 @@ const zhMessages = {
   'task.ttsVolume': '音量（0 ~ 10）',
   'task.finalOutput': '成果',
   'task.completed': '已完成',
+  'task.runtimePreparingInline': '正在初始化必需运行环境，请稍候...',
+  'task.runtimeErrorInline': '运行环境初始化失败：{message}',
 
   'history.title': '历史记录',
   'history.keyword': '关键词',
@@ -209,6 +211,7 @@ const zhMessages = {
   'error.taskNotDeleted': '任务未被删除',
   'error.retryNotAccepted': '重试请求未被接受',
   'error.loadAudio': '加载音频失败：{message}',
+  'error.runtimePreparing': '运行环境尚未准备完成，请稍候',
 
   'validation.youtubeUrlRequired': '请输入有效的 YouTube 链接',
   'validation.ttsModelRequired': '请先在设置页选择 TTS 模型',
@@ -285,6 +288,8 @@ const enMessages: Messages = {
   'task.ttsVolume': 'Volume (0 ~ 10)',
   'task.finalOutput': 'Output',
   'task.completed': 'Completed',
+  'task.runtimePreparingInline': 'Preparing required runtime resources, please wait...',
+  'task.runtimeErrorInline': 'Runtime initialization failed: {message}',
 
   'history.title': 'History',
   'history.keyword': 'Keyword',
@@ -437,6 +442,7 @@ const enMessages: Messages = {
   'error.taskNotDeleted': 'Task not deleted',
   'error.retryNotAccepted': 'Retry request not accepted',
   'error.loadAudio': 'Failed to load audio: {message}',
+  'error.runtimePreparing': 'Runtime resources are still preparing, please wait',
 
   'validation.youtubeUrlRequired': 'Please enter a valid YouTube URL',
   'validation.ttsModelRequired': 'Please select a TTS model in Settings first',

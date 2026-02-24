@@ -71,6 +71,10 @@ export interface TaskState {
   isRuntimeModalVisible: boolean
   /** 运行环境组件状态映射 */
   runtimeComponentStatus: Record<string, TaskRuntimeEventPayload>
+  /** 首次启动运行环境预检状态 */
+  runtimeBootstrapStatus: 'idle' | 'preparing' | 'ready' | 'error'
+  /** 首次启动运行环境预检错误信息 */
+  runtimeBootstrapMessage: string
 }
 
 export interface HistoryState {
@@ -123,6 +127,8 @@ export function createInitialTaskState(): TaskState {
     processingYoutubeUrl: '',
     isRuntimeModalVisible: false,
     runtimeComponentStatus: {},
+    runtimeBootstrapStatus: 'idle',
+    runtimeBootstrapMessage: '',
   }
 }
 

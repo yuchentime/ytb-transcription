@@ -471,6 +471,11 @@ interface GitHubRelease {
   assets?: GitHubReleaseAsset[]
 }
 
+const PYTHON_BUILD_STANDALONE_RELEASE_APIS = [
+  'https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest',
+  'https://api.github.com/repos/indygreg/python-build-standalone/releases/latest',
+] as const
+
 function getPortablePythonArchToken(): string | null {
   if (process.platform === 'darwin' && process.arch === 'arm64') return 'aarch64-apple-darwin'
   if (process.platform === 'darwin' && process.arch === 'x64') return 'x86_64-apple-darwin'
@@ -481,39 +486,115 @@ function getPortablePythonArchToken(): string | null {
   return null
 }
 
+function escapeRegExp(raw: string): string {
+  return raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+async function resolvePortablePythonAssetUrlFromApi(archToken: string): Promise<string> {
+  const errors: string[] = []
+
+  for (const api of PYTHON_BUILD_STANDALONE_RELEASE_APIS) {
+    try {
+      const response = await fetchWithTimeout(api, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'YTB2Voice/0.0.1',
+        },
+      })
+      if (!response.ok) {
+        errors.push(`${api} -> HTTP ${response.status}`)
+        continue
+      }
+
+      const release = (await response.json()) as GitHubRelease
+      const assets = release.assets ?? []
+      const preferred = assets.find(
+        (asset) =>
+          asset.name.includes(archToken) &&
+          asset.name.includes('install_only') &&
+          asset.name.endsWith('.tar.gz'),
+      )
+      if (preferred) return preferred.browser_download_url
+
+      const fallback = assets.find(
+        (asset) => asset.name.includes(archToken) && asset.name.endsWith('.tar.gz'),
+      )
+      if (fallback) return fallback.browser_download_url
+
+      errors.push(`${api} -> no matching asset for ${archToken}`)
+    } catch (error) {
+      errors.push(`${api} -> ${toErrorMessage(error)}`)
+    }
+  }
+
+  throw new Error(errors.join('; '))
+}
+
+async function resolvePortablePythonAssetUrlFromHtml(archToken: string): Promise<string> {
+  const latestReleaseUrl = 'https://github.com/astral-sh/python-build-standalone/releases/latest'
+  const latestResponse = await fetchWithTimeout(latestReleaseUrl, {
+    headers: {
+      Accept: 'text/html',
+      'User-Agent': 'YTB2Voice/0.0.1',
+    },
+  })
+  if (!latestResponse.ok) {
+    throw new Error(`Failed to open release page: HTTP ${latestResponse.status}`)
+  }
+
+  const tagMatch = latestResponse.url.match(/\/releases\/tag\/([^/?#]+)/)
+  if (!tagMatch) {
+    throw new Error(`Failed to parse release tag from redirect url: ${latestResponse.url}`)
+  }
+  const releaseTag = tagMatch[1]
+  const expandedAssetsUrl = `https://github.com/astral-sh/python-build-standalone/releases/expanded_assets/${releaseTag}`
+  const expandedAssetsResponse = await fetchWithTimeout(expandedAssetsUrl, {
+    headers: {
+      Accept: 'text/html',
+      'User-Agent': 'YTB2Voice/0.0.1',
+    },
+  })
+  if (!expandedAssetsResponse.ok) {
+    throw new Error(`Failed to open expanded assets page: HTTP ${expandedAssetsResponse.status}`)
+  }
+
+  const html = await expandedAssetsResponse.text()
+  const escapedArchToken = escapeRegExp(archToken)
+  const preferredPattern = new RegExp(
+    `href="([^"]*${escapedArchToken}[^"]*install_only[^"]*\\.tar\\.gz)"`,
+  )
+  const fallbackPattern = new RegExp(`href="([^"]*${escapedArchToken}[^"]*\\.tar\\.gz)"`)
+  const matched = html.match(preferredPattern) ?? html.match(fallbackPattern)
+  if (!matched?.[1]) {
+    throw new Error(`No portable Python asset link found for token: ${archToken}`)
+  }
+
+  const resolvedHref = matched[1].replace(/&amp;/g, '&')
+  if (resolvedHref.startsWith('/')) {
+    return `https://github.com${resolvedHref}`
+  }
+  return resolvedHref
+}
+
 async function resolvePortablePythonAssetUrl(): Promise<string> {
   const archToken = getPortablePythonArchToken()
   if (!archToken) {
     throw new Error(`Portable Python not supported on ${process.platform}-${process.arch}`)
   }
 
-  const api = 'https://api.github.com/repos/indygreg/python-build-standalone/releases/latest'
-  const response = await fetchWithTimeout(api, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-    },
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to query python-build-standalone release: HTTP ${response.status}`)
+  try {
+    return await resolvePortablePythonAssetUrlFromApi(archToken)
+  } catch (apiError) {
+    try {
+      return await resolvePortablePythonAssetUrlFromHtml(archToken)
+    } catch (htmlError) {
+      throw new Error(
+        `Failed to query python-build-standalone release: api=${toErrorMessage(apiError)}; html=${toErrorMessage(htmlError)}`,
+      )
+    }
   }
-
-  const release = (await response.json()) as GitHubRelease
-  const assets = release.assets ?? []
-  const preferred = assets.find(
-    (asset) =>
-      asset.name.includes(archToken) &&
-      asset.name.includes('install_only') &&
-      asset.name.endsWith('.tar.gz'),
-  )
-  if (preferred) return preferred.browser_download_url
-
-  const fallback = assets.find(
-    (asset) => asset.name.includes(archToken) && asset.name.endsWith('.tar.gz'),
-  )
-  if (fallback) return fallback.browser_download_url
-
-  throw new Error(`No portable Python artifact found for token: ${archToken}`)
 }
+
 
 async function downloadFile(url: string, filePath: string): Promise<void> {
   const response = await fetchWithTimeout(url)
@@ -904,6 +985,7 @@ async function detectWhisperRuntime(
 }
 
 let toolchainCache: Toolchain | null = null
+let toolchainInFlight: Promise<Toolchain> | null = null
 
 export async function ensureToolchain(dataRoot: string, options?: EnsureToolchainOptions): Promise<Toolchain> {
   if (toolchainCache) {
@@ -915,22 +997,39 @@ export async function ensureToolchain(dataRoot: string, options?: EnsureToolchai
     return toolchainCache
   }
 
-  const toolsDir = path.join(dataRoot, 'tools')
-  await fs.mkdir(toolsDir, { recursive: true })
-
-  const ytDlpPath = await ensureYtDlp(toolsDir, options)
-  const denoPath = await ensureDeno(toolsDir, options)
-  const ffmpegPath = await ensureFfmpeg(toolsDir, options)
-  const bootstrapPython = await findOrInstallPython(toolsDir, options)
-  const pythonPath = await ensureWhisperInstalled(toolsDir, bootstrapPython, options)
-  const whisperRuntime = await detectWhisperRuntime(pythonPath, options)
-
-  toolchainCache = {
-    ytDlpPath,
-    denoPath,
-    ffmpegPath,
-    pythonPath,
-    whisperRuntime,
+  if (toolchainInFlight) {
+    options?.reporter?.({
+      component: 'engine',
+      status: 'checking',
+      message: 'Runtime toolchain initialization already in progress',
+    })
+    return await toolchainInFlight
   }
-  return toolchainCache
+
+  toolchainInFlight = (async () => {
+    const toolsDir = path.join(dataRoot, 'tools')
+    await fs.mkdir(toolsDir, { recursive: true })
+
+    const ytDlpPath = await ensureYtDlp(toolsDir, options)
+    const denoPath = await ensureDeno(toolsDir, options)
+    const ffmpegPath = await ensureFfmpeg(toolsDir, options)
+    const bootstrapPython = await findOrInstallPython(toolsDir, options)
+    const pythonPath = await ensureWhisperInstalled(toolsDir, bootstrapPython, options)
+    const whisperRuntime = await detectWhisperRuntime(pythonPath, options)
+
+    toolchainCache = {
+      ytDlpPath,
+      denoPath,
+      ffmpegPath,
+      pythonPath,
+      whisperRuntime,
+    }
+    return toolchainCache
+  })()
+
+  try {
+    return await toolchainInFlight
+  } finally {
+    toolchainInFlight = null
+  }
 }

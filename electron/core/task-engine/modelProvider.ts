@@ -755,21 +755,22 @@ async function requestPiperTts(params: {
   const outputPath = path.join(tempDir, 'segment.wav')
   const dataDir = path.join(path.dirname(modelPath), '.piper-data')
   await fs.mkdir(dataDir, { recursive: true }).catch(() => undefined)
-  const args = ['--model', modelPath, '--output_file', outputPath]
+  const argsBase = ['--model', modelPath, '--output_file', outputPath]
 
   for (const configPath of candidateConfigPaths) {
     try {
       await fs.access(configPath)
-      args.push('--config', configPath)
+      argsBase.push('--config', configPath)
       break
     } catch {
       // continue
     }
   }
 
-  if (Number.isFinite(params.settings.piperSpeakerId) && params.settings.piperSpeakerId >= 0) {
-    args.push('--speaker', String(Math.floor(params.settings.piperSpeakerId)))
-  }
+  const speakerArgs =
+    Number.isFinite(params.settings.piperSpeakerId) && params.settings.piperSpeakerId >= 0
+      ? ['--speaker', String(Math.floor(params.settings.piperSpeakerId))]
+      : []
 
   const lengthScale = Number.isFinite(params.settings.piperLengthScale)
     ? Math.max(0.1, params.settings.piperLengthScale)
@@ -781,12 +782,16 @@ async function requestPiperTts(params: {
     ? Math.max(0, params.settings.piperNoiseW)
     : 0.8
 
-  args.push('--length_scale', String(lengthScale))
-  args.push('--noise_scale', String(noiseScale))
-  args.push('--noise_w', String(noiseW))
-  args.push('--data-dir', dataDir)
+  argsBase.push('--length_scale', String(lengthScale))
+  argsBase.push('--noise_scale', String(noiseScale))
+  argsBase.push('--noise_w', String(noiseW))
+  argsBase.push('--data-dir', dataDir)
   const normalizedText = params.text.trim()
   const maxCharsPlans = [DEFAULT_PIPER_INPUT_MAX_CHARS, FALLBACK_PIPER_INPUT_MAX_CHARS]
+  const piperRuntimeEnv = {
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8',
+  }
 
   try {
     if (!normalizedText) {
@@ -801,27 +806,40 @@ async function requestPiperTts(params: {
         throw new Error('Piper text is empty after normalization')
       }
 
-      try {
-        await runCommand({
-          command,
-          args,
-          timeoutMs: Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
-          onSpawn: (child) => {
-            child.stdin.end(`${inputLines.join('\n')}\n`)
-          },
-        })
-        const audioBuffer = await fs.readFile(outputPath)
-        if (audioBuffer.length === 0) {
-          throw new Error('Piper output is empty')
+      const runArgPlans =
+        speakerArgs.length > 0 ? [[...argsBase, ...speakerArgs], argsBase] : [argsBase]
+
+      for (let planIndex = 0; planIndex < runArgPlans.length; planIndex += 1) {
+        try {
+          await runCommand({
+            command,
+            args: runArgPlans[planIndex],
+            env: piperRuntimeEnv,
+            timeoutMs: Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
+            onSpawn: (child) => {
+              child.stdin.end(`${inputLines.join('\n')}\n`)
+            },
+          })
+          const audioBuffer = await fs.readFile(outputPath)
+          if (audioBuffer.length === 0) {
+            throw new Error('Piper output is empty')
+          }
+          return { audioBuffer, extension: 'wav' }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const isNoChannels = isPiperNoChannelsError(message)
+          const isLastArgsPlan = planIndex >= runArgPlans.length - 1
+          const isLastMaxCharsPlan = index >= maxCharsPlans.length - 1
+
+          if (isNoChannels && !isLastArgsPlan) {
+            continue
+          }
+          if (!isNoChannels || isLastMaxCharsPlan) {
+            throw error
+          }
+          lastNoChannelsError = error
+          break
         }
-        return { audioBuffer, extension: 'wav' }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const isLastPlan = index >= maxCharsPlans.length - 1
-        if (!isPiperNoChannelsError(message) || isLastPlan) {
-          throw error
-        }
-        lastNoChannelsError = error
       }
     }
 

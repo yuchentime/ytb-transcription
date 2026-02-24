@@ -1,12 +1,13 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { app, ipcMain, shell } from 'electron'
+import { BrowserWindow, app, ipcMain, shell } from 'electron'
 import type { AppSettings } from '../../core/db/types'
 import { getDatabaseContext } from '../../core/db'
 import { installPiperRuntime } from '../../core/piper/installer'
 import { runCommand } from '../../core/task-engine/command'
 import { translateText } from '../../core/task-engine/modelProvider'
+import { ensureToolchain } from '../../core/task-engine/toolchain'
 import {
   IPC_CHANNELS,
   type ExportTaskArtifactsPayload,
@@ -18,8 +19,10 @@ import {
   type PiperProbeCheckResult,
   type PiperProbeResult,
   type ProbePiperPayload,
+  type PrepareRuntimeResult,
   type ResolvePiperModelPayload,
   type ResolvePiperModelResult,
+  type SystemRuntimeEventPayload,
   type TestTranslateConnectivityPayload,
   type TranslateConnectivityResult,
 } from '../channels'
@@ -230,15 +233,45 @@ async function verifyCommandRunnable(command: string): Promise<{ ok: boolean; me
   }
 }
 
-function truncateMessage(message: string, maxLength = 280): string {
+function truncateMessage(message: string, maxLength = 520): string {
   const normalized = message.replace(/\s+/g, ' ').trim()
   if (normalized.length <= maxLength) return normalized
-  return `${normalized.slice(0, maxLength)}...`
+  const kept = Math.max(40, maxLength - 7)
+  const headLength = Math.floor(kept * 0.55)
+  const tailLength = kept - headLength
+  return `${normalized.slice(0, headLength)} ... ${normalized.slice(-tailLength)}`
 }
 
-function getPiperHealthCheckText(language: AppSettings['ttsTargetLanguage']): string {
-  if (language === 'en') return 'This is a Piper runtime health check.'
-  return '这是 Piper 运行环境健康检查。'
+function shouldRetryPiperHealthCheck(message: string): boolean {
+  return /(Command timeout|fetch failed|ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN)/i.test(message)
+}
+
+function isPiperNoChannelsProbeError(message: string): boolean {
+  return /# channels not specified|no channels/i.test(message)
+}
+
+const PIPER_RUNTIME_ENV = {
+  PYTHONUTF8: '1',
+  PYTHONIOENCODING: 'utf-8',
+} as const
+
+function resolveProbeLanguageByModelPath(modelPath: string): 'zh' | 'en' | 'ja' | null {
+  const name = path.basename(modelPath)
+  if (/^zh_/i.test(name)) return 'zh'
+  if (/^en_/i.test(name)) return 'en'
+  if (/^ja_/i.test(name)) return 'ja'
+  return null
+}
+
+function buildPiperHealthCheckTexts(params: {
+  modelPath: string
+  targetLanguage: AppSettings['ttsTargetLanguage']
+}): string[] {
+  const fromModel = resolveProbeLanguageByModelPath(params.modelPath)
+  const primary = fromModel ?? params.targetLanguage
+  if (primary === 'zh') return ['这是 Piper 运行环境健康检查。', '你好，这是一条语音测试。']
+  if (primary === 'ja') return ['これは Piper ランタイムのヘルスチェックです。']
+  return ['This is a Piper runtime health check.']
 }
 
 async function runPiperHealthCheck(params: {
@@ -249,16 +282,20 @@ async function runPiperHealthCheck(params: {
 }): Promise<{ ok: boolean; message: string }> {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'piper-probe-'))
   const outputPath = path.join(tempDir, 'probe.wav')
-  const args = ['--model', params.modelPath, '--output_file', outputPath]
   const dataDir = path.join(path.dirname(params.modelPath), '.piper-data')
+  const textCandidates = buildPiperHealthCheckTexts({
+    modelPath: params.modelPath,
+    targetLanguage: params.settings.ttsTargetLanguage,
+  })
+  const argsBase = ['--model', params.modelPath, '--output_file', outputPath]
 
   if (params.configPath) {
-    args.push('--config', params.configPath)
+    argsBase.push('--config', params.configPath)
   }
 
-  if (Number.isFinite(params.settings.piperSpeakerId) && params.settings.piperSpeakerId >= 0) {
-    args.push('--speaker', String(Math.floor(params.settings.piperSpeakerId)))
-  }
+  const speakerEnabled =
+    Number.isFinite(params.settings.piperSpeakerId) && params.settings.piperSpeakerId >= 0
+  const speakerArgs = speakerEnabled ? ['--speaker', String(Math.floor(params.settings.piperSpeakerId))] : []
 
   const lengthScale = Number.isFinite(params.settings.piperLengthScale)
     ? Math.max(0.1, params.settings.piperLengthScale)
@@ -270,21 +307,55 @@ async function runPiperHealthCheck(params: {
     ? Math.max(0, params.settings.piperNoiseW)
     : 0.8
 
-  args.push('--length_scale', String(lengthScale))
-  args.push('--noise_scale', String(noiseScale))
-  args.push('--noise_w', String(noiseW))
-  args.push('--data-dir', dataDir)
+  argsBase.push('--length_scale', String(lengthScale))
+  argsBase.push('--noise_scale', String(noiseScale))
+  argsBase.push('--noise_w', String(noiseW))
+  argsBase.push('--data-dir', dataDir)
+
+  const plans: Array<{ text: string; withSpeaker: boolean }> = []
+  const firstText = textCandidates[0] ?? 'This is a Piper runtime health check.'
+  plans.push({ text: firstText, withSpeaker: speakerEnabled })
+  if (speakerEnabled) {
+    plans.push({ text: firstText, withSpeaker: false })
+  }
+  for (let index = 1; index < textCandidates.length; index += 1) {
+    plans.push({ text: textCandidates[index], withSpeaker: false })
+  }
 
   try {
     await fs.mkdir(dataDir, { recursive: true }).catch(() => undefined)
-    await runCommand({
-      command: params.command,
-      args,
-      timeoutMs: 45_000,
-      onSpawn: (child) => {
-        child.stdin.end(`${getPiperHealthCheckText(params.settings.ttsTargetLanguage)}\n`)
-      },
-    })
+    for (let attempt = 1; attempt <= plans.length; attempt += 1) {
+      const plan = plans[attempt - 1]
+      const runArgs = plan.withSpeaker ? [...argsBase, ...speakerArgs] : argsBase
+      try {
+        await runCommand({
+          command: params.command,
+          args: runArgs,
+          env: PIPER_RUNTIME_ENV,
+          timeoutMs: 120_000,
+          onSpawn: (child) => {
+            child.stdin.end(`${plan.text}\n`)
+          },
+        })
+        break
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const isRetriable =
+          shouldRetryPiperHealthCheck(message) ||
+          isPiperNoChannelsProbeError(message) ||
+          (plan.withSpeaker && speakerArgs.length > 0)
+        if (attempt < plans.length && isRetriable) {
+          continue
+        }
+        return {
+          ok: false,
+          message: truncateMessage(
+            attempt > 1 ? `${message} (health check attempts: ${attempt}/${plans.length})` : message,
+          ),
+        }
+      }
+    }
+
     const stat = await fs.stat(outputPath)
     if (!stat.isFile() || stat.size <= 0) {
       return {
@@ -309,8 +380,68 @@ async function runPiperHealthCheck(params: {
 
 
 let piperInstallInFlight: Promise<PiperInstallResult> | null = null
+let prepareRuntimeInFlight: Promise<PrepareRuntimeResult> | null = null
+
+function broadcastRuntimeEvent(payload: SystemRuntimeEventPayload): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send(IPC_CHANNELS.systemRuntime, payload)
+  }
+}
 
 export function registerSystemHandlers(): void {
+  ipcMain.handle(IPC_CHANNELS.systemPrepareRuntime, async (): Promise<PrepareRuntimeResult> => {
+    if (prepareRuntimeInFlight) {
+      return await prepareRuntimeInFlight
+    }
+
+    prepareRuntimeInFlight = (async () => {
+      const { dbPath } = getDatabaseContext()
+      const dataRoot = path.dirname(dbPath)
+      const now = () => new Date().toISOString()
+
+      broadcastRuntimeEvent({
+        component: 'engine',
+        status: 'checking',
+        message: 'Checking runtime resources',
+        timestamp: now(),
+      })
+
+      await ensureToolchain(dataRoot, {
+        reporter: (event) => {
+          broadcastRuntimeEvent({
+            component: event.component,
+            status: event.status,
+            message: event.message,
+            timestamp: now(),
+          })
+        },
+      })
+
+      broadcastRuntimeEvent({
+        component: 'engine',
+        status: 'ready',
+        message: 'Runtime resources are ready',
+        timestamp: now(),
+      })
+      return { ready: true }
+    })()
+
+    try {
+      return await prepareRuntimeInFlight
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      broadcastRuntimeEvent({
+        component: 'engine',
+        status: 'error',
+        message: `Failed to prepare runtime resources: ${message}`,
+        timestamp: new Date().toISOString(),
+      })
+      throw error
+    } finally {
+      prepareRuntimeInFlight = null
+    }
+  })
+
   ipcMain.handle(
     IPC_CHANNELS.systemOpenPath,
     async (_event, payload: OpenPathPayload): Promise<OpenPathResult> => {

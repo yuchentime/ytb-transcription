@@ -170,8 +170,8 @@ function App() {
   }, [t, settingsState.data.piperModelPath, settingsState.data.ttsModelId, settingsState.data.ttsProvider, settingsState.data.ttsTargetLanguage, settingsState.voiceProfiles, taskState.form])
 
   const isStartDisabled = useMemo(() => {
-    return taskFormErrors.length > 0
-  }, [taskFormErrors.length])
+    return taskFormErrors.length > 0 || taskState.runtimeBootstrapStatus !== 'ready'
+  }, [taskFormErrors.length, taskState.runtimeBootstrapStatus])
 
   const setSettingsData: Dispatch<SetStateAction<AppSettings>> = (updater) => {
     setSettingsState((prev) => ({
@@ -466,6 +466,68 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let mounted = true
+
+    setTaskState((prev) => ({
+      ...prev,
+      runtimeBootstrapStatus: 'preparing',
+      runtimeBootstrapMessage: '',
+      runtimeComponentStatus: {},
+      isRuntimeModalVisible: true,
+    }))
+
+    const offRuntime = ipcClient.system.onRuntime((payload) => {
+      if (!mounted) return
+      setTaskState((prev) => {
+        const updatedStatus = {
+          ...prev.runtimeComponentStatus,
+          [payload.component]: {
+            taskId: 'runtime-bootstrap',
+            ...payload,
+          },
+        }
+        const hasPendingRuntimeResources = Object.values(updatedStatus).some(
+          (event) => event.status === 'downloading' || event.status === 'installing',
+        )
+
+        return {
+          ...prev,
+          runtimeComponentStatus: updatedStatus,
+          isRuntimeModalVisible: hasPendingRuntimeResources,
+          runtimeBootstrapStatus: payload.status === 'error' ? 'error' : prev.runtimeBootstrapStatus,
+          runtimeBootstrapMessage: payload.status === 'error' ? payload.message : prev.runtimeBootstrapMessage,
+        }
+      })
+    })
+
+    void ipcClient.system.prepareRuntime()
+      .then(() => {
+        if (!mounted) return
+        setTaskState((prev) => ({
+          ...prev,
+          runtimeBootstrapStatus: 'ready',
+          runtimeBootstrapMessage: '',
+          isRuntimeModalVisible: false,
+        }))
+      })
+      .catch((error) => {
+        if (!mounted) return
+        const message = error instanceof Error ? error.message : String(error)
+        setTaskState((prev) => ({
+          ...prev,
+          runtimeBootstrapStatus: 'error',
+          runtimeBootstrapMessage: message,
+          isRuntimeModalVisible: false,
+        }))
+      })
+
+    return () => {
+      mounted = false
+      offRuntime()
+    }
+  }, [])
+
+  useEffect(() => {
     void refreshQueueSnapshot()
   }, [refreshQueueSnapshot])
 
@@ -552,6 +614,14 @@ function App() {
   }
 
   async function startTask(): Promise<void> {
+    if (taskState.runtimeBootstrapStatus !== 'ready') {
+      setTaskState((prev) => ({
+        ...prev,
+        error: t('error.runtimePreparing'),
+      }))
+      return
+    }
+
     const hadRunningTask = taskState.running || queueState.snapshot.running.length > 0
     const submitted = await startTaskAction({
       taskForm: taskState.form,
@@ -833,6 +903,8 @@ function App() {
     processingYoutubeUrl: taskState.processingYoutubeUrl,
     isRuntimeModalVisible: taskState.isRuntimeModalVisible,
     runtimeComponentStatus: taskState.runtimeComponentStatus,
+    runtimeBootstrapStatus: taskState.runtimeBootstrapStatus,
+    runtimeBootstrapMessage: taskState.runtimeBootstrapMessage,
   }
   const taskPageActions = {
     setTaskForm: setTaskFormData,
