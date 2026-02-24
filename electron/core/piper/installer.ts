@@ -4,8 +4,12 @@ import type { AppSettings } from '../db/types'
 import { runCommand } from '../task-engine/command'
 
 const PIPER_RELEASE_API = 'https://api.github.com/repos/OHF-Voice/piper1-gpl/releases/latest'
+const PIPER_RELEASE_PAGE = 'https://github.com/OHF-Voice/piper1-gpl/releases/latest'
+const PIPER_PYPI_JSON = 'https://pypi.org/pypi/piper-tts/json'
 const PYTHON_STANDALONE_RELEASE_API =
   'https://api.github.com/repos/indygreg/python-build-standalone/releases/latest'
+const PYTHON_STANDALONE_RELEASE_PAGE =
+  'https://github.com/indygreg/python-build-standalone/releases/latest'
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
   'User-Agent': 'YTB2Voice',
@@ -24,6 +28,18 @@ interface GitHubReleaseAsset {
 interface GitHubRelease {
   tag_name?: string
   assets?: GitHubReleaseAsset[]
+}
+
+interface PypiReleaseFile {
+  filename?: string
+  url?: string
+}
+
+interface PypiProjectResponse {
+  info?: {
+    version?: string
+  }
+  releases?: Record<string, PypiReleaseFile[]>
 }
 
 export interface InstallPiperRuntimeInput {
@@ -57,6 +73,83 @@ async function fetchRelease(url: string): Promise<GitHubRelease> {
   return (await response.json()) as GitHubRelease
 }
 
+function parseReleaseTagFromUrl(url: string): string | null {
+  const matched = /\/releases\/tag\/([^/?#]+)/.exec(url)
+  return matched ? decodeURIComponent(matched[1]) : null
+}
+
+function normalizeGithubAssetUrl(href: string): string {
+  const normalized = href.replace(/&amp;/g, '&')
+  if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+    return normalized
+  }
+  return `https://github.com${normalized}`
+}
+
+function parseReleaseAssetsFromHtml(html: string): GitHubReleaseAsset[] {
+  const seen = new Set<string>()
+  const assets: GitHubReleaseAsset[] = []
+  const pattern = /href="([^"]*\/releases\/download\/[^"]+)"/g
+  let matched = pattern.exec(html)
+
+  while (matched) {
+    const downloadUrl = normalizeGithubAssetUrl(matched[1])
+    if (!seen.has(downloadUrl)) {
+      seen.add(downloadUrl)
+      const pathname = new URL(downloadUrl).pathname
+      assets.push({
+        name: decodeURIComponent(path.basename(pathname)),
+        browser_download_url: downloadUrl,
+      })
+    }
+    matched = pattern.exec(html)
+  }
+
+  return assets
+}
+
+async function fetchReleaseFromHtml(latestReleasePage: string): Promise<GitHubRelease> {
+  const latestPage = await fetch(latestReleasePage, { headers: GITHUB_HEADERS })
+  if (!latestPage.ok) {
+    throw new Error(`请求 GitHub Release 页面失败: HTTP ${latestPage.status}`)
+  }
+
+  const tag = parseReleaseTagFromUrl(latestPage.url)
+  if (!tag) {
+    throw new Error(`无法从 URL 解析 Release 标签: ${latestPage.url}`)
+  }
+
+  const expandedAssetsUrl = latestPage.url.replace('/releases/tag/', '/releases/expanded_assets/')
+  const expandedPage = await fetch(expandedAssetsUrl, { headers: GITHUB_HEADERS })
+  if (!expandedPage.ok) {
+    throw new Error(`请求 GitHub Release 资源列表失败: HTTP ${expandedPage.status}`)
+  }
+
+  const assets = parseReleaseAssetsFromHtml(await expandedPage.text())
+  if (assets.length === 0) {
+    throw new Error('Release 资源列表为空')
+  }
+
+  return {
+    tag_name: tag,
+    assets,
+  }
+}
+
+async function fetchReleaseWithFallback(apiUrl: string, latestReleasePage: string): Promise<GitHubRelease> {
+  try {
+    return await fetchRelease(apiUrl)
+  } catch (apiError) {
+    try {
+      return await fetchReleaseFromHtml(latestReleasePage)
+    } catch (htmlError) {
+      const apiMessage = apiError instanceof Error ? apiError.message : String(apiError)
+      const htmlMessage = htmlError instanceof Error ? htmlError.message : String(htmlError)
+      throw new Error(`${apiMessage}; 备用解析失败: ${htmlMessage}`)
+    }
+  }
+}
+
 async function downloadFile(url: string, filePath: string): Promise<void> {
   const response = await fetch(url)
   if (!response.ok) {
@@ -88,7 +181,41 @@ async function resolvePiperWheelAsset(): Promise<{
     throw new Error(`当前平台暂不支持自动安装 Piper: ${process.platform}-${process.arch}`)
   }
 
-  const release = await fetchRelease(PIPER_RELEASE_API)
+  try {
+    const response = await fetch(PIPER_PYPI_JSON, { headers: { 'User-Agent': GITHUB_HEADERS['User-Agent'] } })
+    if (!response.ok) {
+      throw new Error(`请求 PyPI 失败: HTTP ${response.status}`)
+    }
+    const payload = (await response.json()) as PypiProjectResponse
+    const latestVersion = payload.info?.version?.trim()
+    if (!latestVersion) {
+      throw new Error('PyPI 返回的版本信息为空')
+    }
+    const releaseFiles = payload.releases?.[latestVersion] ?? []
+    const wheelAssets = releaseFiles
+      .filter(
+        (item): item is Required<PypiReleaseFile> =>
+          typeof item.filename === 'string' &&
+          item.filename.endsWith('.whl') &&
+          typeof item.url === 'string' &&
+          item.url.length > 0,
+      )
+      .map((item) => ({
+        name: item.filename,
+        browser_download_url: item.url,
+      }))
+    const matched = wheelAssets.find((asset) => tokens.some((token) => asset.name.includes(token)))
+    if (matched) {
+      return {
+        releaseTag: `v${latestVersion}`,
+        asset: matched,
+      }
+    }
+  } catch (error) {
+    void error
+  }
+
+  const release = await fetchReleaseWithFallback(PIPER_RELEASE_API, PIPER_RELEASE_PAGE)
   const assets = release.assets ?? []
   const wheelAssets = assets.filter((asset) => asset.name.endsWith('.whl'))
   const matched = wheelAssets.find((asset) => tokens.some((token) => asset.name.includes(token)))
@@ -156,7 +283,10 @@ async function resolvePortablePythonDownloadUrl(): Promise<string> {
     throw new Error(`当前平台无法自动安装 Python: ${process.platform}-${process.arch}`)
   }
 
-  const release = await fetchRelease(PYTHON_STANDALONE_RELEASE_API)
+  const release = await fetchReleaseWithFallback(
+    PYTHON_STANDALONE_RELEASE_API,
+    PYTHON_STANDALONE_RELEASE_PAGE,
+  )
   const assets = release.assets ?? []
 
   const preferred = assets.find(
