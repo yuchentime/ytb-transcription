@@ -414,7 +414,12 @@ export function TaskPage(props: TaskPageProps) {
         {shouldShowFinalOutput && (
           <div className="output-final">
             <div className="output-final-header">
-              <span className="output-final-badge">{props.t('task.finalOutput')}</span>
+              <div className="output-final-title-wrap">
+                <span className="output-final-title-label">{props.t('history.videoTitle')}:</span>
+                <p className="output-final-title" title={finalOutputTitle}>
+                  {finalOutputTitle}
+                </p>
+              </div>
               <span className="output-final-status">
                 <CheckIcon />
                 {props.t('task.completed')}
@@ -422,12 +427,6 @@ export function TaskPage(props: TaskPageProps) {
             </div>
             <div className="output-final-content">
               <div className="tts-player-final">
-                <div className="tts-player-title-wrap">
-                  <span className="tts-player-title-label">{props.t('history.videoTitle')}:</span>
-                  <p className="tts-player-title" title={finalOutputTitle}>
-                    {finalOutputTitle}
-                  </p>
-                </div>
                 <audio controls src={props.model.ttsAudioUrl} />
                 <div className="tts-actions">
                   <button className="btn primary" onClick={() => void props.actions.onDownloadAudio()}>

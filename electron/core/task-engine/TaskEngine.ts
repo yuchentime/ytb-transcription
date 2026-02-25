@@ -290,7 +290,7 @@ export class TaskEngine {
         taskId,
         stage: 'engine',
         level: 'info',
-        text: 'Detected TTS config changes while resuming synthesis; restarting synthesizing stage to avoid mixed voices',
+        text: 'Detected TTS core config changes while resuming synthesis; restarting synthesizing stage to avoid mixed voices',
         timestamp: new Date().toISOString(),
       })
       return {
@@ -2017,9 +2017,8 @@ export class TaskEngine {
       .some((segment) => segment.status === 'success')
     if (!hasCompletedSynthesisSegments) return false
 
-    const ttsCheckpointKeys = [
+    const ttsCoreConfigKeys = [
       'ttsProvider',
-      'ttsApiBaseUrl',
       'ttsModelId',
       'ttsVoiceId',
       'ttsSpeed',
@@ -2032,17 +2031,17 @@ export class TaskEngine {
       'piperLengthScale',
       'piperNoiseScale',
       'piperNoiseW',
-      'ttsSplitThresholdChars',
-      'ttsTargetSegmentChars',
     ] as const
-    const mismatches = this.listCheckpointConfigMismatches(taskId, snapshotConfig, ttsCheckpointKeys)
+    const mismatches = this.listCheckpointConfigMismatches(taskId, snapshotConfig, ttsCoreConfigKeys)
     if (mismatches.length === 0) return false
 
     this.emit('log', {
       taskId,
       stage: 'engine',
       level: 'info',
-      text: `Resume ignores checkpoint config lock; synthesis config changed (${mismatches.slice(0, 3).join(' | ')})`,
+      text: `Resume ignores checkpoint config lock; synthesis core config changed (${mismatches
+        .slice(0, 3)
+        .join(' | ')})`,
       timestamp: new Date().toISOString(),
     })
     return true
