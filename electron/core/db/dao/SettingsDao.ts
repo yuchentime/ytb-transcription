@@ -38,6 +38,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   openaiApiKey: '',
   openaiApiBaseUrl: 'https://api.openai.com/v1',
 
+  // Qwen
+  qwenApiKey: '',
+  qwenApiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+
   // Kimi
   kimiApiKey: '',
   kimiApiBaseUrl: 'https://api.moonshot.cn/v1',
@@ -154,7 +158,13 @@ function assertValidTranslateProvider(
 function assertValidTtsProvider(
   provider: unknown,
 ): asserts provider is AppSettings['ttsProvider'] {
-  if (provider === 'minimax' || provider === 'openai' || provider === 'glm' || provider === 'piper') {
+  if (
+    provider === 'minimax' ||
+    provider === 'openai' ||
+    provider === 'glm' ||
+    provider === 'qwen' ||
+    provider === 'piper'
+  ) {
     return
   }
   throw new Error('Invalid ttsProvider')
@@ -286,6 +296,7 @@ export class SettingsDao {
       'deepseekApiBaseUrl',
       'glmApiBaseUrl',
       'openaiApiBaseUrl',
+      'qwenApiBaseUrl',
       'kimiApiBaseUrl',
       'customApiBaseUrl',
     ]
@@ -399,6 +410,8 @@ export class SettingsDao {
         return 'glmApiKey'
       case 'openai':
         return 'openaiApiKey'
+      case 'qwen':
+        return 'qwenApiKey'
       case 'kimi':
         return 'kimiApiKey'
       case 'custom':
@@ -418,6 +431,8 @@ export class SettingsDao {
         return 'glmApiBaseUrl'
       case 'openai':
         return 'openaiApiBaseUrl'
+      case 'qwen':
+        return 'qwenApiBaseUrl'
       case 'kimi':
         return 'kimiApiBaseUrl'
       case 'custom':

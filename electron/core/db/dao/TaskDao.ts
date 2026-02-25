@@ -13,7 +13,7 @@ interface TaskRow {
   whisperModel: string | null
   provider: 'minimax'
   translateProvider: 'minimax' | 'deepseek' | 'glm' | 'kimi' | 'custom'
-  ttsProvider: 'minimax' | 'openai' | 'glm' | 'piper'
+  ttsProvider: 'minimax' | 'openai' | 'glm' | 'qwen' | 'piper'
   translateModelId: string | null
   ttsModelId: string | null
   ttsVoice: string | null
@@ -47,7 +47,7 @@ function mapTask(row: TaskRow): TaskRecord {
   const normalizedTtsProvider =
     rawTtsProvider === 'piper' || rawTtsProvider === 'custom'
       ? 'minimax'
-      : rawTtsProvider === 'glm' || rawTtsProvider === 'openai'
+      : rawTtsProvider === 'glm' || rawTtsProvider === 'openai' || rawTtsProvider === 'qwen'
         ? rawTtsProvider
         : 'minimax'
   return {

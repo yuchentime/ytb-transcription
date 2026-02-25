@@ -28,8 +28,8 @@ export type YtDlpCookiesBrowser = 'chrome' | 'chromium' | 'edge' | 'firefox' | '
 // Translation providers: MiniMax, DeepSeek, GLM, Kimi, and Custom (for local models like LM Studio)
 export type TranslateProvider = 'minimax' | 'deepseek' | 'glm' | 'kimi' | 'custom'
 
-// TTS providers: MiniMax, OpenAI, GLM, and Piper (built-in local TTS)
-export type TtsProvider = 'minimax' | 'openai' | 'glm' | 'piper'
+// TTS providers: MiniMax, OpenAI, GLM, Qwen, and Piper (built-in local TTS)
+export type TtsProvider = 'minimax' | 'openai' | 'glm' | 'qwen' | 'piper'
 export type SegmentStatus = 'pending' | 'running' | 'success' | 'failed'
 export type SegmentStageName = 'translating' | 'synthesizing'
 export type SegmentationStrategy = 'punctuation' | 'sentence' | 'duration'
@@ -289,6 +289,10 @@ export interface AppSettings {
   // OpenAI (for TTS)
   openaiApiKey: string
   openaiApiBaseUrl: string
+
+  // Qwen (for TTS)
+  qwenApiKey: string
+  qwenApiBaseUrl: string
 
   // Kimi
   kimiApiKey: string

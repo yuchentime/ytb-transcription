@@ -14,7 +14,7 @@ export const TRANSLATE_PROVIDERS: { value: TranslateProvider; labelKey: Translat
 export const TTS_PROVIDERS: { value: TtsProvider; labelKey: TranslateKey }[] = [
   { value: 'minimax', labelKey: 'settings.provider.minimax' },
   { value: 'openai', labelKey: 'settings.provider.openai' },
-  { value: 'glm', labelKey: 'settings.provider.glm' },
+  { value: 'qwen', labelKey: 'settings.provider.qwen' },
 ]
 
 // Default base URLs for providers
@@ -23,5 +23,21 @@ export const DEFAULT_BASE_URLS = {
   deepseek: 'https://api.deepseek.com',
   glm: 'https://open.bigmodel.cn/api/paas',
   openai: 'https://api.openai.com/v1',
+  qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   kimi: 'https://api.moonshot.cn/v1',
 } as const
+
+export const QWEN_BASE_URL_OPTIONS = [
+  {
+    label: '中国（华北2-北京） / China (Beijing)',
+    value: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  },
+  {
+    label: '新加坡（Singapore） / Singapore',
+    value: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+  },
+  {
+    label: '美国（Virginia） / US (Virginia)',
+    value: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
+  },
+] as const

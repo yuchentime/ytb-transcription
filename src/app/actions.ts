@@ -389,6 +389,7 @@ export async function startTaskAction(
           deepseekApiBaseUrl: runtimeSettings.deepseekApiBaseUrl,
           glmApiBaseUrl: runtimeSettings.glmApiBaseUrl,
           openaiApiBaseUrl: runtimeSettings.openaiApiBaseUrl,
+          qwenApiBaseUrl: runtimeSettings.qwenApiBaseUrl,
           kimiApiBaseUrl: runtimeSettings.kimiApiBaseUrl,
           customApiBaseUrl: runtimeSettings.customApiBaseUrl,
           segmentationStrategy: 'punctuation',

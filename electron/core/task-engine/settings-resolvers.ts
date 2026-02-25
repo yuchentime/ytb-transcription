@@ -31,6 +31,8 @@ export function resolveTtsApiBaseUrl(settings: AppSettings): string {
       return settings.openaiApiBaseUrl
     case 'glm':
       return settings.glmApiBaseUrl
+    case 'qwen':
+      return settings.qwenApiBaseUrl
     case 'piper':
       return ''
   }
@@ -84,9 +86,11 @@ export function resolveTtsApiKeyState(settings: AppSettings): 'set' | 'missing' 
       ? settings.minimaxApiKey
       : provider === 'openai'
         ? settings.openaiApiKey
-      : provider === 'glm'
-        ? settings.glmApiKey
-        : ''
+        : provider === 'glm'
+          ? settings.glmApiKey
+          : provider === 'qwen'
+            ? settings.qwenApiKey
+            : ''
   return key.trim() ? 'set' : 'missing'
 }
 

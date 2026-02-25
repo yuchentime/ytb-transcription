@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../../electron/core/db/types'
 import type { TranslateConnectivityResult } from '../../electron/ipc/channels'
-import type { TranslateFn } from '../app/i18n'
+import type { TranslateFn, TranslateKey } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
 import { Toast } from '../components/Toast'
 import { TRANSLATE_MODEL_OPTIONS, TTS_MODEL_OPTIONS } from '../app/utils'
@@ -44,6 +44,30 @@ interface SettingsPageProps {
 }
 
 type CloudTtsProvider = Exclude<TtsProvider, 'piper'>
+type QwenRegionSelectValue = 'qwen-cn' | 'qwen-sg' | 'qwen-us'
+type TtsProviderSelectValue = CloudTtsProvider | QwenRegionSelectValue
+
+const QWEN_REGION_PROVIDER_OPTIONS: Array<{
+  value: QwenRegionSelectValue
+  baseUrl: string
+  labelKey: TranslateKey
+}> = [
+  {
+    value: 'qwen-cn',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    labelKey: 'settings.provider.qwen.cn',
+  },
+  {
+    value: 'qwen-sg',
+    baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    labelKey: 'settings.provider.qwen.sg',
+  },
+  {
+    value: 'qwen-us',
+    baseUrl: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
+    labelKey: 'settings.provider.qwen.us',
+  },
+]
 
 const OPENAI_TTS_VOICE_PROFILES: SettingsPageModel['voiceProfiles'] = [
   {
@@ -168,8 +192,76 @@ const GLM_TTS_VOICE_PROFILES: SettingsPageModel['voiceProfiles'] = [
   },
 ]
 
+const QWEN_TTS_VOICE_PROFILES: SettingsPageModel['voiceProfiles'] = [
+  {
+    id: 'Cherry',
+    displayName: 'Cherry (Qwen)',
+    description: 'Warm and neutral',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'Chelsie',
+    displayName: 'Chelsie (Qwen)',
+    description: 'Bright and youthful',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'Ethan',
+    displayName: 'Ethan (Qwen)',
+    description: 'Stable male voice',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'Serena',
+    displayName: 'Serena (Qwen)',
+    description: 'Soft and clear',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'Dylan',
+    displayName: 'Dylan (Qwen)',
+    description: 'Calm male tone',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'Jada',
+    displayName: 'Jada (Qwen)',
+    description: 'Clear female tone',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+  {
+    id: 'Sunny',
+    displayName: 'Sunny (Qwen)',
+    description: 'Energetic and lively',
+    language: 'multi',
+    speedRange: [0.5, 2],
+    pitchRange: [-10, 10],
+    volumeRange: [0, 10],
+  },
+]
+
 const NON_MINIMAX_CLOUD_VOICE_IDS = new Set(
-  [...OPENAI_TTS_VOICE_PROFILES, ...GLM_TTS_VOICE_PROFILES].map((voice) => voice.id),
+  [...OPENAI_TTS_VOICE_PROFILES, ...GLM_TTS_VOICE_PROFILES, ...QWEN_TTS_VOICE_PROFILES].map(
+    (voice) => voice.id,
+  ),
 )
 
 function filterVoicesByLanguage(
@@ -190,6 +282,8 @@ function getVoiceProfilesForProvider(
         return OPENAI_TTS_VOICE_PROFILES
       case 'glm':
         return GLM_TTS_VOICE_PROFILES
+      case 'qwen':
+        return QWEN_TTS_VOICE_PROFILES
       case 'minimax':
         return voices.filter((voice) => !NON_MINIMAX_CLOUD_VOICE_IDS.has(voice.id))
     }
@@ -198,13 +292,42 @@ function getVoiceProfilesForProvider(
 }
 
 function normalizeTtsProvider(provider: TtsProvider): CloudTtsProvider {
-  return provider === 'piper' ? 'minimax' : provider
+  return provider === 'piper' || provider === 'glm' ? 'minimax' : provider
+}
+
+function normalizeUrlForCompare(url: string): string {
+  return url.trim().replace(/\/+$/, '').toLowerCase()
+}
+
+function resolveCloudTtsProviderFromSelect(value: TtsProviderSelectValue): CloudTtsProvider {
+  if (value === 'qwen-cn' || value === 'qwen-sg' || value === 'qwen-us') {
+    return 'qwen'
+  }
+  return value
+}
+
+function resolveQwenBaseUrlFromSelect(value: TtsProviderSelectValue): string | null {
+  const matched = QWEN_REGION_PROVIDER_OPTIONS.find((option) => option.value === value)
+  return matched?.baseUrl ?? null
+}
+
+function resolveTtsProviderSelectValue(settings: AppSettings): TtsProviderSelectValue {
+  const provider = normalizeTtsProvider(settings.ttsProvider)
+  if (provider !== 'qwen') {
+    return provider
+  }
+  const normalizedCurrentBaseUrl = normalizeUrlForCompare(settings.qwenApiBaseUrl || '')
+  const matched = QWEN_REGION_PROVIDER_OPTIONS.find(
+    (option) => normalizeUrlForCompare(option.baseUrl) === normalizedCurrentBaseUrl,
+  )
+  return matched?.value ?? 'qwen-cn'
 }
 
 export function SettingsPage(props: SettingsPageProps) {
   const { settings } = props.model
   const { setSettings } = props.actions
-  const currentTtsProvider = normalizeTtsProvider(settings.ttsProvider)
+  const currentTtsProviderSelectValue = resolveTtsProviderSelectValue(settings)
+  const currentTtsProvider = resolveCloudTtsProviderFromSelect(currentTtsProviderSelectValue)
   const availableVoiceProfiles = getVoiceProfilesForProvider(
     currentTtsProvider,
     props.model.voiceProfiles,
@@ -230,6 +353,33 @@ export function SettingsPage(props: SettingsPageProps) {
     settings.customApiBaseUrl,
   ])
 
+  useEffect(() => {
+    if (settings.ttsProvider !== 'glm') {
+      return
+    }
+    const fallbackProvider: CloudTtsProvider = 'minimax'
+    const fallbackModels = TTS_MODEL_OPTIONS[fallbackProvider] ?? []
+    setSettings((prev) => {
+      if (prev.ttsProvider !== 'glm') {
+        return prev
+      }
+      const filteredVoices = getVoiceProfilesForProvider(
+        fallbackProvider,
+        props.model.voiceProfiles,
+        prev.ttsTargetLanguage,
+      )
+      const currentModelValid = fallbackModels.includes(prev.ttsModelId)
+      const currentVoiceValid = filteredVoices.some((voice) => voice.id === prev.ttsVoiceId)
+      return {
+        ...prev,
+        ttsProvider: fallbackProvider,
+        ttsModelId: currentModelValid ? prev.ttsModelId : (fallbackModels[0] ?? ''),
+        ttsVoiceId: currentVoiceValid ? prev.ttsVoiceId : (filteredVoices[0]?.id ?? ''),
+        minimaxApiBaseUrl: prev.minimaxApiBaseUrl || DEFAULT_BASE_URLS.minimax,
+      }
+    })
+  }, [props.model.voiceProfiles, setSettings, settings.ttsProvider])
+
   // Helper to get available models for a provider
   const getTranslateModels = (provider: TranslateProvider): string[] => {
     if (provider === 'custom') return []
@@ -251,6 +401,8 @@ export function SettingsPage(props: SettingsPageProps) {
         return 'glmApiKey'
       case 'openai':
         return 'openaiApiKey'
+      case 'qwen':
+        return 'qwenApiKey'
       case 'kimi':
         return 'kimiApiKey'
       case 'custom':
@@ -272,6 +424,8 @@ export function SettingsPage(props: SettingsPageProps) {
         return 'glmApiBaseUrl'
       case 'openai':
         return 'openaiApiBaseUrl'
+      case 'qwen':
+        return 'qwenApiBaseUrl'
       case 'kimi':
         return 'kimiApiBaseUrl'
       case 'custom':
@@ -443,9 +597,11 @@ export function SettingsPage(props: SettingsPageProps) {
           <label>
             {props.t('settings.ttsProvider')}
             <select
-              value={currentTtsProvider}
+              value={currentTtsProviderSelectValue}
               onChange={(event) => {
-                const newProvider = event.target.value as CloudTtsProvider
+                const selectedValue = event.target.value as TtsProviderSelectValue
+                const newProvider = resolveCloudTtsProviderFromSelect(selectedValue)
+                const selectedQwenBaseUrl = resolveQwenBaseUrlFromSelect(selectedValue)
                 const availableModels = getTtsModels(newProvider)
                 const currentModelValid = availableModels.includes(settings.ttsModelId)
                 setSettings((prev) => {
@@ -457,6 +613,10 @@ export function SettingsPage(props: SettingsPageProps) {
                     prev.ttsTargetLanguage,
                   )
                   const currentVoiceValid = filteredVoices.some((voice) => voice.id === prev.ttsVoiceId)
+                  const resolvedQwenBaseUrl =
+                    newProvider === 'qwen'
+                      ? selectedQwenBaseUrl || prev.qwenApiBaseUrl || DEFAULT_BASE_URLS.qwen
+                      : prev.qwenApiBaseUrl
                   return {
                     ...prev,
                     ttsProvider: newProvider,
@@ -465,14 +625,23 @@ export function SettingsPage(props: SettingsPageProps) {
                     // Auto-select first compatible voice when provider changes
                     ttsVoiceId: currentVoiceValid ? prev.ttsVoiceId : (filteredVoices[0]?.id ?? ''),
                     // Auto-set default base URL if empty
-                    [baseUrlField]: (prev[baseUrlField] as string) || defaultBaseUrl,
+                    [baseUrlField]:
+                      newProvider === 'qwen'
+                        ? resolvedQwenBaseUrl
+                        : (prev[baseUrlField] as string) || defaultBaseUrl,
+                    qwenApiBaseUrl: resolvedQwenBaseUrl,
                   }
                 })
               }}
             >
-              {TTS_PROVIDERS.map((p) => (
+              {TTS_PROVIDERS.filter((provider) => provider.value !== 'qwen').map((p) => (
                 <option key={p.value} value={p.value}>
                   {props.t(p.labelKey)}
+                </option>
+              ))}
+              {QWEN_REGION_PROVIDER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {props.t(option.labelKey)}
                 </option>
               ))}
             </select>
@@ -504,10 +673,14 @@ export function SettingsPage(props: SettingsPageProps) {
                 setSettings((prev) => ({
                   ...prev,
                   [getBaseUrlField(currentTtsProvider)]: event.target.value.trim(),
+                  ...(currentTtsProvider === 'qwen'
+                    ? { qwenApiBaseUrl: event.target.value.trim() }
+                    : {}),
                 }))
               }
               placeholder={DEFAULT_BASE_URLS[currentTtsProvider]}
             />
+            {currentTtsProvider === 'qwen' && <small className="hint">{props.t('settings.qwenRegionHint')}</small>}
           </label>
 
           <label>
@@ -558,7 +731,7 @@ export function SettingsPage(props: SettingsPageProps) {
           </label>
 
           {/* Voice Preset Panel */}
-          <div className="full">
+          <div>
             <VoicePresetPanel
               voiceId={settings.ttsVoiceId}
               speed={settings.ttsSpeed}

@@ -93,6 +93,20 @@
 - 设置页可点击 `检测 Piper 就绪状态`，快速确认本地环境是否可用。
 - 会显示 `Binary / Model / Config` 三项状态，方便定位问题。
 
+### 5. 新增 Qwen3 TTS（按地域 Base URL）
+- 设置页 TTS Provider 直接提供 3 个区域选项：
+  - `Qwen3（中国）`
+  - `Qwen3（新加坡）`
+  - `Qwen3（美国）`
+- 内置模型：
+  - `qwen3-tts-instruct-flash`
+  - `qwen3-tts-vd-2026-01-26`
+  - `qwen3-tts-flash`
+- 可按 API Key 所属地域选择 Base URL：
+  - 中国（华北2-北京）：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+  - 新加坡：`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
+  - 美国（弗吉尼亚）：`https://dashscope-us.aliyuncs.com/compatible-mode/v1`
+
 ## 如何启用 Piper（给普通用户）
 
 1. 打开设置页，选择 `TTS Provider = 内置语音合成（Piper）`。  

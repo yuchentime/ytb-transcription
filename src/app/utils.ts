@@ -58,6 +58,7 @@ export const TTS_MODEL_OPTIONS: Record<Exclude<TtsProvider, 'piper'>, string[]> 
   openai: ['gpt-4o-mini-tts', 'tts-1-hd', 'tts-1'],
   // GLM TTS model based on bigmodel.cn text-to-speech documentation
   glm: ['glm-tts'],
+  qwen: ['qwen3-tts-instruct-flash', 'qwen3-tts-vd-2026-01-26', 'qwen3-tts-flash'],
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -91,6 +92,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // OpenAI
   openaiApiKey: '',
   openaiApiBaseUrl: 'https://api.openai.com/v1',
+
+  // Qwen
+  qwenApiKey: '',
+  qwenApiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
 
   // Kimi
   kimiApiKey: '',

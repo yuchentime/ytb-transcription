@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
 import type { TaskRuntimeEventPayload } from '../../electron/ipc/channels'
@@ -276,18 +276,6 @@ export function TaskPage(props: TaskPageProps) {
   const shouldShowProgress = isTaskActive && !shouldShowFinalOutput
   const isSubmitDisabled =
     props.model.isStartDisabled && props.model.isTranslateModelConfigured && props.model.isTtsModelConfigured
-
-  useEffect(() => {
-    if (hasTranscript) {
-      setIsTranscriptExpanded(true)
-    }
-  }, [hasTranscript])
-
-  useEffect(() => {
-    if (hasTranslation) {
-      setIsTranslationExpanded(true)
-    }
-  }, [hasTranslation])
 
   return (
     <>

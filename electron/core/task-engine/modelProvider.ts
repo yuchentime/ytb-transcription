@@ -332,6 +332,8 @@ function resolveTtsApiKey(
       return settings.openaiApiKey ?? ''
     case 'glm':
       return settings.glmApiKey ?? ''
+    case 'qwen':
+      return settings.qwenApiKey ?? ''
     case 'piper':
       return ''
   }
@@ -348,6 +350,8 @@ function resolveTtsApiBaseUrl(
       return settings.openaiApiBaseUrl ?? ''
     case 'glm':
       return settings.glmApiBaseUrl ?? ''
+    case 'qwen':
+      return settings.qwenApiBaseUrl ?? ''
     case 'piper':
       return ''
   }
@@ -653,7 +657,12 @@ async function requestOpenAICompatibleTts(params: {
   if (!baseUrl.trim()) {
     throw new Error(`${params.provider} API base URL is required for TTS`)
   }
-  const fallbackVoice = params.provider === 'glm' ? 'tongtong' : 'alloy'
+  const fallbackVoice =
+    params.provider === 'glm'
+      ? 'tongtong'
+      : params.provider === 'qwen'
+        ? 'Cherry'
+        : 'alloy'
   const requestBody =
     params.provider === 'glm'
       ? {
