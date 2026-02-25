@@ -2141,7 +2141,12 @@ export class TaskEngine {
     const task = this.deps.taskDao.getTaskById(taskId)
     const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
     const requested = snapshot.ttsPollingConcurrency
-    const defaultConcurrency = settings.ttsProvider === 'qwen' ? 4 : 3
+    const defaultConcurrency =
+      settings.ttsProvider === 'qwen'
+        ? 4
+        : settings.ttsProvider === 'glm'
+          ? 2
+          : 3
     const configured =
       typeof requested === 'number' && Number.isFinite(requested)
         ? Math.floor(requested)
@@ -2151,6 +2156,8 @@ export class TaskEngine {
         ? 1
         : settings.ttsProvider === 'qwen'
           ? 6
+          : settings.ttsProvider === 'glm'
+            ? 2
           : 3
     return Math.max(1, Math.min(providerCap, configured, Math.max(1, totalSegments)))
   }

@@ -418,7 +418,7 @@ async function fetchWithTimeout(
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timeoutHandle = setTimeout(() => {
       controller.abort()
-      reject(new Error(`Text request timeout after ${timeout}ms`))
+      reject(new Error(`Request timeout after ${timeout}ms`))
     }, timeout)
   })
 
@@ -426,7 +426,21 @@ async function fetchWithTimeout(
     return await Promise.race([fetchPromise, timeoutPromise])
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Text request timeout after ${timeout}ms`)
+      throw new Error(`Request timeout after ${timeout}ms`)
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    const cause = (error as { cause?: unknown } | null)?.cause
+    const causeCode =
+      cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string'
+        ? cause.code
+        : ''
+    const causeMessage =
+      cause && typeof cause === 'object' && 'message' in cause && typeof cause.message === 'string'
+        ? cause.message
+        : ''
+    if (message === 'fetch failed') {
+      const detail = [causeCode, causeMessage].filter(Boolean).join(' ')
+      throw new Error(detail ? `fetch failed (${detail})` : 'fetch failed')
     }
     throw error
   } finally {
@@ -770,6 +784,7 @@ async function requestOpenAICompatibleTts(params: {
           voice: params.settings.ttsVoiceId || fallbackVoice,
           speed: Math.max(0.5, Math.min(2, params.settings.ttsSpeed ?? 1)),
           volume: Math.max(0.1, Math.min(10, params.settings.ttsVolume ?? 1)),
+          stream: false,
           response_format: 'wav',
         }
       : {
@@ -779,15 +794,40 @@ async function requestOpenAICompatibleTts(params: {
           speed: params.settings.ttsSpeed ?? 1,
           response_format: 'mp3',
         }
-  const response = await fetchWithTimeout(
-    getOpenAICompatibleTtsEndpoint(params.provider, baseUrl),
-    {
-      method: 'POST',
-      headers: buildHeaders(resolveTtsApiKey(params.settings, params.provider)),
-      body: JSON.stringify(requestBody),
-    },
-    Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
-  )
+  const endpoint = getOpenAICompatibleTtsEndpoint(params.provider, baseUrl)
+  const requestTimeout = Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000)
+  const maxTransportAttempts = params.provider === 'glm' ? 2 : 1
+  let response: Response | null = null
+  let lastTransportError: unknown = null
+  for (let attempt = 1; attempt <= maxTransportAttempts; attempt += 1) {
+    try {
+      response = await fetchWithTimeout(
+        endpoint,
+        {
+          method: 'POST',
+          headers: buildHeaders(resolveTtsApiKey(params.settings, params.provider)),
+          body: JSON.stringify(requestBody),
+        },
+        requestTimeout,
+      )
+      break
+    } catch (error) {
+      lastTransportError = error
+      const message = error instanceof Error ? error.message : String(error)
+      const retryableTransportError =
+        /fetch failed|timeout|network|econnreset|etimedout|enotfound|eai_again|socket/i.test(message)
+      if (!retryableTransportError || attempt >= maxTransportAttempts) {
+        throw error
+      }
+      const backoffMs = 400 * attempt
+      await new Promise((resolve) => setTimeout(resolve, backoffMs))
+    }
+  }
+  if (!response) {
+    throw (lastTransportError instanceof Error
+      ? lastTransportError
+      : new Error(lastTransportError ? String(lastTransportError) : `${params.provider} tts request failed`))
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
