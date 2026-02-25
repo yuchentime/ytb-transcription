@@ -1,5 +1,10 @@
 import type { TranslateProvider, TtsProvider } from '../../electron/core/db/types'
 import type { TranslateKey } from './i18n'
+import {
+  DEFAULT_CUSTOM_API_BASE_URL,
+  PROVIDER_BASE_URLS,
+  QWEN_REGION_BASE_URLS,
+} from '../../shared/providerBaseUrls'
 
 // Translation provider options - label is i18n key
 export const TRANSLATE_PROVIDERS: { value: TranslateProvider; labelKey: TranslateKey }[] = [
@@ -14,30 +19,32 @@ export const TRANSLATE_PROVIDERS: { value: TranslateProvider; labelKey: Translat
 export const TTS_PROVIDERS: { value: TtsProvider; labelKey: TranslateKey }[] = [
   { value: 'minimax', labelKey: 'settings.provider.minimax' },
   { value: 'openai', labelKey: 'settings.provider.openai' },
+  { value: 'glm', labelKey: 'settings.provider.glm' },
   { value: 'qwen', labelKey: 'settings.provider.qwen' },
 ]
 
 // Default base URLs for providers
-export const DEFAULT_BASE_URLS = {
-  minimax: 'https://api.minimaxi.com',
-  deepseek: 'https://api.deepseek.com',
-  glm: 'https://open.bigmodel.cn/api/paas',
-  openai: 'https://api.openai.com/v1',
-  qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-  kimi: 'https://api.moonshot.cn/v1',
-} as const
+export const DEFAULT_BASE_URLS = PROVIDER_BASE_URLS
+export const DEFAULT_CUSTOM_BASE_URL = DEFAULT_CUSTOM_API_BASE_URL
 
-export const QWEN_BASE_URL_OPTIONS = [
+export const QWEN_REGION_PROVIDER_OPTIONS: Array<{
+  value: 'qwen-cn' | 'qwen-sg' | 'qwen-us'
+  baseUrl: string
+  labelKey: TranslateKey
+}> = [
   {
-    label: '中国（华北2-北京） / China (Beijing)',
-    value: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    value: 'qwen-cn',
+    baseUrl: QWEN_REGION_BASE_URLS.cn,
+    labelKey: 'settings.provider.qwen.cn',
   },
   {
-    label: '新加坡（Singapore） / Singapore',
-    value: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    value: 'qwen-sg',
+    baseUrl: QWEN_REGION_BASE_URLS.sg,
+    labelKey: 'settings.provider.qwen.sg',
   },
   {
-    label: '美国（Virginia） / US (Virginia)',
-    value: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1',
+    value: 'qwen-us',
+    baseUrl: QWEN_REGION_BASE_URLS.us,
+    labelKey: 'settings.provider.qwen.us',
   },
-] as const
+]

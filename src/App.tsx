@@ -348,15 +348,18 @@ function App() {
       const resolvedRunningTaskId =
         runningTask?.id ?? (runningTaskResponse.ok ? undefined : snapshot.running[0]?.taskId)
       let processingYoutubeUrl = ''
+      let processingYoutubeTitle = ''
       let runningTaskStatus: TaskStatus | '' = ''
 
       if (runningTask) {
         processingYoutubeUrl = runningTask.youtubeUrl
+        processingYoutubeTitle = runningTask.youtubeTitle || runningTask.youtubeUrl
         runningTaskStatus = runningTask.status
       } else if (resolvedRunningTaskId) {
         const detail = await ipcClient.task.get({ taskId: resolvedRunningTaskId }).catch(() => null)
         if (detail) {
           processingYoutubeUrl = detail.task.youtubeUrl
+          processingYoutubeTitle = detail.task.youtubeTitle || detail.task.youtubeUrl
           runningTaskStatus = detail.task.status
         }
       }
@@ -383,7 +386,8 @@ function App() {
         activeTaskId: resolvedRunningTaskId ?? prev.activeTaskId,
         activeStatus: runningTaskStatus || prev.activeStatus,
         running: Boolean(resolvedRunningTaskId),
-        processingYoutubeUrl,
+        processingYoutubeUrl: resolvedRunningTaskId ? processingYoutubeUrl : prev.processingYoutubeUrl,
+        processingYoutubeTitle: resolvedRunningTaskId ? processingYoutubeTitle : prev.processingYoutubeTitle,
       }))
     } catch (error) {
       setQueueState((prev) => ({
@@ -394,10 +398,6 @@ function App() {
       setHistoryState((prev) => ({
         ...prev,
         runningTaskId: '',
-      }))
-      setTaskState((prev) => ({
-        ...prev,
-        processingYoutubeUrl: '',
       }))
     }
   }, [])
@@ -872,6 +872,7 @@ function App() {
     translationContent: taskState.translationContent,
     downloadSpeed: taskState.downloadSpeed,
     processingYoutubeUrl: taskState.processingYoutubeUrl,
+    processingYoutubeTitle: taskState.processingYoutubeTitle,
     isRuntimeModalVisible: taskState.isRuntimeModalVisible,
     runtimeComponentStatus: taskState.runtimeComponentStatus,
     runtimeBootstrapStatus: taskState.runtimeBootstrapStatus,

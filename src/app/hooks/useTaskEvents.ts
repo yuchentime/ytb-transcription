@@ -23,6 +23,17 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
 
   useEffect(() => {
     let historyRefreshTimer: ReturnType<typeof setTimeout> | null = null
+    const successSound = new Audio('/audios/successed.mp3')
+    const errorSound = new Audio('/audios/error.mp3')
+    successSound.preload = 'auto'
+    errorSound.preload = 'auto'
+
+    const playNotificationSound = (audio: HTMLAudioElement): void => {
+      audio.currentTime = 0
+      void audio.play().catch(() => {
+        // Ignore autoplay or playback errors to avoid affecting task events.
+      })
+    }
 
     const scheduleHistoryRefresh = (): void => {
       if (historyRefreshTimer) {
@@ -88,6 +99,19 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         })
       } catch {
         // Ignore content refresh failures to keep runtime event stream resilient.
+      }
+    }
+
+    const syncTaskDisplayMeta = async (taskId: string): Promise<void> => {
+      try {
+        const detail = await ipcClient.task.get({ taskId })
+        setTaskState((prev) => ({
+          ...prev,
+          processingYoutubeUrl: detail.task.youtubeUrl,
+          processingYoutubeTitle: detail.task.youtubeTitle || detail.task.youtubeUrl,
+        }))
+      } catch {
+        // Ignore metadata refresh failures to avoid interrupting task events.
       }
     }
 
@@ -185,6 +209,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
 
     const offCompleted = ipcClient.task.onCompleted((payload) => {
       scheduleHistoryRefresh()
+      playNotificationSound(successSound)
       if (payload.taskId !== activeTaskId && activeTaskId) return
       setTaskState((prev) => ({
         ...prev,
@@ -201,6 +226,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
         translationPath: payload.output.translationPath,
         pushLog,
       })
+      void syncTaskDisplayMeta(payload.taskId)
 
       pushLog({
         time: new Date().toISOString(),
@@ -213,6 +239,7 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
 
     const offFailed = ipcClient.task.onFailed((payload) => {
       scheduleHistoryRefresh()
+      playNotificationSound(errorSound)
       if (payload.taskId !== activeTaskId && activeTaskId) return
       setTaskState((prev) => ({
         ...prev,
@@ -258,6 +285,8 @@ export function useTaskEvents(options: UseTaskEventsOptions): void {
       if (historyRefreshTimer) {
         clearTimeout(historyRefreshTimer)
       }
+      successSound.pause()
+      errorSound.pause()
       offStatus()
       offProgress()
       offSegmentProgress()

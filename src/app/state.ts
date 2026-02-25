@@ -67,6 +67,8 @@ export interface TaskState {
   downloadSpeed?: string
   /** 当前处理中任务的 YouTube 链接 */
   processingYoutubeUrl: string
+  /** 当前处理中任务的 YouTube 标题 */
+  processingYoutubeTitle: string
   /** 运行环境准备弹窗是否可见 */
   isRuntimeModalVisible: boolean
   /** 运行环境组件状态映射 */
@@ -125,6 +127,7 @@ export function createInitialTaskState(): TaskState {
     transcriptContent: undefined,
     translationContent: undefined,
     processingYoutubeUrl: '',
+    processingYoutubeTitle: '',
     isRuntimeModalVisible: false,
     runtimeComponentStatus: {},
     runtimeBootstrapStatus: 'idle',

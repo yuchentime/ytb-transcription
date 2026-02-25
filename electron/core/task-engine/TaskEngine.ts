@@ -41,6 +41,10 @@ import {
   DEFAULT_TRANSLATION_CONTEXT_CHARS,
   DEFAULT_TTS_SPLIT_THRESHOLD_CHARS,
   DEFAULT_TTS_TARGET_SEGMENT_CHARS,
+  GLM_TTS_MAX_INPUT_CHARS,
+  QWEN_TTS_MAX_INPUT_CHARS,
+  QWEN_TTS_MAX_INPUT_UTF8_BYTES,
+  QWEN_TTS_MAX_INPUT_TOKENS,
   MLX_MODEL_REPOS,
   STAGES,
   WHISPER_MODEL_URLS,
@@ -52,6 +56,7 @@ import {
   joinTranslatedChunks,
   mergeChunkTranscript,
   resolveDominantLanguage,
+  splitTextByHardLimit,
   splitTextByPunctuationForTts,
   splitTextByTokenBudget,
   trimContextWindow,
@@ -1057,6 +1062,178 @@ export class TaskEngine {
     return buildSegmentsFromChunkTexts(chunkTexts)
   }
 
+  /** Determine whether current Qwen TTS model follows token-based input limits. */
+  private isQwenTokenLimitedModel(modelId: string): boolean {
+    const normalized = modelId.trim().toLowerCase()
+    if (!normalized) return false
+    return /^qwen\d*-tts/.test(normalized) || normalized.includes('qwen-tts')
+  }
+
+  /** Split text into sentence-level units using sentence-ending punctuation only. */
+  private splitTextBySentenceEndings(text: string): string[] {
+    const normalized = text.replace(/\r\n/g, '\n').trim()
+    if (!normalized) return []
+    const matched = normalized.match(/[^。！？!?;.\n]+(?:[。！？!?;.]+|\n+|$)/g)
+    if (!matched) return [normalized]
+    return matched.map((item) => item.replace(/\s+$/g, '')).filter((item) => item.trim().length > 0)
+  }
+
+  /** Split text by UTF-8 byte limit while preserving character boundaries. */
+  private splitTextByUtf8ByteLimit(text: string, maxBytes: number): string[] {
+    const normalized = text.trim()
+    if (!normalized) return []
+    if (maxBytes <= 0 || Buffer.byteLength(normalized, 'utf8') <= maxBytes) {
+      return [normalized]
+    }
+
+    const chunks: string[] = []
+    let buffer = ''
+    for (const char of normalized) {
+      const next = `${buffer}${char}`
+      if (buffer && Buffer.byteLength(next, 'utf8') > maxBytes) {
+        const trimmed = buffer.trim()
+        if (trimmed) chunks.push(trimmed)
+        buffer = char
+        continue
+      }
+      buffer = next
+    }
+    if (buffer.trim()) {
+      chunks.push(buffer.trim())
+    }
+    return chunks
+  }
+
+  /** Build Qwen TTS segments with sentence boundaries and model hard limits. */
+  private buildQwenTtsSegments(params: {
+    sourceText: string
+    modelId: string
+    targetSegmentChars: number
+  }): TextSegment[] {
+    const normalized = params.sourceText.trim()
+    if (!normalized) return []
+
+    const tokenLimitedModel = this.isQwenTokenLimitedModel(params.modelId)
+    const tokenLimit = tokenLimitedModel ? QWEN_TTS_MAX_INPUT_TOKENS : null
+    const hardCharLimit = QWEN_TTS_MAX_INPUT_CHARS
+    const hardByteLimit = QWEN_TTS_MAX_INPUT_UTF8_BYTES
+    const softTarget = Math.max(120, Math.min(params.targetSegmentChars, hardCharLimit))
+    const sentenceUnits = this.splitTextBySentenceEndings(normalized)
+
+    const meetsHardLimits = (text: string): boolean => {
+      const candidate = text.trim()
+      if (!candidate) return false
+      if (candidate.length > hardCharLimit) return false
+      if (Buffer.byteLength(candidate, 'utf8') > hardByteLimit) return false
+      if (tokenLimit !== null && estimateTokenCount(candidate) > tokenLimit) return false
+      return true
+    }
+
+    const splitOverlongUnit = (text: string): string[] => {
+      const tokenScoped = tokenLimit !== null ? splitTextByTokenBudget(text, tokenLimit) : [text]
+      const charScoped = tokenScoped.flatMap((item) => splitTextByHardLimit(item, hardCharLimit))
+      const byteScoped = charScoped.flatMap((item) => this.splitTextByUtf8ByteLimit(item, hardByteLimit))
+      return byteScoped.map((item) => item.trim()).filter(Boolean)
+    }
+
+    const chunks: string[] = []
+    let buffer = ''
+    for (const unitRaw of sentenceUnits) {
+      const unit = unitRaw.replace(/\s+$/g, '')
+      if (!unit.trim()) continue
+
+      if (!buffer) {
+        if (meetsHardLimits(unit)) {
+          buffer = unit
+          continue
+        }
+        chunks.push(...splitOverlongUnit(unit))
+        continue
+      }
+
+      const merged = `${buffer}${unit}`
+      const mergedWithinHardLimit = meetsHardLimits(merged)
+      const mergedWithinTarget = merged.length <= softTarget
+      if (mergedWithinHardLimit && mergedWithinTarget) {
+        buffer = merged
+        continue
+      }
+
+      chunks.push(buffer.trim())
+      if (meetsHardLimits(unit)) {
+        buffer = unit
+      } else {
+        chunks.push(...splitOverlongUnit(unit))
+        buffer = ''
+      }
+    }
+
+    if (buffer.trim()) {
+      chunks.push(buffer.trim())
+    }
+
+    if (chunks.length <= 1 && meetsHardLimits(normalized)) {
+      return buildSegmentsFromChunkTexts([normalized])
+    }
+    return buildSegmentsFromChunkTexts(chunks)
+  }
+
+  /** Build GLM TTS segments with sentence boundaries and 1024-char hard limit. */
+  private buildGlmTtsSegments(params: {
+    sourceText: string
+    targetSegmentChars: number
+  }): TextSegment[] {
+    const normalized = params.sourceText.trim()
+    if (!normalized) return []
+
+    const hardCharLimit = GLM_TTS_MAX_INPUT_CHARS
+    const softTarget = Math.max(120, Math.min(params.targetSegmentChars, hardCharLimit))
+    const sentenceUnits = this.splitTextBySentenceEndings(normalized)
+    const meetsHardLimits = (text: string): boolean => text.trim().length > 0 && text.trim().length <= hardCharLimit
+    const splitOverlongUnit = (text: string): string[] =>
+      splitTextByHardLimit(text, hardCharLimit).map((item) => item.trim()).filter(Boolean)
+
+    const chunks: string[] = []
+    let buffer = ''
+    for (const unitRaw of sentenceUnits) {
+      const unit = unitRaw.replace(/\s+$/g, '')
+      if (!unit.trim()) continue
+
+      if (!buffer) {
+        if (meetsHardLimits(unit)) {
+          buffer = unit
+          continue
+        }
+        chunks.push(...splitOverlongUnit(unit))
+        continue
+      }
+
+      const merged = `${buffer}${unit}`
+      const mergedWithinHardLimit = meetsHardLimits(merged)
+      const mergedWithinTarget = merged.length <= softTarget
+      if (mergedWithinHardLimit && mergedWithinTarget) {
+        buffer = merged
+        continue
+      }
+
+      chunks.push(buffer.trim())
+      if (meetsHardLimits(unit)) {
+        buffer = unit
+      } else {
+        chunks.push(...splitOverlongUnit(unit))
+        buffer = ''
+      }
+    }
+
+    if (buffer.trim()) {
+      chunks.push(buffer.trim())
+    }
+    if (chunks.length <= 1 && meetsHardLimits(normalized)) {
+      return buildSegmentsFromChunkTexts([normalized])
+    }
+    return buildSegmentsFromChunkTexts(chunks)
+  }
+
   /** Resolve optional translation polishing behavior for long content. */
   private resolvePolishConfig(taskId: string): {
     autoPolishLongText: boolean
@@ -1964,11 +2141,17 @@ export class TaskEngine {
     const task = this.deps.taskDao.getTaskById(taskId)
     const snapshot = (task.modelConfigSnapshot ?? {}) as Record<string, unknown>
     const requested = snapshot.ttsPollingConcurrency
+    const defaultConcurrency = settings.ttsProvider === 'qwen' ? 4 : 3
     const configured =
       typeof requested === 'number' && Number.isFinite(requested)
         ? Math.floor(requested)
-        : 3
-    const providerCap = settings.ttsProvider === 'piper' ? 1 : 3
+        : defaultConcurrency
+    const providerCap =
+      settings.ttsProvider === 'piper'
+        ? 1
+        : settings.ttsProvider === 'qwen'
+          ? 6
+          : 3
     return Math.max(1, Math.min(providerCap, configured, Math.max(1, totalSegments)))
   }
 
@@ -2264,6 +2447,8 @@ export class TaskEngine {
     const translationText = await fs.readFile(context.translationPath, 'utf-8')
     const normalizedTranslation = translationText.trim()
     const usePiperSegmentation = settings.ttsProvider === 'piper'
+    const useGlmSegmentation = settings.ttsProvider === 'glm'
+    const useQwenSegmentation = settings.ttsProvider === 'qwen'
     let baseSegments: TextSegment[]
 
     if (usePiperSegmentation) {
@@ -2279,6 +2464,46 @@ export class TaskEngine {
         stage: 'synthesizing',
         level: 'info',
         text: `TTS segmentation policy: sourceChars=${normalizedTranslation.length}, splitThresholdChars=${ttsSegmentation.splitThresholdChars}, targetSegmentChars=${ttsSegmentation.targetSegmentChars}, segments=${baseSegments.length}`,
+        timestamp: new Date().toISOString(),
+      })
+    } else if (useQwenSegmentation) {
+      const ttsSegmentation = this.resolveTtsSegmentationConfig(context.taskId)
+      const tokenLimitedModel = this.isQwenTokenLimitedModel(settings.ttsModelId)
+      baseSegments = this.buildQwenTtsSegments({
+        sourceText: normalizedTranslation,
+        modelId: settings.ttsModelId,
+        targetSegmentChars: ttsSegmentation.targetSegmentChars,
+      })
+      assertSegmentIntegrity(translationText, baseSegments)
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'synthesizing',
+        level: 'info',
+        text: `Qwen TTS segmentation policy: sourceChars=${normalizedTranslation.length}, model=${
+          settings.ttsModelId || '(empty)'
+        }, sentenceBoundaryOnly=true, hardCharLimit=${QWEN_TTS_MAX_INPUT_CHARS}, hardTokenLimit=${
+          tokenLimitedModel ? QWEN_TTS_MAX_INPUT_TOKENS : 'n/a'
+        }, hardUtf8BytesLimit=${QWEN_TTS_MAX_INPUT_UTF8_BYTES}, targetSegmentChars=${
+          Math.min(ttsSegmentation.targetSegmentChars, QWEN_TTS_MAX_INPUT_CHARS)
+        }, segments=${baseSegments.length}`,
+        timestamp: new Date().toISOString(),
+      })
+    } else if (useGlmSegmentation) {
+      const ttsSegmentation = this.resolveTtsSegmentationConfig(context.taskId)
+      baseSegments = this.buildGlmTtsSegments({
+        sourceText: normalizedTranslation,
+        targetSegmentChars: ttsSegmentation.targetSegmentChars,
+      })
+      assertSegmentIntegrity(translationText, baseSegments)
+      this.emit('log', {
+        taskId: context.taskId,
+        stage: 'synthesizing',
+        level: 'info',
+        text: `GLM TTS segmentation policy: sourceChars=${normalizedTranslation.length}, model=${
+          settings.ttsModelId || '(empty)'
+        }, sentenceBoundaryOnly=true, hardCharLimit=${GLM_TTS_MAX_INPUT_CHARS}, targetSegmentChars=${
+          Math.min(ttsSegmentation.targetSegmentChars, GLM_TTS_MAX_INPUT_CHARS)
+        }, segments=${baseSegments.length}`,
         timestamp: new Date().toISOString(),
       })
     } else {

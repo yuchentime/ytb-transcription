@@ -1,5 +1,10 @@
 import type Database from 'better-sqlite3'
 import type { AppSettings } from '../types'
+import {
+  DEFAULT_CUSTOM_API_BASE_URL,
+  PROVIDER_BASE_URLS,
+  QWEN_REGION_BASE_URLS,
+} from '../../../../shared/providerBaseUrls'
 
 interface SettingRow {
   key: string
@@ -24,31 +29,31 @@ const DEFAULT_SETTINGS: AppSettings = {
   // Provider-specific API configurations
   // MiniMax
   minimaxApiKey: '',
-  minimaxApiBaseUrl: 'https://api.minimaxi.com',
+  minimaxApiBaseUrl: PROVIDER_BASE_URLS.minimax,
 
   // DeepSeek
   deepseekApiKey: '',
-  deepseekApiBaseUrl: 'https://api.deepseek.com',
+  deepseekApiBaseUrl: PROVIDER_BASE_URLS.deepseek,
 
   // GLM
   glmApiKey: '',
-  glmApiBaseUrl: 'https://open.bigmodel.cn/api/paas',
+  glmApiBaseUrl: PROVIDER_BASE_URLS.glm,
 
   // OpenAI
   openaiApiKey: '',
-  openaiApiBaseUrl: 'https://api.openai.com/v1',
+  openaiApiBaseUrl: PROVIDER_BASE_URLS.openai,
 
   // Qwen
   qwenApiKey: '',
-  qwenApiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  qwenApiBaseUrl: PROVIDER_BASE_URLS.qwen,
 
   // Kimi
   kimiApiKey: '',
-  kimiApiBaseUrl: 'https://api.moonshot.cn/v1',
+  kimiApiBaseUrl: PROVIDER_BASE_URLS.kimi,
 
   // Custom/Local provider (e.g., LM Studio with OpenAI-compatible API)
   customApiKey: '',
-  customApiBaseUrl: 'http://localhost:1234/v1', // LM Studio OpenAI-compatible API endpoint
+  customApiBaseUrl: DEFAULT_CUSTOM_API_BASE_URL, // LM Studio OpenAI-compatible API endpoint
 
   // Built-in Piper local TTS
   piperExecutablePath: '',
@@ -102,6 +107,23 @@ function parseRowsToSettings(rows: SettingRow[]): Partial<AppSettings> {
     ;(partial as Record<string, unknown>)[row.key] = decodeSettingValue(row.value)
   }
   return partial
+}
+
+function normalizeQwenBaseUrl(baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, '').toLowerCase()
+  if (!normalized) {
+    return baseUrl
+  }
+  if (normalized === 'https://dashscope.aliyuncs.com/compatible-mode/v1') {
+    return QWEN_REGION_BASE_URLS.cn
+  }
+  if (normalized === 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1') {
+    return QWEN_REGION_BASE_URLS.sg
+  }
+  if (normalized === 'https://dashscope-us.aliyuncs.com/compatible-mode/v1') {
+    return QWEN_REGION_BASE_URLS.us
+  }
+  return baseUrl
 }
 
 function assertValidYtDlpAuthMode(mode: unknown): asserts mode is AppSettings['ytDlpAuthMode'] {
@@ -216,6 +238,7 @@ export class SettingsDao {
     if ((merged.ttsProvider as unknown) === 'custom' || merged.ttsProvider === 'piper') {
       merged.ttsProvider = 'minimax'
     }
+    merged.qwenApiBaseUrl = normalizeQwenBaseUrl(merged.qwenApiBaseUrl)
     return merged
   }
 

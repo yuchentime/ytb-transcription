@@ -1,4 +1,5 @@
 import type { AppSettings, ArtifactRecord, TaskStatus, TranslateProvider, TtsProvider } from '../../electron/core/db/types'
+import { DEFAULT_BASE_URLS, DEFAULT_CUSTOM_BASE_URL } from './constants'
 
 export const STAGES = [
   'downloading',
@@ -79,31 +80,31 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Provider-specific API configurations
   // MiniMax
   minimaxApiKey: '',
-  minimaxApiBaseUrl: 'https://api.minimaxi.com',
+  minimaxApiBaseUrl: DEFAULT_BASE_URLS.minimax,
 
   // DeepSeek
   deepseekApiKey: '',
-  deepseekApiBaseUrl: 'https://api.deepseek.com',
+  deepseekApiBaseUrl: DEFAULT_BASE_URLS.deepseek,
 
   // GLM
   glmApiKey: '',
-  glmApiBaseUrl: 'https://open.bigmodel.cn/api/paas',
+  glmApiBaseUrl: DEFAULT_BASE_URLS.glm,
 
   // OpenAI
   openaiApiKey: '',
-  openaiApiBaseUrl: 'https://api.openai.com/v1',
+  openaiApiBaseUrl: DEFAULT_BASE_URLS.openai,
 
   // Qwen
   qwenApiKey: '',
-  qwenApiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  qwenApiBaseUrl: DEFAULT_BASE_URLS.qwen,
 
   // Kimi
   kimiApiKey: '',
-  kimiApiBaseUrl: 'https://api.moonshot.cn/v1',
+  kimiApiBaseUrl: DEFAULT_BASE_URLS.kimi,
 
   // Custom/Local provider (e.g., LM Studio with OpenAI-compatible API)
   customApiKey: '',
-  customApiBaseUrl: 'http://localhost:1234/v1', // LM Studio OpenAI-compatible API endpoint
+  customApiBaseUrl: DEFAULT_CUSTOM_BASE_URL, // LM Studio OpenAI-compatible API endpoint
 
   // Built-in Piper local TTS
   piperExecutablePath: '',

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../db/types'
+import { GLM_TTS_MAX_INPUT_CHARS, QWEN_TTS_MAX_INPUT_CHARS, QWEN_TTS_MAX_INPUT_UTF8_BYTES } from './constants'
 import { runCommand } from './command'
 import { splitTextByPunctuationForTts } from './text-processing'
 
@@ -36,6 +37,18 @@ interface OpenAITtsResponse {
   download_url?: string
   url?: string
   data?: string
+}
+
+interface QwenDashScopeTtsResponse {
+  output?: {
+    audio?: {
+      url?: string
+      data?: string
+      format?: string
+    }
+  }
+  code?: string
+  message?: string
 }
 
 interface MiniMaxTtsCreateResponse {
@@ -219,6 +232,21 @@ function getOpenAICompatibleTtsEndpoint(
     return `${normalized}/audio/speech`
   }
   return `${normalized}/v1/audio/speech`
+}
+
+function isQwenCompatibleModeBaseUrl(baseUrl: string): boolean {
+  return normalizeBaseUrl(baseUrl).toLowerCase().includes('/compatible-mode/')
+}
+
+function getQwenDashScopeTtsEndpoint(baseUrl: string): string {
+  const normalized = normalizeBaseUrl(baseUrl)
+  if (normalized.endsWith('/api/v1/services/aigc/multimodal-generation/generation')) {
+    return normalized
+  }
+  if (normalized.endsWith('/api/v1')) {
+    return `${normalized}/services/aigc/multimodal-generation/generation`
+  }
+  return normalized
 }
 
 function getTtsCreateEndpoint(baseUrl: string): string {
@@ -657,17 +685,88 @@ async function requestOpenAICompatibleTts(params: {
   if (!baseUrl.trim()) {
     throw new Error(`${params.provider} API base URL is required for TTS`)
   }
+  const normalizedInput = params.text.trim()
   const fallbackVoice =
     params.provider === 'glm'
       ? 'tongtong'
       : params.provider === 'qwen'
         ? 'Cherry'
         : 'alloy'
+  if (params.provider === 'glm' && normalizedInput.length > GLM_TTS_MAX_INPUT_CHARS) {
+    throw new Error(
+      `${params.provider} tts input exceeds hard limit before request (chars=${normalizedInput.length}, limit=${GLM_TTS_MAX_INPUT_CHARS}).`,
+    )
+  }
+  const isQwenCompatibleMode =
+    params.provider === 'qwen' ? isQwenCompatibleModeBaseUrl(baseUrl) : false
+  if (params.provider === 'qwen' && !isQwenCompatibleMode) {
+    const qwenInput = normalizedInput
+    const qwenCharLength = qwenInput.length
+    const qwenUtf8Bytes = Buffer.byteLength(qwenInput, 'utf8')
+    if (qwenCharLength > QWEN_TTS_MAX_INPUT_CHARS || qwenUtf8Bytes > QWEN_TTS_MAX_INPUT_UTF8_BYTES) {
+      throw new Error(
+        `${params.provider} tts input exceeds hard limit before request (chars=${qwenCharLength}, utf8Bytes=${qwenUtf8Bytes}, charLimit=${QWEN_TTS_MAX_INPUT_CHARS}, utf8BytesLimit=${QWEN_TTS_MAX_INPUT_UTF8_BYTES}).`,
+      )
+    }
+    const response = await fetchWithTimeout(
+      getQwenDashScopeTtsEndpoint(baseUrl),
+      {
+        method: 'POST',
+        headers: buildHeaders(resolveTtsApiKey(params.settings, params.provider)),
+        body: JSON.stringify({
+          model: params.settings.ttsModelId,
+          input: {
+            text: qwenInput,
+            voice: params.settings.ttsVoiceId || fallbackVoice,
+          },
+        }),
+      },
+      Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
+    )
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new Error(
+        `${params.provider} tts request failed: HTTP ${response.status}${detail ? ` ${detail.slice(0, 200)}` : ''}`,
+      )
+    }
+
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+    if (!contentType.includes('application/json')) {
+      const audioBuffer = Buffer.from(await response.arrayBuffer())
+      if (audioBuffer.length === 0) {
+        throw new Error(`${params.provider} tts response is empty`)
+      }
+      return { audioBuffer, extension: contentType.includes('wav') ? 'wav' : 'mp3' }
+    }
+
+    const data = (await response.json()) as QwenDashScopeTtsResponse
+    const downloadUrl = data.output?.audio?.url
+    if (downloadUrl) {
+      return { downloadUrl }
+    }
+    const encodedAudio = data.output?.audio?.data
+    if (typeof encodedAudio === 'string' && encodedAudio.trim()) {
+      try {
+        const decoded = Buffer.from(encodedAudio.trim(), 'base64')
+        if (decoded.length > 0) {
+          const format = data.output?.audio?.format?.toLowerCase()
+          return { audioBuffer: decoded, extension: format === 'wav' ? 'wav' : 'mp3' }
+        }
+      } catch {
+        // noop
+      }
+    }
+
+    const detail = data.message || data.code || 'missing audio payload'
+    throw new Error(`${params.provider} tts response invalid: ${detail}`)
+  }
+
   const requestBody =
     params.provider === 'glm'
       ? {
           model: params.settings.ttsModelId,
-          input: params.text,
+          input: normalizedInput,
           voice: params.settings.ttsVoiceId || fallbackVoice,
           speed: Math.max(0.5, Math.min(2, params.settings.ttsSpeed ?? 1)),
           volume: Math.max(0.1, Math.min(10, params.settings.ttsVolume ?? 1)),
@@ -675,7 +774,7 @@ async function requestOpenAICompatibleTts(params: {
         }
       : {
           model: params.settings.ttsModelId,
-          input: params.text,
+          input: normalizedInput,
           voice: params.settings.ttsVoiceId || fallbackVoice,
           speed: params.settings.ttsSpeed ?? 1,
           response_format: 'mp3',

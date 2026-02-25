@@ -57,6 +57,7 @@ const zhMessages = {
   'task.ttsVolume': '音量（0 ~ 10）',
   'task.finalOutput': '成果',
   'task.completed': '已完成',
+  'task.processFailedHint': '处理失败，请查看日志获得更多错误信息',
   'task.runtimePreparingInline': '正在初始化必需运行环境，请稍候...',
   'task.runtimeErrorInline': '运行环境初始化失败：{message}',
 
@@ -298,6 +299,7 @@ const enMessages: Messages = {
   'task.ttsVolume': 'Volume (0 ~ 10)',
   'task.finalOutput': 'Output',
   'task.completed': 'Completed',
+  'task.processFailedHint': 'Processing failed. Please check logs for more details.',
   'task.runtimePreparingInline': 'Preparing required runtime resources, please wait...',
   'task.runtimeErrorInline': 'Runtime initialization failed: {message}',
 
