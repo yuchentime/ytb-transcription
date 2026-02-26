@@ -173,6 +173,28 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '')
 }
 
+function resolveRequestTarget(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.toString()
+  if ('url' in input && typeof input.url === 'string') return input.url
+  return ''
+}
+
+function resolveHostFromUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl)
+    return parsed.host
+  } catch {
+    return ''
+  }
+}
+
+function isRetryableTransportErrorMessage(message: string): boolean {
+  return /fetch failed|timeout|network|econnreset|etimedout|enotfound|eai_again|socket|ssl|ehostunreach/i.test(
+    message,
+  )
+}
+
 function buildHeaders(apiKey?: string): HeadersInit {
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -430,6 +452,8 @@ async function fetchWithTimeout(
     }
     const message = error instanceof Error ? error.message : String(error)
     const cause = (error as { cause?: unknown } | null)?.cause
+    const target = resolveRequestTarget(input)
+    const host = resolveHostFromUrl(target)
     const causeCode =
       cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string'
         ? cause.code
@@ -440,7 +464,8 @@ async function fetchWithTimeout(
         : ''
     if (message === 'fetch failed') {
       const detail = [causeCode, causeMessage].filter(Boolean).join(' ')
-      throw new Error(detail ? `fetch failed (${detail})` : 'fetch failed')
+      const withHost = host ? ` [host=${host}]` : ''
+      throw new Error(detail ? `fetch failed (${detail})${withHost}` : `fetch failed${withHost}`)
     }
     throw error
   } finally {
@@ -722,21 +747,45 @@ async function requestOpenAICompatibleTts(params: {
         `${params.provider} tts input exceeds hard limit before request (chars=${qwenCharLength}, utf8Bytes=${qwenUtf8Bytes}, charLimit=${QWEN_TTS_MAX_INPUT_CHARS}, utf8BytesLimit=${QWEN_TTS_MAX_INPUT_UTF8_BYTES}).`,
       )
     }
-    const response = await fetchWithTimeout(
-      getQwenDashScopeTtsEndpoint(baseUrl),
-      {
-        method: 'POST',
-        headers: buildHeaders(resolveTtsApiKey(params.settings, params.provider)),
-        body: JSON.stringify({
-          model: params.settings.ttsModelId,
-          input: {
-            text: qwenInput,
-            voice: params.settings.ttsVoiceId || fallbackVoice,
+    const endpoint = getQwenDashScopeTtsEndpoint(baseUrl)
+    const requestTimeout = Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000)
+    const maxTransportAttempts = 2
+    let response: Response | null = null
+    let lastTransportError: unknown = null
+    for (let attempt = 1; attempt <= maxTransportAttempts; attempt += 1) {
+      try {
+        response = await fetchWithTimeout(
+          endpoint,
+          {
+            method: 'POST',
+            headers: buildHeaders(resolveTtsApiKey(params.settings, params.provider)),
+            body: JSON.stringify({
+              model: params.settings.ttsModelId,
+              input: {
+                text: qwenInput,
+                voice: params.settings.ttsVoiceId || fallbackVoice,
+              },
+            }),
           },
-        }),
-      },
-      Math.max(30_000, params.settings.stageTimeoutMs ?? 600_000),
-    )
+          requestTimeout,
+        )
+        break
+      } catch (error) {
+        lastTransportError = error
+        const message = error instanceof Error ? error.message : String(error)
+        const retryableTransportError = isRetryableTransportErrorMessage(message)
+        if (!retryableTransportError || attempt >= maxTransportAttempts) {
+          throw error
+        }
+        const backoffMs = 400 * attempt
+        await new Promise((resolve) => setTimeout(resolve, backoffMs))
+      }
+    }
+    if (!response) {
+      throw (lastTransportError instanceof Error
+        ? lastTransportError
+        : new Error(lastTransportError ? String(lastTransportError) : `${params.provider} tts request failed`))
+    }
 
     if (!response.ok) {
       const detail = await response.text().catch(() => '')
@@ -814,8 +863,7 @@ async function requestOpenAICompatibleTts(params: {
     } catch (error) {
       lastTransportError = error
       const message = error instanceof Error ? error.message : String(error)
-      const retryableTransportError =
-        /fetch failed|timeout|network|econnreset|etimedout|enotfound|eai_again|socket/i.test(message)
+      const retryableTransportError = isRetryableTransportErrorMessage(message)
       if (!retryableTransportError || attempt >= maxTransportAttempts) {
         throw error
       }

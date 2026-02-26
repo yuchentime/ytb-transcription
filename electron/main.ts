@@ -4,7 +4,7 @@ import path from 'node:path'
 import { closeDatabase, initDatabase } from './core/db'
 import { initTaskEngine } from './core/task-engine'
 import { registerIpcHandlers } from './ipc/handlers'
-import { IPC_CHANNELS } from './ipc/channels'
+import { IPC_CHANNELS, type UpdateStatusPayload } from './ipc/channels'
 import { autoUpdater } from 'electron-updater'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -106,6 +106,8 @@ app.whenReady().then(() => {
 
 // Auto-updater configuration
 function initAutoUpdater() {
+  registerUpdateIpcHandlers()
+
   // Only enable auto-updater in production
   if (VITE_DEV_SERVER_URL) {
     console.log('[AutoUpdater] Skipping auto-updater in development mode')
@@ -123,11 +125,24 @@ function initAutoUpdater() {
   })
 
   autoUpdater.on('update-available', (info) => {
+    const releaseNotes = Array.isArray(info.releaseNotes)
+      ? info.releaseNotes
+          .map((note) =>
+            note && typeof note === 'object' && 'note' in note && typeof note.note === 'string'
+              ? note.note
+              : '',
+          )
+          .filter((note) => Boolean(note))
+          .join('\n\n') || undefined
+      : typeof info.releaseNotes === 'string'
+        ? info.releaseNotes
+        : undefined
+
     console.log('[AutoUpdater] Update available:', info.version)
     sendUpdateStatus('available', {
       version: info.version,
       releaseDate: info.releaseDate,
-      releaseNotes: info.releaseNotes
+      releaseNotes,
     })
   })
 
@@ -159,34 +174,6 @@ function initAutoUpdater() {
     })
   })
 
-  // IPC handlers for renderer communication
-  ipcMain.handle(IPC_CHANNELS.updateCheck, async () => {
-    try {
-      return await autoUpdater.checkForUpdates()
-    } catch (error) {
-      console.error('[AutoUpdater] Check for updates failed:', error)
-      return null
-    }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.updateDownload, async () => {
-    try {
-      await autoUpdater.downloadUpdate()
-      return true
-    } catch (error) {
-      console.error('[AutoUpdater] Download update failed:', error)
-      return false
-    }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.updateInstall, () => {
-    autoUpdater.quitAndInstall(false, true)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.updateGetVersion, () => {
-    return app.getVersion()
-  })
-
   // Check for updates on startup (with a delay to not block app launch)
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch(err => {
@@ -195,7 +182,67 @@ function initAutoUpdater() {
   }, 3000)
 }
 
-function sendUpdateStatus(status: string, data?: unknown) {
+function registerUpdateIpcHandlers() {
+  ipcMain.removeHandler(IPC_CHANNELS.updateCheck)
+  ipcMain.removeHandler(IPC_CHANNELS.updateDownload)
+  ipcMain.removeHandler(IPC_CHANNELS.updateInstall)
+  ipcMain.removeHandler(IPC_CHANNELS.updateGetVersion)
+
+  ipcMain.handle(IPC_CHANNELS.updateCheck, async () => {
+    if (VITE_DEV_SERVER_URL) {
+      sendUpdateStatus('not-available', {
+        message: 'Auto-updater is disabled in development mode',
+      })
+      return null
+    }
+
+    try {
+      return await autoUpdater.checkForUpdates()
+    } catch (error) {
+      console.error('[AutoUpdater] Check for updates failed:', error)
+      sendUpdateStatus('error', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return null
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.updateDownload, async () => {
+    if (VITE_DEV_SERVER_URL) {
+      sendUpdateStatus('not-available', {
+        message: 'Auto-updater is disabled in development mode',
+      })
+      return false
+    }
+
+    try {
+      await autoUpdater.downloadUpdate()
+      return true
+    } catch (error) {
+      console.error('[AutoUpdater] Download update failed:', error)
+      sendUpdateStatus('error', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      return false
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.updateInstall, () => {
+    if (VITE_DEV_SERVER_URL) {
+      return
+    }
+    autoUpdater.quitAndInstall(false, true)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.updateGetVersion, () => {
+    return app.getVersion()
+  })
+}
+
+function sendUpdateStatus(
+  status: UpdateStatusPayload['status'],
+  data?: UpdateStatusPayload['data'],
+) {
   if (win && !win.isDestroyed()) {
     win.webContents.send(IPC_CHANNELS.updateStatus, { status, data })
   }

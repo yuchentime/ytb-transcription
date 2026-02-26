@@ -131,29 +131,92 @@ export function isLikelyProxyTlsError(stderrLines: string[]): boolean {
   )
 }
 
+function resolveHost(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).host
+  } catch {
+    return ''
+  }
+}
+
+function resolveDownloadCandidates(rawUrl: string): string[] {
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return []
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol === 'http:' && /(^|\.)aliyuncs\.com$/i.test(parsed.hostname)) {
+      const httpsVersion = new URL(parsed.toString())
+      httpsVersion.protocol = 'https:'
+      return [httpsVersion.toString(), parsed.toString()]
+    }
+    return [parsed.toString()]
+  } catch {
+    return [trimmed]
+  }
+}
+
+function isRetryableDownloadFailure(message: string, statusCode: number | null): boolean {
+  if (statusCode !== null) {
+    return statusCode === 408 || statusCode === 425 || statusCode === 429 || statusCode >= 500
+  }
+  return /fetch failed|timeout|network|econnreset|etimedout|enotfound|eai_again|socket|ssl|ehostunreach/i.test(message)
+}
+
 /**
  * Download a file from URL to local path.
  */
 export async function downloadToFile(url: string, filePath: string): Promise<void> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 60_000)
-  let response: Response
-  try {
-    response = await fetch(url, { signal: controller.signal })
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Download timeout after 60000ms')
-    }
-    throw error
-  } finally {
-    clearTimeout(timer)
-  }
-  if (!response.ok) {
-    throw new Error(`Download failed: HTTP ${response.status}`)
-  }
-  const content = Buffer.from(await response.arrayBuffer())
   const fs = await import('node:fs/promises')
-  await fs.writeFile(filePath, content)
+  const candidateUrls = resolveDownloadCandidates(url)
+  if (candidateUrls.length === 0) {
+    throw new Error('Download failed: empty url')
+  }
+
+  const maxAttempts = 3
+  let lastError: unknown = null
+
+  for (const candidateUrl of candidateUrls) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 60_000)
+      let statusCode: number | null = null
+      try {
+        const response = await fetch(candidateUrl, { signal: controller.signal })
+        statusCode = response.status
+        if (!response.ok) {
+          throw new Error(`Download failed: HTTP ${response.status}`)
+        }
+        const content = Buffer.from(await response.arrayBuffer())
+        if (content.length === 0) {
+          throw new Error('Download failed: empty response body')
+        }
+        await fs.writeFile(filePath, content)
+        return
+      } catch (error) {
+        lastError = error
+        if (error instanceof Error && error.name === 'AbortError') {
+          lastError = new Error('Download timeout after 60000ms')
+        }
+        const message = lastError instanceof Error ? lastError.message : String(lastError)
+        const shouldRetry = isRetryableDownloadFailure(message, statusCode)
+        if (!shouldRetry || attempt >= maxAttempts) {
+          break
+        }
+        await sleep(Math.min(3000, 500 * (2 ** (attempt - 1))))
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+  }
+
+  const host = resolveHost(url)
+  const baseMessage =
+    lastError instanceof Error
+      ? lastError.message
+      : lastError
+        ? String(lastError)
+        : 'Unknown download error'
+  throw new Error(host ? `${baseMessage} [downloadHost=${host}]` : baseMessage)
 }
 
 /**
