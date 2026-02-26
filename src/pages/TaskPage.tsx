@@ -233,6 +233,7 @@ export function TaskPage(props: TaskPageProps) {
   const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false)
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
   const [copySuccess, setCopySuccess] = useState(false)
+  const [isRuntimeReloading, setIsRuntimeReloading] = useState(false)
   const [configToast, setConfigToast] = useState<{
     visible: boolean
     message: string
@@ -260,6 +261,16 @@ export function TaskPage(props: TaskPageProps) {
         })
       : props.t('task.runtimePreparingInline')
   const shouldShowTaskError = !!props.model.taskError && props.model.runtimeBootstrapStatus === 'ready'
+  const shouldShowRuntimeReload = props.model.runtimeBootstrapStatus === 'error' || isRuntimeReloading
+
+  const handleReloadRuntime = async (): Promise<void> => {
+    setIsRuntimeReloading(true)
+    try {
+      await props.actions.onReloadRuntime()
+    } finally {
+      setIsRuntimeReloading(false)
+    }
+  }
 
   const handleCopyLogs = async (): Promise<void> => {
     if (props.model.logs.length === 0) return
@@ -385,21 +396,24 @@ export function TaskPage(props: TaskPageProps) {
             </button>
           )}
         </div>
-        {runtimeBlocked && props.model.runtimeBootstrapStatus === 'error' && (
+        {runtimeBlocked && shouldShowRuntimeReload && (
           <div className="task-runtime-reload">
-            <p className="task-runtime-hint runtime-error">{props.t('task.runtimeRetryInline')}</p>
+            <p className={`task-runtime-hint ${isRuntimeReloading ? '' : 'runtime-error'}`}>
+              {isRuntimeReloading ? props.t('task.runtimePreparingInline') : props.t('task.runtimeRetryInline')}
+            </p>
             <button
               type="button"
               className="task-runtime-reload-btn"
-              onClick={() => void props.actions.onReloadRuntime()}
+              onClick={() => void handleReloadRuntime()}
+              disabled={isRuntimeReloading}
               title={runtimeInlineHint}
             >
-              <LoaderIcon className="task-runtime-reload-icon" />
-              <span>{props.t('task.reloadRuntime')}</span>
+              <LoaderIcon className={`task-runtime-reload-icon ${isRuntimeReloading ? 'loading' : ''}`} />
+              <span>{isRuntimeReloading ? props.t('task.reloadingRuntime') : props.t('task.reloadRuntime')}</span>
             </button>
           </div>
         )}
-        {runtimeBlocked && props.model.runtimeBootstrapStatus !== 'error' && (
+        {runtimeBlocked && !shouldShowRuntimeReload && (
           <p className="task-runtime-hint">{runtimeInlineHint}</p>
         )}
 

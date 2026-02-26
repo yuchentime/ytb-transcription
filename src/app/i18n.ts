@@ -62,6 +62,7 @@ const zhMessages = {
   'task.runtimeErrorInline': '运行环境初始化失败：{message}',
   'task.runtimeRetryInline': '运行环境加载失败，请检查网络后重新加载。',
   'task.reloadRuntime': '重新加载',
+  'task.reloadingRuntime': '重新加载中...',
 
   'history.title': '历史记录',
   'history.keyword': '关键词',
@@ -306,6 +307,7 @@ const enMessages: Messages = {
   'task.runtimeErrorInline': 'Runtime initialization failed: {message}',
   'task.runtimeRetryInline': 'Runtime resources failed to load. Check your network and reload.',
   'task.reloadRuntime': 'Reload',
+  'task.reloadingRuntime': 'Reloading...',
 
   'history.title': 'History',
   'history.keyword': 'Keyword',
