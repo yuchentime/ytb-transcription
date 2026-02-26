@@ -504,6 +504,7 @@ function App() {
           runtimeBootstrapStatus: 'ready',
           runtimeBootstrapMessage: '',
           isRuntimeModalVisible: false,
+          error: prev.error === t('error.runtimePreparing') ? '' : prev.error,
         }))
       })
       .catch((error) => {
@@ -587,10 +588,6 @@ function App() {
 
   async function startTask(): Promise<void> {
     if (taskState.runtimeBootstrapStatus !== 'ready') {
-      setTaskState((prev) => ({
-        ...prev,
-        error: t('error.runtimePreparing'),
-      }))
       return
     }
 
@@ -613,6 +610,36 @@ function App() {
       setQueueSubmitToast((prev) => ({
         visible: true,
         key: prev.key + 1,
+      }))
+    }
+  }
+
+  async function reloadRuntime(): Promise<void> {
+    setTaskState((prev) => ({
+      ...prev,
+      runtimeBootstrapStatus: 'preparing',
+      runtimeBootstrapMessage: '',
+      runtimeComponentStatus: {},
+      isRuntimeModalVisible: true,
+      error: prev.error === t('error.runtimePreparing') ? '' : prev.error,
+    }))
+
+    try {
+      await ipcClient.system.prepareRuntime()
+      setTaskState((prev) => ({
+        ...prev,
+        runtimeBootstrapStatus: 'ready',
+        runtimeBootstrapMessage: '',
+        isRuntimeModalVisible: false,
+        error: prev.error === t('error.runtimePreparing') ? '' : prev.error,
+      }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setTaskState((prev) => ({
+        ...prev,
+        runtimeBootstrapStatus: 'error',
+        runtimeBootstrapMessage: message,
+        isRuntimeModalVisible: false,
       }))
     }
   }
@@ -882,6 +909,7 @@ function App() {
     setTaskForm: setTaskFormData,
     onStartTask: startTask,
     onCancelTask: cancelTask,
+    onReloadRuntime: reloadRuntime,
     onDownloadAudio: handleDownloadAudio,
     onOpenOutputDirectory: handleOpenOutputDirectory,
     onRetrySingleSegment: (segmentId: string) => handleRetryFailedSegments([segmentId]),

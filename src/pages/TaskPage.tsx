@@ -64,6 +64,7 @@ interface TaskPageActions {
   setTaskForm: Dispatch<SetStateAction<TaskFormState>>
   onStartTask(): Promise<void>
   onCancelTask(): Promise<void>
+  onReloadRuntime(): Promise<void>
   onDownloadAudio(): Promise<void>
   onOpenOutputDirectory(): Promise<void>
   onRetrySingleSegment(segmentId: string): Promise<void>
@@ -173,6 +174,25 @@ function AlertIcon({ className }: { className?: string }) {
   )
 }
 
+function LoaderIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  )
+}
+
 // Collapsible Section Component
 interface CollapsibleSectionProps {
   title: string
@@ -239,6 +259,7 @@ export function TaskPage(props: TaskPageProps) {
           message: props.model.runtimeBootstrapMessage || props.t('common.hyphen'),
         })
       : props.t('task.runtimePreparingInline')
+  const shouldShowTaskError = !!props.model.taskError && props.model.runtimeBootstrapStatus === 'ready'
 
   const handleCopyLogs = async (): Promise<void> => {
     if (props.model.logs.length === 0) return
@@ -348,7 +369,7 @@ export function TaskPage(props: TaskPageProps) {
             >
               {props.t('task.start')}
             </button>
-            {props.model.taskError && (
+            {shouldShowTaskError && (
               <p className="error task-submit-error">
                 <AlertIcon className="task-submit-error-icon" />
                 <span>{props.t('task.processFailedHint')}</span>
@@ -364,12 +385,22 @@ export function TaskPage(props: TaskPageProps) {
             </button>
           )}
         </div>
-        {runtimeBlocked && (
-          <p
-            className={`task-runtime-hint ${props.model.runtimeBootstrapStatus === 'error' ? 'runtime-error' : ''}`}
-          >
-            {runtimeInlineHint}
-          </p>
+        {runtimeBlocked && props.model.runtimeBootstrapStatus === 'error' && (
+          <div className="task-runtime-reload">
+            <p className="task-runtime-hint runtime-error">{props.t('task.runtimeRetryInline')}</p>
+            <button
+              type="button"
+              className="task-runtime-reload-btn"
+              onClick={() => void props.actions.onReloadRuntime()}
+              title={runtimeInlineHint}
+            >
+              <LoaderIcon className="task-runtime-reload-icon" />
+              <span>{props.t('task.reloadRuntime')}</span>
+            </button>
+          </div>
+        )}
+        {runtimeBlocked && props.model.runtimeBootstrapStatus !== 'error' && (
+          <p className="task-runtime-hint">{runtimeInlineHint}</p>
         )}
 
         {/* Only show status bar when task is active */}

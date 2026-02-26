@@ -60,6 +60,8 @@ const zhMessages = {
   'task.processFailedHint': '处理失败，请查看日志获得更多错误信息',
   'task.runtimePreparingInline': '正在初始化必需运行环境，请稍候...',
   'task.runtimeErrorInline': '运行环境初始化失败：{message}',
+  'task.runtimeRetryInline': '运行环境加载失败，请检查网络后重新加载。',
+  'task.reloadRuntime': '重新加载',
 
   'history.title': '历史记录',
   'history.keyword': '关键词',
@@ -302,6 +304,8 @@ const enMessages: Messages = {
   'task.processFailedHint': 'Processing failed. Please check logs for more details.',
   'task.runtimePreparingInline': 'Preparing required runtime resources, please wait...',
   'task.runtimeErrorInline': 'Runtime initialization failed: {message}',
+  'task.runtimeRetryInline': 'Runtime resources failed to load. Check your network and reload.',
+  'task.reloadRuntime': 'Reload',
 
   'history.title': 'History',
   'history.keyword': 'Keyword',
