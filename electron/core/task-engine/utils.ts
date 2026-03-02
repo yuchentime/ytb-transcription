@@ -76,6 +76,18 @@ export function shouldRetryWithTvClient(message: string): boolean {
 }
 
 /**
+ * Check if yt-dlp browser-cookie auth failed due to locked/unreadable browser cookie DB.
+ */
+export function shouldRetryWithoutBrowserCookies(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    /could not copy .*cookie database/i.test(message) ||
+    lower.includes('failed to decrypt') && lower.includes('cookie') ||
+    lower.includes('cookies from browser') && lower.includes('error')
+  )
+}
+
+/**
  * Select appropriate Whisper device based on runtime availability.
  */
 export function selectWhisperDevice(

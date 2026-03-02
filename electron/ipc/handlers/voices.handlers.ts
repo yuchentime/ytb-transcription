@@ -20,10 +20,9 @@ function assertVoiceParamInput(input: VoiceParamInput): VoiceParamInput {
       throw new Error('voiceId must be a string')
     }
     const voiceId = input.voiceId.trim()
-    if (!voiceId) {
-      throw new Error('voiceId cannot be empty')
+    if (voiceId) {
+      output.voiceId = voiceId
     }
-    output.voiceId = voiceId
   }
 
   const assignNumber = (key: 'speed' | 'pitch' | 'volume', value: unknown): void => {

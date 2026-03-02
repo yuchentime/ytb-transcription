@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { runCommand } from './command'
 
 export interface Toolchain {
@@ -361,29 +362,75 @@ function getFfmpegBinaryName(): string {
   return process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
 }
 
-function getFfmpegDownloadUrl(): string | null {
+function getFfmpegAssetNameCandidates(): string[] | null {
   if (process.platform === 'darwin' && process.arch === 'arm64') {
-    return 'https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-darwin-arm64'
+    return ['ffmpeg-darwin-arm64']
   }
   if (process.platform === 'darwin' && process.arch === 'x64') {
-    return 'https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-darwin-x64'
+    return ['ffmpeg-darwin-x64']
   }
   if (process.platform === 'linux' && process.arch === 'x64') {
-    return 'https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-linux-x64'
+    return ['ffmpeg-linux-x64']
   }
   if (process.platform === 'linux' && process.arch === 'arm64') {
-    return 'https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-linux-arm64'
+    return ['ffmpeg-linux-arm64']
   }
   if (process.platform === 'win32' && process.arch === 'x64') {
-    return 'https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-x64.exe'
+    return ['ffmpeg-win32-x64.exe', 'ffmpeg-win32-x64']
   }
   if (process.platform === 'win32' && process.arch === 'ia32') {
-    return 'https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-ia32.exe'
+    return ['ffmpeg-win32-ia32.exe', 'ffmpeg-win32-ia32']
   }
   if (process.platform === 'win32' && process.arch === 'arm64') {
-    return 'https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-win32-arm64.exe'
+    return ['ffmpeg-win32-arm64.exe', 'ffmpeg-win32-arm64']
   }
   return null
+}
+
+function stripExecutableExtension(fileName: string): string {
+  return fileName.replace(/\.exe$/i, '')
+}
+
+function isFfmpegExecutableAsset(fileName: string): boolean {
+  return (
+    !/\.(sha256|sha512|md5|sig|asc|txt)$/i.test(fileName) &&
+    !/\.(zip|gz|xz|bz2|7z)$/i.test(fileName)
+  )
+}
+
+async function resolveFfmpegDownloadUrls(): Promise<string[] | null> {
+  const assetNames = getFfmpegAssetNameCandidates()
+  if (!assetNames) {
+    return null
+  }
+
+  const latestUrls = assetNames.map(
+    (assetName) => `https://github.com/eugeneware/ffmpeg-static/releases/latest/download/${assetName}`,
+  )
+
+  const releaseApi = 'https://api.github.com/repos/eugeneware/ffmpeg-static/releases/latest'
+  try {
+    const response = await fetchWithTimeout(releaseApi, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'YTB2Voice/0.0.1',
+      },
+    })
+    if (!response.ok) {
+      return latestUrls
+    }
+
+    const release = (await response.json()) as GitHubRelease
+    const normalizedTargets = new Set(assetNames.map(stripExecutableExtension))
+    const apiUrls = (release.assets ?? [])
+      .filter((asset) => isFfmpegExecutableAsset(asset.name))
+      .filter((asset) => normalizedTargets.has(stripExecutableExtension(asset.name)))
+      .map((asset) => asset.browser_download_url)
+
+    return Array.from(new Set([...apiUrls, ...latestUrls]))
+  } catch {
+    return latestUrls
+  }
 }
 
 async function ensureFfmpeg(toolsDir: string, options?: EnsureToolchainOptions): Promise<string> {
@@ -420,8 +467,8 @@ async function ensureFfmpeg(toolsDir: string, options?: EnsureToolchainOptions):
     // continue to download
   }
 
-  const url = getFfmpegDownloadUrl()
-  if (!url) {
+  const urls = await resolveFfmpegDownloadUrls()
+  if (!urls) {
     options?.reporter?.({
       component: 'ffmpeg',
       status: 'error',
@@ -435,10 +482,19 @@ async function ensureFfmpeg(toolsDir: string, options?: EnsureToolchainOptions):
     status: 'downloading',
     message: 'Downloading ffmpeg binary',
   })
-  try {
-    await downloadFile(url, ffmpegPath)
-  } catch (error) {
-    const errorMessage = toErrorMessage(error)
+  const errors: string[] = []
+  let downloadOk = false
+  for (const url of urls) {
+    try {
+      await downloadFile(url, ffmpegPath)
+      downloadOk = true
+      break
+    } catch (error) {
+      errors.push(`${url} -> ${toErrorMessage(error)}`)
+    }
+  }
+  if (!downloadOk) {
+    const errorMessage = errors.join('; ')
     options?.reporter?.({
       component: 'ffmpeg',
       status: 'error',
@@ -606,10 +662,142 @@ async function downloadFile(url: string, filePath: string): Promise<void> {
 }
 
 async function extractTarGz(archivePath: string, targetDir: string): Promise<void> {
-  await runCommand({
-    command: 'tar',
-    args: ['-xzf', archivePath, '-C', targetDir],
-  })
+  try {
+    await runCommand({
+      command: 'tar',
+      args: ['-xzf', archivePath, '-C', targetDir],
+    })
+    return
+  } catch (error) {
+    const message = toErrorMessage(error)
+    if (!/spawn tar ENOENT/i.test(message)) {
+      throw error
+    }
+  }
+
+  await extractTarGzWithNode(archivePath, targetDir)
+}
+
+function parseTarString(buffer: Buffer, start: number, length: number): string {
+  return buffer
+    .subarray(start, start + length)
+    .toString('utf8')
+    .replace(/\0.*$/, '')
+    .trim()
+}
+
+function parseTarNumber(buffer: Buffer, start: number, length: number): number {
+  const raw = buffer.subarray(start, start + length)
+  if (raw.length === 0) return 0
+
+  const isBase256 = (raw[0] & 0x80) !== 0
+  if (!isBase256) {
+    const text = raw.toString('utf8').replace(/\0/g, '').trim()
+    if (!text) return 0
+    return Number.parseInt(text, 8)
+  }
+
+  let value = BigInt(raw[0] & 0x7f)
+  for (let index = 1; index < raw.length; index += 1) {
+    value = (value << 8n) + BigInt(raw[index])
+  }
+  return Number(value)
+}
+
+function parsePaxAttributes(content: string): Record<string, string> {
+  const attributes: Record<string, string> = {}
+  let cursor = 0
+  while (cursor < content.length) {
+    const lengthSeparator = content.indexOf(' ', cursor)
+    if (lengthSeparator === -1) break
+    const declaredLength = Number.parseInt(content.slice(cursor, lengthSeparator), 10)
+    if (!Number.isFinite(declaredLength) || declaredLength <= 0) break
+
+    const recordEnd = cursor + declaredLength
+    if (recordEnd > content.length) break
+    const record = content.slice(lengthSeparator + 1, recordEnd - 1)
+    const equalIndex = record.indexOf('=')
+    if (equalIndex > 0) {
+      const key = record.slice(0, equalIndex)
+      const value = record.slice(equalIndex + 1)
+      attributes[key] = value
+    }
+    cursor = recordEnd
+  }
+  return attributes
+}
+
+function normalizeTarPath(entryPath: string): string {
+  const normalized = entryPath
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .split('/')
+    .filter((segment) => segment && segment !== '.' && segment !== '..')
+    .join('/')
+  return normalized
+}
+
+async function extractTarGzWithNode(archivePath: string, targetDir: string): Promise<void> {
+  const compressed = await fs.readFile(archivePath)
+  const tarContent = gunzipSync(compressed)
+
+  let offset = 0
+  let pendingPathOverride: string | null = null
+  while (offset + 512 <= tarContent.length) {
+    const header = tarContent.subarray(offset, offset + 512)
+    const allZero = header.every((byte) => byte === 0)
+    if (allZero) {
+      break
+    }
+
+    let name = parseTarString(header, 0, 100)
+    const prefix = parseTarString(header, 345, 155)
+    if (prefix) {
+      name = `${prefix}/${name}`
+    }
+
+    const typeFlagRaw = header[156]
+    const typeFlag = typeFlagRaw ? String.fromCharCode(typeFlagRaw) : '0'
+    const size = parseTarNumber(header, 124, 12)
+    const dataStart = offset + 512
+    const dataEnd = dataStart + size
+    if (dataEnd > tarContent.length) {
+      throw new Error('Invalid tar archive: entry payload exceeds archive length')
+    }
+
+    const effectiveName = pendingPathOverride ?? name
+    pendingPathOverride = null
+    const normalizedPath = normalizeTarPath(effectiveName)
+    const targetPath = normalizedPath ? path.join(targetDir, normalizedPath) : targetDir
+
+    if (typeFlag === 'x') {
+      const paxContent = tarContent.subarray(dataStart, dataEnd).toString('utf8')
+      const pax = parsePaxAttributes(paxContent)
+      if (pax.path) {
+        pendingPathOverride = pax.path
+      }
+    } else if (typeFlag === 'L') {
+      const longName = tarContent
+        .subarray(dataStart, dataEnd)
+        .toString('utf8')
+        .replace(/\0.*$/, '')
+      if (longName.trim()) {
+        pendingPathOverride = longName.trim()
+      }
+    } else if (typeFlag === '5' || effectiveName.endsWith('/')) {
+      if (normalizedPath) {
+        await fs.mkdir(targetPath, { recursive: true })
+      }
+    } else if (typeFlag === '0' || typeFlag === '\0') {
+      if (normalizedPath) {
+        await fs.mkdir(path.dirname(targetPath), { recursive: true })
+        await fs.writeFile(targetPath, tarContent.subarray(dataStart, dataEnd))
+      }
+    }
+
+    const paddedSize = Math.ceil(size / 512) * 512
+    offset = dataStart + paddedSize
+  }
 }
 
 async function findPortablePythonBinary(portableDir: string): Promise<string | null> {

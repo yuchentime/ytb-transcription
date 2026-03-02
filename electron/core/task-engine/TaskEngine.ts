@@ -88,6 +88,7 @@ import {
   parseWhisperModelHashFromUrl,
   selectTranscribeBackend,
   selectWhisperDevice,
+  shouldRetryWithoutBrowserCookies,
   shouldRetryWithTvClient,
   sleep,
   stageToStatus,
@@ -569,7 +570,7 @@ export class TaskEngine {
     const toolchain = context.toolchain
     const downloadOutputBase = this.buildUniqueName('source-video')
     const outputTemplate = path.join(context.taskDir, `${downloadOutputBase}.%(ext)s`)
-    const baseArgs = [
+    const sharedArgs = [
       '--newline',
       '--progress',
       '--js-runtimes',
@@ -619,8 +620,9 @@ export class TaskEngine {
       return false
     }
 
+    const authArgs: string[] = []
     if (settings.ytDlpAuthMode === 'browser_cookies') {
-      baseArgs.push('--cookies-from-browser', settings.ytDlpCookiesBrowser)
+      authArgs.push('--cookies-from-browser', settings.ytDlpCookiesBrowser)
       this.emit('log', {
         taskId: context.taskId,
         stage: 'downloading',
@@ -633,7 +635,7 @@ export class TaskEngine {
       if (!cookiesPath) {
         throw new Error('ytDlpCookiesFilePath is required when ytDlpAuthMode=cookies_file')
       }
-      baseArgs.push('--cookies', cookiesPath)
+      authArgs.push('--cookies', cookiesPath)
       this.emit('log', {
         taskId: context.taskId,
         stage: 'downloading',
@@ -642,7 +644,14 @@ export class TaskEngine {
         timestamp: new Date().toISOString(),
       })
     }
-    baseArgs.push(task.youtubeUrl)
+    const buildDownloadArgs = (extraArgs: string[] = [], includeAuth = true): string[] => {
+      return [
+        ...sharedArgs,
+        ...(includeAuth ? authArgs : []),
+        ...extraArgs,
+        task.youtubeUrl,
+      ]
+    }
 
     const runDownload = async (args: string[]): Promise<void> => {
       const stderrLines: string[] = []
@@ -692,11 +701,40 @@ export class TaskEngine {
       })
     }
 
+    const runDownloadWithTvFallback = async (args: string[]): Promise<void> => {
+      try {
+        await runDownload(args)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'yt-dlp command failed'
+        if (!shouldRetryWithTvClient(message)) {
+          throw error
+        }
+
+        this.emit('log', {
+          taskId: context.taskId,
+          stage: 'downloading',
+          level: 'warn',
+          text: 'Retrying yt-dlp with fallback extractor args: youtube:player_client=tv',
+          timestamp: new Date().toISOString(),
+        })
+        const url = args[args.length - 1]
+        const argsWithFallback = [
+          ...args.slice(0, -1),
+          '--extractor-args',
+          'youtube:player_client=tv',
+          url,
+        ]
+        await runDownload(argsWithFallback)
+      }
+    }
+
     try {
-      await runDownload(baseArgs)
+      await runDownloadWithTvFallback(buildDownloadArgs())
     } catch (error) {
       const message = error instanceof Error ? error.message : 'yt-dlp command failed'
-      if (!shouldRetryWithTvClient(message)) {
+      const canRetryWithoutBrowserCookies =
+        settings.ytDlpAuthMode === 'browser_cookies' && shouldRetryWithoutBrowserCookies(message)
+      if (!canRetryWithoutBrowserCookies) {
         throw error
       }
 
@@ -704,17 +742,10 @@ export class TaskEngine {
         taskId: context.taskId,
         stage: 'downloading',
         level: 'warn',
-        text: 'Retrying yt-dlp with fallback extractor args: youtube:player_client=tv',
+        text: 'Browser cookies are unavailable; retrying yt-dlp without browser cookies',
         timestamp: new Date().toISOString(),
       })
-      const url = baseArgs[baseArgs.length - 1]
-      const argsWithFallback = [
-        ...baseArgs.slice(0, -1),
-        '--extractor-args',
-        'youtube:player_client=tv',
-        url,
-      ]
-      await runDownload(argsWithFallback)
+      await runDownloadWithTvFallback(buildDownloadArgs([], false))
     }
 
     const files = await fs.readdir(context.taskDir)
