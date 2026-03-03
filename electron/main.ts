@@ -8,6 +8,7 @@ import { IPC_CHANNELS, type UpdateStatusPayload } from './ipc/channels'
 import { autoUpdater } from 'electron-updater'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const AUTO_UPDATE_URL = 'https://www.xhsnotes.top/auto-update-ytb'
 
 // The built directory structure
 //
@@ -117,6 +118,11 @@ function initAutoUpdater() {
   // Configure auto-updater
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.setFeedURL({
+    provider: 'generic',
+    url: AUTO_UPDATE_URL,
+  })
+  console.log(`[AutoUpdater] Feed URL: ${AUTO_UPDATE_URL}`)
 
   // Event handlers
   autoUpdater.on('checking-for-update', () => {
@@ -156,7 +162,8 @@ function initAutoUpdater() {
     sendUpdateStatus('downloading', {
       percent: progress.percent,
       transferred: progress.transferred,
-      total: progress.total
+      total: progress.total,
+      bytesPerSecond: progress.bytesPerSecond,
     })
   })
 

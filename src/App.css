@@ -309,6 +309,12 @@ label {
   text-decoration: underline;
 }
 
+.about-wechat {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: #666;
+}
+
 .about-version-section {
   margin-top: 48px;
   padding-top: 24px;
@@ -347,6 +353,39 @@ label {
   font-size: 13px;
   color: #666;
   margin: 0;
+}
+
+.settings-update-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-update-label {
+  font-size: 12px;
+  color: #666;
+}
+
+.settings-update-value {
+  font-size: 12px;
+  color: #1f2937;
+  background: #f5f5f5;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.settings-update-status {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #4b5563;
+  min-height: 18px;
+}
+
+.settings-update-actions {
+  margin-top: 10px;
+  display: flex
 }
 
 .settings-group {

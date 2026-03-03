@@ -415,6 +415,7 @@ export interface UpdateStatusPayload {
     percent?: number
     transferred?: number
     total?: number
+    bytesPerSecond?: number
     message?: string
   }
 }

@@ -67,6 +67,12 @@
       "title": "${productName} Installer",
       "icon": "build/icons/icon.icns"
     },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://www.xhsnotes.top/auto-update-ytb"
+      }
+    ],
     "win": {
       "target": [
         {

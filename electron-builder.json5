@@ -41,9 +41,10 @@
     ],
     "artifactName": "${productName}-Linux-${version}.${ext}"
   },
-  "publish": {
-    "provider": "github",
-    "owner": "your-github-username",
-    "repo": "ytb-transcription"
-  }
+  "publish": [
+    {
+      "provider": "generic",
+      "url": "https://www.xhsnotes.top/auto-update-ytb"
+    }
+  ]
 }

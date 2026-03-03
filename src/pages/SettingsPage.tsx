@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { AppSettings, TranslateProvider, TtsProvider } from '../../electron/core/db/types'
-import type { TranslateConnectivityResult } from '../../electron/ipc/channels'
+import type { TranslateConnectivityResult, UpdateStatusPayload } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
 import { VoicePresetPanel } from '../components/VoicePresetPanel'
 import { Toast } from '../components/Toast'
@@ -52,6 +52,14 @@ interface SettingsPageProps {
 type CloudTtsProvider = Exclude<TtsProvider, 'piper'>
 type QwenRegionSelectValue = (typeof QWEN_REGION_PROVIDER_OPTIONS)[number]['value']
 type TtsProviderSelectValue = CloudTtsProvider | QwenRegionSelectValue
+type AppUpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'not-available'
+  | 'error'
 
 const OPENAI_TTS_VOICE_PROFILES: SettingsPageModel['voiceProfiles'] = [
   {
@@ -311,6 +319,21 @@ function resolveTtsProviderSelectValue(settings: AppSettings): TtsProviderSelect
   return matched?.value ?? QWEN_REGION_PROVIDER_OPTIONS[0].value
 }
 
+function formatBytesPerSecond(bytesPerSecond?: number): string {
+  if (!bytesPerSecond || bytesPerSecond <= 0 || !Number.isFinite(bytesPerSecond)) {
+    return ''
+  }
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+  let value = bytesPerSecond
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  const precision = value >= 100 ? 0 : value >= 10 ? 1 : 2
+  return `${value.toFixed(precision)} ${units[unitIndex]}`
+}
+
 export function SettingsPage(props: SettingsPageProps) {
   const { settings } = props.model
   const { setSettings } = props.actions
@@ -323,6 +346,12 @@ export function SettingsPage(props: SettingsPageProps) {
   )
   const [translateTestLoading, setTranslateTestLoading] = useState(false)
   const [translateTestStatus, setTranslateTestStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [appVersion, setAppVersion] = useState('')
+  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus>('idle')
+  const [updateVersion, setUpdateVersion] = useState('')
+  const [updateProgress, setUpdateProgress] = useState(0)
+  const [updateErrorMessage, setUpdateErrorMessage] = useState('')
+  const [updateBytesPerSecond, setUpdateBytesPerSecond] = useState(0)
 
   useEffect(() => {
     setTranslateTestStatus('idle')
@@ -340,6 +369,41 @@ export function SettingsPage(props: SettingsPageProps) {
     settings.customApiKey,
     settings.customApiBaseUrl,
   ])
+
+  useEffect(() => {
+    let mounted = true
+
+    void window.appApi.update.getVersion().then((value) => {
+      if (!mounted) return
+      setAppVersion(value)
+    })
+
+    const unsubscribe = window.appApi.update.onStatus((payload: UpdateStatusPayload) => {
+      if (!mounted) return
+      setUpdateStatus(payload.status)
+      if (payload.data?.version) {
+        setUpdateVersion(payload.data.version)
+      }
+      if (payload.data?.percent !== undefined) {
+        setUpdateProgress(payload.data.percent)
+      }
+      if (payload.data?.bytesPerSecond !== undefined) {
+        setUpdateBytesPerSecond(payload.data.bytesPerSecond)
+      } else if (payload.status !== 'downloading') {
+        setUpdateBytesPerSecond(0)
+      }
+      if (payload.status === 'error') {
+        setUpdateErrorMessage(payload.data?.message || '')
+      } else {
+        setUpdateErrorMessage('')
+      }
+    })
+
+    return () => {
+      mounted = false
+      unsubscribe()
+    }
+  }, [])
 
   // Helper to get available models for a provider
   const getTranslateModels = (provider: TranslateProvider): string[] => {
@@ -409,6 +473,90 @@ export function SettingsPage(props: SettingsPageProps) {
       setTranslateTestLoading(false)
     }
   }
+
+  async function handleCheckUpdate(): Promise<void> {
+    setUpdateStatus('checking')
+    setUpdateProgress(0)
+    setUpdateBytesPerSecond(0)
+    setUpdateErrorMessage('')
+    await window.appApi.update.check()
+  }
+
+  async function handleDownloadUpdate(): Promise<void> {
+    setUpdateStatus('downloading')
+    setUpdateErrorMessage('')
+    await window.appApi.update.download()
+  }
+
+  function handleInstallUpdate(): void {
+    window.appApi.update.install()
+  }
+
+  function renderUpdateButton(): JSX.Element | null {
+    switch (updateStatus) {
+      case 'idle':
+      case 'not-available':
+        return (
+          <button className="btn" type="button" onClick={() => void handleCheckUpdate()}>
+            {props.t('settings.updateCheck')}
+          </button>
+        )
+      case 'checking':
+        return (
+          <button className="btn" type="button" disabled>
+            {props.t('settings.updateChecking')}
+          </button>
+        )
+      case 'available':
+        return (
+          <button className="btn primary" type="button" onClick={() => void handleDownloadUpdate()}>
+            {props.t('settings.updateDownload', { version: updateVersion || '...' })}
+          </button>
+        )
+      case 'downloading':
+        return (
+          <button className="btn" type="button" disabled>
+            {props.t('settings.updateDownloading', { percent: updateProgress.toFixed(0) })}
+          </button>
+        )
+      case 'downloaded':
+        return (
+          <button className="btn primary" type="button" onClick={handleInstallUpdate}>
+            {props.t('settings.updateInstall')}
+          </button>
+        )
+      case 'error':
+        return (
+          <button className="btn" type="button" onClick={() => void handleCheckUpdate()}>
+            {props.t('settings.updateRetry')}
+          </button>
+        )
+      default:
+        return null
+    }
+  }
+
+  const updateSpeedText = formatBytesPerSecond(updateBytesPerSecond)
+
+  const updateStatusText =
+    updateStatus === 'checking'
+      ? props.t('settings.updateStatusChecking')
+      : updateStatus === 'available'
+        ? props.t('settings.updateStatusAvailable', { version: updateVersion || '...' })
+        : updateStatus === 'downloading'
+          ? updateSpeedText
+            ? props.t('settings.updateDownloadingWithSpeed', {
+              percent: updateProgress.toFixed(0),
+              speed: updateSpeedText,
+            })
+            : props.t('settings.updateDownloading', { percent: updateProgress.toFixed(0) })
+          : updateStatus === 'downloaded'
+            ? props.t('settings.updateStatusDownloaded')
+            : updateStatus === 'not-available'
+              ? props.t('settings.updateStatusNotAvailable')
+              : updateStatus === 'error'
+                ? props.t('settings.updateStatusError', { message: updateErrorMessage || '-' })
+                : ''
 
   return (
     <section className="panel main-panel settings-panel">
@@ -724,7 +872,7 @@ export function SettingsPage(props: SettingsPageProps) {
           </div>
         </div>
       </div>
-      
+
       {/* Group 1: YouTube Download Settings */}
       <div className="settings-group">
         <h3 className="settings-group-title">{props.t('settings.group.youtube')}</h3>
@@ -820,6 +968,20 @@ export function SettingsPage(props: SettingsPageProps) {
               <option value="large">large</option>
             </select>
           </label>
+        </div>
+      </div>
+
+      <div className="settings-group">
+        <h3 className="settings-group-title">{props.t('settings.group.update')}</h3>
+        <div className="settings-group-content">
+          <div className="settings-update-meta">
+            <span className="settings-update-label">{props.t('settings.currentVersion')}:</span>
+            <code className="settings-update-value">{appVersion || '...'}</code>
+          </div>
+          <div className="actions settings-update-actions">
+            <span>{renderUpdateButton()}</span>
+            <p className="settings-update-status">{updateStatusText}</p>
+          </div>
         </div>
       </div>
 
