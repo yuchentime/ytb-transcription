@@ -113,7 +113,7 @@ const zhMessages = {
   'settings.ttsBaseUrl': 'Base URL',
   'settings.youtubeDownloadAuth': 'YouTube 下载鉴权',
   'settings.youtubeDownloadAuthHint':
-    '公开视频可选“无”；遇到登录/年龄/地区限制时再开 Cookies。浏览器 Cookies 适合本机，Cookies 文件适合跨设备或自动化（需定期更新）。',
+    '公开视频可选“无”；遇到登录/年龄/地区限制时再开 Cookies。优先选择 “浏览器 Cookies ”， 如下载视频时遭遇身份认证问题， 选择 “Cookis 文件”， 并填入 cookies.txt 路径(你可以前往 Chrome Web Store 下载 “Get cookies.txt LOCALLY” 这个 Chrome 扩展)。',
   'settings.youtubeDownloadAuthHintAria': 'YouTube 下载鉴权说明',
   'settings.auth.none': '无',
   'settings.auth.browserCookies': '浏览器 Cookies',
@@ -225,6 +225,7 @@ const zhMessages = {
   'error.retryNotAccepted': '重试请求未被接受',
   'error.loadAudio': '加载音频失败：{message}',
   'error.runtimePreparing': '运行环境尚未准备完成，请稍候',
+  'error.youtubeAuthRequired': '下载视频受限，请前往设置页面，将"YouTube 下载鉴权"改为"Cookies 文件"',
 
   'validation.youtubeUrlRequired': '请输入有效的 YouTube 链接',
   'validation.translateModelRequired': '请先在设置页选择翻译模型',
@@ -302,7 +303,7 @@ const enMessages: Messages = {
   'task.ttsVolume': 'Volume (0 ~ 10)',
   'task.finalOutput': 'Output',
   'task.completed': 'Completed',
-  'task.processFailedHint': 'Processing failed. Please check logs for more details.',
+  'task.processFailedHint': 'Processing failed. You can resume or check logs for details.',
   'task.runtimePreparingInline': 'Preparing required runtime resources, please wait...',
   'task.runtimeErrorInline': 'Runtime initialization failed: {message}',
   'task.runtimeRetryInline': 'Runtime resources failed to load. Check your network and reload.',
@@ -358,7 +359,7 @@ const enMessages: Messages = {
   'settings.ttsBaseUrl': 'Base URL',
   'settings.youtubeDownloadAuth': 'YouTube Download Auth',
   'settings.youtubeDownloadAuthHint':
-    'Use None for public videos. If login/age/region limits appear, enable cookies. Browser Cookies are easiest on this device; Cookies File is better for cross-device or automation and needs refresh.',
+    'For public videos, select "None." If you encounter login, age, or regional restrictions, enable Cookies. Prefer "Browser Cookies" as the first option. If identity verification issues arise while downloading, switch to "Cookies File" and provide the path to your cookies.txt file (you can download the "Get cookies.txt LOCALLY" Chrome extension from the Chrome Web Store).',
   'settings.youtubeDownloadAuthHintAria': 'YouTube download auth help',
   'settings.auth.none': 'None',
   'settings.auth.browserCookies': 'Browser Cookies',
@@ -470,6 +471,7 @@ const enMessages: Messages = {
   'error.retryNotAccepted': 'Retry request not accepted',
   'error.loadAudio': 'Failed to load audio: {message}',
   'error.runtimePreparing': 'Runtime resources are still preparing, please wait',
+  'error.youtubeAuthRequired': 'Video download restricted. Please go to Settings and change "YouTube Download Auth" to "Cookies File"',
 
   'validation.youtubeUrlRequired': 'Please enter a valid YouTube URL',
   'validation.translateModelRequired': 'Please select a translation model in Settings first',

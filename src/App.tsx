@@ -913,6 +913,7 @@ function App() {
     onDownloadAudio: handleDownloadAudio,
     onOpenOutputDirectory: handleOpenOutputDirectory,
     onRetrySingleSegment: (segmentId: string) => handleRetryFailedSegments([segmentId]),
+    onResumeTask: taskState.activeTaskId ? () => handleResumeFromCheckpoint(taskState.activeTaskId) : undefined,
   }
 
   const queuePageModel = {

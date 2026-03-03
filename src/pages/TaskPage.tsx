@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
 import type { TaskRuntimeEventPayload } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
 import { translateTaskStatus } from '../app/i18n'
+import { Alert } from '../components/Alert'
 import { RuntimePreparingModal } from '../components/RuntimePreparingModal'
 import { Toast } from '../components/Toast'
 
@@ -68,6 +69,7 @@ interface TaskPageActions {
   onDownloadAudio(): Promise<void>
   onOpenOutputDirectory(): Promise<void>
   onRetrySingleSegment(segmentId: string): Promise<void>
+  onResumeTask?(): Promise<void>
 }
 
 interface TaskPageProps {
@@ -193,6 +195,28 @@ function LoaderIcon({ className }: { className?: string }) {
   )
 }
 
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
+    </svg>
+  )
+}
+
 // Collapsible Section Component
 interface CollapsibleSectionProps {
   title: string
@@ -243,6 +267,26 @@ export function TaskPage(props: TaskPageProps) {
     message: '',
     key: 0,
   })
+  const [authToast, setAuthToast] = useState<{
+    visible: boolean
+    key: number
+  }>({
+    visible: false,
+    key: 0,
+  })
+
+  // Detect YouTube authentication error from logs
+  useEffect(() => {
+    const hasAuthError = props.model.logs.some((log) =>
+      log.text.includes('Use --cookies-from-browser or --cookies for the authentication')
+    )
+    if (hasAuthError && !authToast.visible) {
+      setAuthToast((prev) => ({
+        visible: true,
+        key: prev.key + 1,
+      }))
+    }
+  }, [props.model.logs])
 
   // Runtime modal is only shown when missing runtime resources need download/install.
   const hasMissingRuntimeResources = Object.values(props.model.runtimeComponentStatus).some(
@@ -381,10 +425,23 @@ export function TaskPage(props: TaskPageProps) {
               {props.t('task.start')}
             </button>
             {shouldShowTaskError && (
-              <p className="error task-submit-error">
-                <AlertIcon className="task-submit-error-icon" />
-                <span>{props.t('task.processFailedHint')}</span>
-              </p>
+              <div className="task-error-actions">
+                <p className="error task-submit-error">
+                  <AlertIcon className="task-submit-error-icon" />
+                  <span>{props.t('task.processFailedHint')}</span>
+                </p>
+                {props.actions.onResumeTask && (
+                  <button
+                    type="button"
+                    className="icon-btn task-resume-icon-btn"
+                    onClick={() => void props.actions.onResumeTask?.()}
+                    title={props.t('history.resume')}
+                    aria-label={props.t('history.resume')}
+                  >
+                    <RefreshIcon />
+                  </button>
+                )}
+              </div>
             )}
           </div>
           {props.model.taskRunning && (
@@ -546,6 +603,17 @@ export function TaskPage(props: TaskPageProps) {
         visible={configToast.visible}
         onClose={() =>
           setConfigToast((prev) => ({
+            ...prev,
+            visible: false,
+          }))
+        }
+        type="error"
+      />
+      <Alert
+        message={props.t('error.youtubeAuthRequired')}
+        visible={authToast.visible}
+        onClose={() =>
+          setAuthToast((prev) => ({
             ...prev,
             visible: false,
           }))
