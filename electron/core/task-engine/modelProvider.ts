@@ -5,6 +5,7 @@ import type { AppSettings, TranslateProvider, TtsProvider } from '../db/types'
 import { GLM_TTS_MAX_INPUT_CHARS, QWEN_TTS_MAX_INPUT_CHARS, QWEN_TTS_MAX_INPUT_UTF8_BYTES } from './constants'
 import { runCommand } from './command'
 import { splitTextByPunctuationForTts } from './text-processing'
+import { buildTranslationSystemPrompt } from '../prompts/translation-prompts'
 
 interface MiniMaxTextResponse {
   choices?: Array<{
@@ -632,17 +633,11 @@ export async function translateText(params: {
   const messages = [
     {
       role: 'system' as const,
-      content: [
-        'You are a professional translator.',
-        `Translate into ${params.targetLanguage}.`,
-        segmentPosition ? `Current segment position: ${segmentPosition}.` : '',
-        'Keep meaning faithful, concise, and natural.',
-        'If previous context is provided, use it only for continuity.',
-        'Never translate or repeat previous context.',
-        'Output only the translation for the user message.',
-        'Do not include explanations, labels, or extra lines.',
-        previousText ? `Previous segment tail for context only:\n${previousText}` : '',
-      ].join(' '),
+      content: buildTranslationSystemPrompt({
+        targetLanguage: params.targetLanguage,
+        segmentPosition,
+        previousText,
+      }),
     },
     {
       role: 'user' as const,
