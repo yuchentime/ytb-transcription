@@ -815,6 +815,82 @@ export class TaskEngine {
     })
   }
 
+  /** Detect transient Windows file lock errors during cleanup. */
+  private isRetryableFileCleanupError(error: unknown): boolean {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code
+    return code === 'EBUSY' || code === 'EPERM'
+  }
+
+  /** Remove file with retries for transient lock contention. */
+  private async removeFileWithRetry(
+    context: TaskExecutionContext,
+    filePath: string,
+    options?: {
+      attempts?: number
+      baseDelayMs?: number
+      warnOnly?: boolean
+      label?: string
+    },
+  ): Promise<boolean> {
+    const maxAttempts = options?.attempts ?? 5
+    const baseDelayMs = options?.baseDelayMs ?? 200
+    const label = options?.label ?? path.basename(filePath)
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await fs.rm(filePath, { force: true })
+        return true
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException | undefined)?.code
+        if (code === 'ENOENT') {
+          return true
+        }
+
+        if (!this.isRetryableFileCleanupError(error)) {
+          if (options?.warnOnly) {
+            this.emitTranscribingLog(
+              context.taskId,
+              'warn',
+              `Cleanup skipped for ${label}: ${error instanceof Error ? error.message : String(error)}`,
+            )
+            return false
+          }
+          throw error
+        }
+
+        if (attempt >= maxAttempts) {
+          if (options?.warnOnly) {
+            this.emitTranscribingLog(
+              context.taskId,
+              'warn',
+              `Cleanup deferred for ${label} (locked): ${error instanceof Error ? error.message : String(error)}`,
+            )
+            return false
+          }
+          throw error
+        }
+
+        await sleep(Math.min(2_000, baseDelayMs * (2 ** (attempt - 1))))
+      }
+    }
+
+    return false
+  }
+
+  /** Validate an existing downloaded model file and optional checksum. */
+  private async isModelFileUsable(targetPath: string, expectedHash: string | null): Promise<boolean> {
+    try {
+      await fs.access(targetPath)
+      if (!expectedHash) {
+        return true
+      }
+      const actualHash = await computeSha256(targetPath)
+      return actualHash === expectedHash
+    } catch {
+      return false
+    }
+  }
+
   /** Ensure whisper model assets exist locally and verify checksum when possible. */
   private async ensureWhisperModelReady(context: TaskExecutionContext, modelName: string): Promise<string> {
     const modelDir = path.join(this.deps.dataRoot, 'cache', 'whisper')
@@ -832,7 +908,7 @@ export class TaskEngine {
 
     const fileName = path.basename(new URL(modelUrl).pathname)
     const targetPath = path.join(modelDir, fileName)
-    const tempPath = `${targetPath}.download`
+    const staleTempPath = `${targetPath}.download`
     const expectedHash = parseWhisperModelHashFromUrl(modelUrl)
 
     try {
@@ -843,18 +919,24 @@ export class TaskEngine {
       // continue to download
     }
 
+    await this.removeFileWithRetry(context, staleTempPath, {
+      attempts: 5,
+      warnOnly: true,
+      label: `${fileName}.download`,
+    })
+
     const maxAttempts = 3
     let lastError: unknown = null
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const attemptTempPath = `${targetPath}.download.${context.taskId}.${attempt}.${Date.now()}`
       this.emitTranscribingLog(
         context.taskId,
         'info',
         `Downloading whisper model (${modelName}) attempt ${attempt}/${maxAttempts}`,
       )
       try {
-        await fs.rm(tempPath, { force: true })
         try {
-          await downloadFileStream(modelUrl, tempPath)
+          await downloadFileStream(modelUrl, attemptTempPath)
         } catch (error) {
           this.emitTranscribingLog(
             context.taskId,
@@ -872,14 +954,14 @@ export class TaskEngine {
               '--retry-all-errors',
               '--fail',
               '-o',
-              tempPath,
+              attemptTempPath,
               modelUrl,
             ],
           })
         }
 
         if (expectedHash) {
-          const actualHash = await computeSha256(tempPath)
+          const actualHash = await computeSha256(attemptTempPath)
           if (actualHash !== expectedHash) {
             throw new Error(
               `Model checksum mismatch for ${fileName}. expected=${expectedHash} actual=${actualHash}`,
@@ -887,7 +969,26 @@ export class TaskEngine {
           }
         }
 
-        await fs.rename(tempPath, targetPath)
+        try {
+          await fs.rename(attemptTempPath, targetPath)
+        } catch (error) {
+          const usable = await this.isModelFileUsable(targetPath, expectedHash)
+          if (!usable) {
+            throw error
+          }
+          this.emitTranscribingLog(
+            context.taskId,
+            'info',
+            `Whisper model already prepared by another process: ${fileName}`,
+          )
+        }
+
+        await this.removeFileWithRetry(context, attemptTempPath, {
+          attempts: 5,
+          warnOnly: true,
+          label: `${fileName}.download temporary file`,
+        })
+
         this.emitTranscribingLog(
           context.taskId,
           'info',
@@ -896,7 +997,11 @@ export class TaskEngine {
         return modelDir
       } catch (error) {
         lastError = error
-        await fs.rm(tempPath, { force: true })
+        await this.removeFileWithRetry(context, attemptTempPath, {
+          attempts: 5,
+          warnOnly: true,
+          label: `${fileName}.download temporary file`,
+        })
         if (attempt < maxAttempts) {
           await sleep(1200 * attempt)
         }
