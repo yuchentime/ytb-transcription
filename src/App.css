@@ -2405,7 +2405,6 @@ input:read-only {
 .task-page-shell .task-actions {
   width: 100%;
   margin: 0 0 14px;
-  justify-content: flex-start;
   gap: 10px;
 }
 

@@ -504,14 +504,6 @@ export function TaskPage(props: TaskPageProps) {
             </div>
           </div>
 
-        {/* {hasAttemptedSubmit && props.model.taskFormErrors.length > 0 && (
-          <div className="error task-form-errors">
-            {props.model.taskFormErrors.map((error) => (
-              <p key={error}>{error}</p>
-            ))}
-          </div>
-        )} */}
-
           <div className="task-actions">
             <div className="task-submit-action">
               <button
@@ -588,16 +580,6 @@ export function TaskPage(props: TaskPageProps) {
                     {props.model.processingYoutubeUrl || props.t('common.hyphen')}
                   </strong>
                 </span>
-              </div>
-
-              <div className="task-stage-strip">
-                {stageIndicators.map((stage) => (
-                  <div key={stage.key} className={`task-stage-pill ${stage.state}`}>
-                    <span className="task-stage-dot" />
-                    <span className="task-stage-label">{stage.label}</span>
-                    <span className="task-stage-value">{stage.progress}%</span>
-                  </div>
-                ))}
               </div>
 
               {/* Hide progress when audio is ready */}
