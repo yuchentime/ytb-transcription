@@ -429,24 +429,6 @@ export function TaskPage(props: TaskPageProps) {
     props.model.processingYoutubeTitle || props.model.processingYoutubeUrl || props.t('common.hyphen')
   const isSubmitDisabled =
     props.model.isStartDisabled && props.model.isTranslateModelConfigured && props.model.isTtsModelConfigured
-  const activeStageIndex = props.model.activeStatus
-    ? props.model.stages.findIndex((stage) => stage === props.model.activeStatus)
-    : -1
-  const stageIndicators = props.model.stages.map((stage, index) => {
-    const progress = Math.min(100, Math.max(0, Math.round(props.model.stageProgress[stage] ?? 0)))
-    const isDone =
-      props.model.activeStatus === 'completed' ||
-      progress >= 100 ||
-      (activeStageIndex !== -1 && index < activeStageIndex)
-    const isActive = !isDone && (index === activeStageIndex || progress > 0)
-
-    return {
-      key: stage,
-      label: translateTaskStatus(stage as TaskStatus, props.t),
-      progress,
-      state: isDone ? 'done' : isActive ? 'active' : 'pending',
-    }
-  })
 
   return (
     <>

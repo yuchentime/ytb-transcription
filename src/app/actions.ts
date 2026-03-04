@@ -498,6 +498,8 @@ export async function cancelTaskAction(
     setTaskState((prev) => ({
       ...prev,
       activeTaskId: canceledTaskId,
+      activeStatus: 'canceled',
+      running: false,
       error: '',
     }))
   } catch (error) {

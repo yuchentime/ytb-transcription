@@ -383,7 +383,13 @@ function App() {
         }
       }
 
-      const normalizedRunning = resolvedRunningTaskId
+      const shouldTreatAsRunning = resolvedRunningTaskId
+        ? runningTaskStatus
+          ? isRunningStatus(runningTaskStatus)
+          : true
+        : false
+
+      const normalizedRunning = shouldTreatAsRunning
         ? snapshot.running.filter((item) => item.taskId === resolvedRunningTaskId)
         : []
 
@@ -397,14 +403,14 @@ function App() {
       }))
       setHistoryState((prev) => ({
         ...prev,
-        runningTaskId: resolvedRunningTaskId ?? '',
+        runningTaskId: shouldTreatAsRunning ? (resolvedRunningTaskId ?? '') : '',
       }))
 
       setTaskState((prev) => ({
         ...prev,
         activeTaskId: resolvedRunningTaskId ?? prev.activeTaskId,
         activeStatus: runningTaskStatus || prev.activeStatus,
-        running: Boolean(resolvedRunningTaskId),
+        running: shouldTreatAsRunning,
         processingYoutubeUrl: resolvedRunningTaskId ? processingYoutubeUrl : prev.processingYoutubeUrl,
         processingYoutubeTitle: resolvedRunningTaskId ? processingYoutubeTitle : prev.processingYoutubeTitle,
       }))
