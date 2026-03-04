@@ -70,6 +70,8 @@ export const IPC_CHANNELS = {
   updateDownload: 'update:download',
   updateInstall: 'update:install',
   updateGetVersion: 'update:getVersion',
+  updateIgnoreVersion: 'update:ignoreVersion',
+  updateLater: 'update:later',
   updateStatus: 'update:status',
 } as const
 
@@ -401,13 +403,17 @@ export interface RendererAPI {
     download(): Promise<boolean>
     install(): void
     getVersion(): Promise<string>
+    ignoreVersion(version: string): Promise<void>
+    later(): Promise<void>
     onStatus(listener: (payload: UpdateStatusPayload) => void): () => void
   }
 }
 
 // Update status types
+export type UpdateStatus = 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+
 export interface UpdateStatusPayload {
-  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  status: UpdateStatus
   data?: {
     version?: string
     releaseDate?: string
@@ -417,5 +423,6 @@ export interface UpdateStatusPayload {
     total?: number
     bytesPerSecond?: number
     message?: string
+    isStartup?: boolean
   }
 }

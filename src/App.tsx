@@ -4,6 +4,7 @@ import type { AppSettings, TaskStatus } from '../electron/core/db/types'
 import type {
   TaskStatusEventPayload,
   TranslateConnectivityResult,
+  UpdateStatusPayload,
 } from '../electron/ipc/channels'
 import {
   applyHistoryFiltersAction,
@@ -60,6 +61,9 @@ import { ipcClient } from './services/ipcClient'
 import { createInitialQueueState } from './stores/queue.store'
 import './App.css'
 
+// 更新弹窗类型
+type UpdateDialogType = 'confirm' | 'downloading' | 'restart' | null
+
 function App() {
   const historyLoadRequestRef = useRef(0)
   const [activeRoute, setActiveRoute] = useState<AppRoute>('task')
@@ -96,6 +100,21 @@ function App() {
   const resumeConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null)
   const deleteConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null)
   const t = useMemo(() => createTranslator(locale), [locale])
+
+  // 自动更新弹窗状态
+  const [updateDialog, setUpdateDialog] = useState<{
+    type: UpdateDialogType
+    version: string
+    releaseNotes?: string
+    isStartup: boolean
+    progress: number
+  }>({
+    type: null,
+    version: '',
+    releaseNotes: '',
+    isStartup: false,
+    progress: 0,
+  })
 
   const mergedHistoryItems = useMemo(() => {
     return historyState.items.map((item) => {
@@ -565,6 +584,85 @@ function App() {
     pushLog,
     t,
   })
+
+  // 监听自动更新状态
+  useEffect(() => {
+    const unsubscribe = window.appApi.update.onStatus((payload: UpdateStatusPayload) => {
+      switch (payload.status) {
+        case 'available':
+          // 只在启动自动检查时显示弹窗，手动检查不弹窗
+          if (payload.data?.isStartup) {
+            setUpdateDialog({
+              type: 'confirm',
+              version: payload.data?.version || '',
+              releaseNotes: payload.data?.releaseNotes,
+              isStartup: true,
+              progress: 0,
+            })
+          }
+          break
+        case 'downloading':
+          // 更新下载进度
+          setUpdateDialog((prev) =>
+            prev.type === 'confirm' || prev.type === 'downloading'
+              ? { ...prev, type: 'downloading', progress: payload.data?.percent || 0 }
+              : prev
+          )
+          break
+        case 'downloaded':
+          // 显示重启确认弹窗（仅当之前有显示过弹窗或者是启动检查）
+          setUpdateDialog((prev) =>
+            prev.type !== null
+              ? {
+                  ...prev,
+                  type: 'restart',
+                  version: payload.data?.version || prev.version,
+                }
+              : prev
+          )
+          break
+        case 'error':
+          // 关闭弹窗，错误信息在设置页面显示
+          setUpdateDialog((prev) =>
+            prev.type === 'downloading' ? { ...prev, type: null } : prev
+          )
+          break
+        case 'not-available':
+        case 'idle':
+          // 关闭弹窗
+          setUpdateDialog((prev) => (prev.type !== null ? { ...prev, type: null } : prev))
+          break
+      }
+    })
+
+    return () => unsubscribe()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 处理更新确认
+  const handleUpdateConfirm = useCallback(async () => {
+    setUpdateDialog((prev) => ({ ...prev, type: 'downloading', progress: 0 }))
+    await window.appApi.update.download()
+  }, [])
+
+  // 处理忽略此版本
+  const handleUpdateIgnore = useCallback(() => {
+    if (updateDialog.version) {
+      void window.appApi.update.ignoreVersion(updateDialog.version)
+    }
+    setUpdateDialog((prev) => ({ ...prev, type: null }))
+  }, [updateDialog.version])
+
+  // 处理稍后提醒
+  const handleUpdateLater = useCallback(() => {
+    void window.appApi.update.later()
+    setUpdateDialog((prev) => ({ ...prev, type: null }))
+  }, [])
+
+  // 处理立即重启
+  const handleUpdateRestart = useCallback(() => {
+    window.appApi.update.install()
+  }, [])
 
   async function saveSettings(): Promise<void> {
     await saveSettingsAction({
@@ -1132,6 +1230,122 @@ function App() {
             </button>
           </div>
           <audio controls autoPlay src={playingAudio.url} />
+        </div>
+      )}
+
+      {/* 更新确认弹窗 */}
+      {updateDialog.type === 'confirm' && (
+        <div className="confirm-dialog-overlay" role="presentation" onClick={handleUpdateLater}>
+          <div
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="update-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '480px' }}
+          >
+            <div className="confirm-dialog-badge" aria-hidden="true">
+              ↻
+            </div>
+            <h3 id="update-dialog-title">{t('update.newVersionAvailable')}</h3>
+            <p>
+              {t('update.versionInfo', { version: updateDialog.version })}
+            </p>
+            {updateDialog.releaseNotes && (
+              <div
+                style={{
+                  maxHeight: '150px',
+                  overflow: 'auto',
+                  background: 'var(--bg-secondary, #f5f5f5)',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  margin: '12px 0',
+                  fontSize: '14px',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {updateDialog.releaseNotes}
+              </div>
+            )}
+            <div className="confirm-dialog-actions" style={{ flexWrap: 'wrap', gap: '8px' }}>
+              <button className="btn" type="button" onClick={handleUpdateIgnore}>
+                {t('update.ignoreVersion')}
+              </button>
+              <button className="btn" type="button" onClick={handleUpdateLater}>
+                {t('update.later')}
+              </button>
+              <button className="btn primary" type="button" onClick={handleUpdateConfirm}>
+                {t('update.download')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 下载进度弹窗 */}
+      {updateDialog.type === 'downloading' && (
+        <div className="confirm-dialog-overlay" role="presentation">
+          <div
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="update-downloading-title"
+            style={{ maxWidth: '400px' }}
+          >
+            <div className="confirm-dialog-badge" aria-hidden="true">
+              ↓
+            </div>
+            <h3 id="update-downloading-title">{t('update.downloadingTitle')}</h3>
+            <div style={{ margin: '20px 0' }}>
+              <div
+                style={{
+                  height: '8px',
+                  background: 'var(--bg-secondary, #f5f5f5)',
+                  borderRadius: '4px',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${updateDialog.progress}%`,
+                    background: 'var(--primary, #646cff)',
+                    transition: 'width 0.3s ease',
+                  }}
+                />
+              </div>
+              <p style={{ textAlign: 'center', marginTop: '12px', fontSize: '14px' }}>
+                {updateDialog.progress.toFixed(0)}%
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 重启确认弹窗 */}
+      {updateDialog.type === 'restart' && (
+        <div className="confirm-dialog-overlay" role="presentation">
+          <div
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="update-restart-title"
+            style={{ maxWidth: '480px' }}
+          >
+            <div className="confirm-dialog-badge" aria-hidden="true">
+              ✓
+            </div>
+            <h3 id="update-restart-title">{t('update.readyToInstall')}</h3>
+            <p>{t('update.restartPrompt', { version: updateDialog.version })}</p>
+            <div className="confirm-dialog-actions">
+              <button className="btn" type="button" onClick={handleUpdateLater}>
+                {t('update.installLater')}
+              </button>
+              <button className="btn primary" type="button" onClick={handleUpdateRestart}>
+                {t('update.restartNow')}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </main>

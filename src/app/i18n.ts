@@ -189,6 +189,18 @@ const zhMessages = {
   'settings.piper.installHint': '首次使用可一键安装 Piper 运行环境与默认音色模型（自动下载）。',
   'settings.piperModelMismatchHint': '请重新安装 Piper 模型',
 
+  // Update dialog translations
+  'update.newVersionAvailable': '发现新版本',
+  'update.versionInfo': '新版本 {version} 已可用，是否下载更新？',
+  'update.ignoreVersion': '忽略此版本',
+  'update.later': '稍后提醒',
+  'update.download': '立即下载',
+  'update.downloadingTitle': '正在下载更新',
+  'update.readyToInstall': '更新已就绪',
+  'update.restartPrompt': '新版本 {version} 已下载完成，是否立即重启应用以完成更新？',
+  'update.installLater': '稍后安装',
+  'update.restartNow': '立即重启',
+
   'status.all': '全部',
   'status.idle': '空闲',
   'status.queued': '排队中',
@@ -448,6 +460,18 @@ const enMessages: Messages = {
   'settings.piper.localModelHint': 'Piper uses local models and does not rely on cloud API Key/Base URL.',
   'settings.piper.installHint': 'For first-time use, you can install the Piper runtime and default voice model with one click (auto-download).',
   'settings.piperModelMismatchHint': 'Please reinstall the Piper model.',
+
+  // Update dialog translations
+  'update.newVersionAvailable': 'New Version Available',
+  'update.versionInfo': 'Version {version} is available. Download now?',
+  'update.ignoreVersion': 'Ignore This Version',
+  'update.later': 'Remind Me Later',
+  'update.download': 'Download Now',
+  'update.downloadingTitle': 'Downloading Update',
+  'update.readyToInstall': 'Update Ready',
+  'update.restartPrompt': 'Version {version} has been downloaded. Restart now to install?',
+  'update.installLater': 'Install Later',
+  'update.restartNow': 'Restart Now',
 
   'status.all': 'All',
   'status.idle': 'Idle',

@@ -73,6 +73,8 @@ const api: RendererAPI = {
     download: () => ipcRenderer.invoke(IPC_CHANNELS.updateDownload),
     install: () => ipcRenderer.invoke(IPC_CHANNELS.updateInstall),
     getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetVersion),
+    ignoreVersion: (version: string) => ipcRenderer.invoke(IPC_CHANNELS.updateIgnoreVersion, version),
+    later: () => ipcRenderer.invoke(IPC_CHANNELS.updateLater),
     onStatus: (listener) => subscribe(IPC_CHANNELS.updateStatus, listener),
   },
 }

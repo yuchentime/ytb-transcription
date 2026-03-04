@@ -1,6 +1,7 @@
-import { app, BrowserWindow, nativeImage, ipcMain } from 'electron'
+import { app, BrowserWindow, nativeImage, ipcMain, dialog } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import fs from 'node:fs'
 import { closeDatabase, initDatabase } from './core/db'
 import { initTaskEngine } from './core/task-engine'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -30,6 +31,44 @@ export const RENDERER_DIST = path.join(APP_ROOT, 'dist')
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(APP_ROOT, 'public') : RENDERER_DIST
 
 let win: BrowserWindow | null
+let isStartupUpdateCheck = false
+let isUpdateDownloadInProgress = false
+let ignoredVersion: string | null = null
+
+// 忽略版本记录文件路径
+function getIgnoredVersionPath(): string {
+  return path.join(app.getPath('userData'), 'ignored-update-version.json')
+}
+
+// 加载忽略的版本
+function loadIgnoredVersion(): void {
+  try {
+    const filePath = getIgnoredVersionPath()
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+      ignoredVersion = data.version || null
+    }
+  } catch (error) {
+    console.error('[AutoUpdater] Failed to load ignored version:', error)
+  }
+}
+
+// 保存忽略的版本
+function saveIgnoredVersion(version: string | null): void {
+  try {
+    const filePath = getIgnoredVersionPath()
+    if (version) {
+      fs.writeFileSync(filePath, JSON.stringify({ version, ignoredAt: new Date().toISOString() }))
+    } else {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath)
+      }
+    }
+    ignoredVersion = version
+  } catch (error) {
+    console.error('[AutoUpdater] Failed to save ignored version:', error)
+  }
+}
 
 function createWindow() {
   const publicRoot = process.env.VITE_PUBLIC ?? path.join(APP_ROOT, 'public')
@@ -115,9 +154,12 @@ function initAutoUpdater() {
     return
   }
 
+  // 加载已忽略的版本
+  loadIgnoredVersion()
+
   // Configure auto-updater
   autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.setFeedURL({
     provider: 'generic',
     url: AUTO_UPDATE_URL,
@@ -145,10 +187,19 @@ function initAutoUpdater() {
         : undefined
 
     console.log('[AutoUpdater] Update available:', info.version)
+    
+    // 检查是否被用户忽略
+    if (ignoredVersion === info.version && isStartupUpdateCheck) {
+      console.log('[AutoUpdater] Version ignored by user:', info.version)
+      sendUpdateStatus('not-available')
+      return
+    }
+
     sendUpdateStatus('available', {
       version: info.version,
       releaseDate: info.releaseDate,
       releaseNotes,
+      isStartup: isStartupUpdateCheck,
     })
   })
 
@@ -170,8 +221,10 @@ function initAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[AutoUpdater] Update downloaded:', info.version)
     sendUpdateStatus('downloaded', {
-      version: info.version
+      version: info.version,
     })
+    // 显示重启确认对话框
+    showRestartDialog(info.version)
   })
 
   autoUpdater.on('error', (error) => {
@@ -183,10 +236,72 @@ function initAutoUpdater() {
 
   // Check for updates on startup (with a delay to not block app launch)
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch(err => {
-      console.error('[AutoUpdater] Initial check failed:', err)
-    })
+    void checkForUpdatesOnStartup()
   }, 3000)
+}
+
+async function checkForUpdatesOnStartup(): Promise<void> {
+  if (VITE_DEV_SERVER_URL) return
+  isStartupUpdateCheck = true
+  try {
+    await autoUpdater.checkForUpdates()
+  } catch (err) {
+    console.error('[AutoUpdater] Initial check failed:', err)
+  } finally {
+    isStartupUpdateCheck = false
+  }
+}
+
+async function downloadUpdateWithGuard(): Promise<boolean> {
+  if (VITE_DEV_SERVER_URL) {
+    sendUpdateStatus('not-available', {
+      message: 'Auto-updater is disabled in development mode',
+    })
+    return false
+  }
+
+  if (isUpdateDownloadInProgress) {
+    return true
+  }
+
+  isUpdateDownloadInProgress = true
+
+  try {
+    await autoUpdater.downloadUpdate()
+    return true
+  } catch (error) {
+    console.error('[AutoUpdater] Download update failed:', error)
+    sendUpdateStatus('error', {
+      message: error instanceof Error ? error.message : String(error),
+    })
+    return false
+  } finally {
+    isUpdateDownloadInProgress = false
+  }
+}
+
+// 显示重启确认对话框（在主进程中使用原生对话框）
+async function showRestartDialog(version: string): Promise<void> {
+  if (!win || win.isDestroyed()) return
+  
+  const result = await dialog.showMessageBox(win, {
+    type: 'info',
+    title: '更新已下载',
+    message: `新版本 ${version} 已准备就绪`,
+    detail: '是否立即重启应用以完成更新？\n\n点击"稍后"将在退出应用时自动安装更新。',
+    buttons: ['立即重启', '稍后'],
+    defaultId: 0,
+    cancelId: 1,
+  })
+
+  if (result.response === 0) {
+    console.log('[AutoUpdater] User chose to restart and install')
+    autoUpdater.quitAndInstall(false, true)
+  } else {
+    console.log('[AutoUpdater] User chose to install later')
+    // 启用退出时自动安装
+    autoUpdater.autoInstallOnAppQuit = true
+  }
 }
 
 function registerUpdateIpcHandlers() {
@@ -194,6 +309,8 @@ function registerUpdateIpcHandlers() {
   ipcMain.removeHandler(IPC_CHANNELS.updateDownload)
   ipcMain.removeHandler(IPC_CHANNELS.updateInstall)
   ipcMain.removeHandler(IPC_CHANNELS.updateGetVersion)
+  ipcMain.removeHandler(IPC_CHANNELS.updateIgnoreVersion)
+  ipcMain.removeHandler(IPC_CHANNELS.updateLater)
 
   ipcMain.handle(IPC_CHANNELS.updateCheck, async () => {
     if (VITE_DEV_SERVER_URL) {
@@ -215,23 +332,7 @@ function registerUpdateIpcHandlers() {
   })
 
   ipcMain.handle(IPC_CHANNELS.updateDownload, async () => {
-    if (VITE_DEV_SERVER_URL) {
-      sendUpdateStatus('not-available', {
-        message: 'Auto-updater is disabled in development mode',
-      })
-      return false
-    }
-
-    try {
-      await autoUpdater.downloadUpdate()
-      return true
-    } catch (error) {
-      console.error('[AutoUpdater] Download update failed:', error)
-      sendUpdateStatus('error', {
-        message: error instanceof Error ? error.message : String(error),
-      })
-      return false
-    }
+    return await downloadUpdateWithGuard()
   })
 
   ipcMain.handle(IPC_CHANNELS.updateInstall, () => {
@@ -243,6 +344,17 @@ function registerUpdateIpcHandlers() {
 
   ipcMain.handle(IPC_CHANNELS.updateGetVersion, () => {
     return app.getVersion()
+  })
+
+  // 忽略此版本
+  ipcMain.handle(IPC_CHANNELS.updateIgnoreVersion, (_, version: string) => {
+    saveIgnoredVersion(version)
+    console.log('[AutoUpdater] Version ignored:', version)
+  })
+
+  // 稍后提醒（清除待更新状态）
+  ipcMain.handle(IPC_CHANNELS.updateLater, () => {
+    sendUpdateStatus('idle')
   })
 }
 
