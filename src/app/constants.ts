@@ -2,8 +2,9 @@ import type { TranslateProvider, TtsProvider } from '../../electron/core/db/type
 import type { TranslateKey } from './i18n'
 import {
   DEFAULT_CUSTOM_API_BASE_URL,
-  PROVIDER_BASE_URLS,
   QWEN_REGION_BASE_URLS,
+  TRANSLATE_BASE_URLS,
+  TTS_BASE_URLS,
 } from '../../shared/providerBaseUrls'
 
 // Translation provider options - label is i18n key
@@ -23,8 +24,18 @@ export const TTS_PROVIDERS: { value: TtsProvider; labelKey: TranslateKey }[] = [
   { value: 'qwen', labelKey: 'settings.provider.qwen' },
 ]
 
-// Default base URLs for providers
-export const DEFAULT_BASE_URLS = PROVIDER_BASE_URLS
+// Default base URLs for translation providers
+export const DEFAULT_TRANSLATE_BASE_URLS = TRANSLATE_BASE_URLS
+
+// Default base URLs for TTS providers
+export const DEFAULT_TTS_BASE_URLS = TTS_BASE_URLS
+
+// @deprecated Use DEFAULT_TRANSLATE_BASE_URLS or DEFAULT_TTS_BASE_URLS instead
+export const DEFAULT_BASE_URLS = {
+  ...DEFAULT_TRANSLATE_BASE_URLS,
+  ...DEFAULT_TTS_BASE_URLS,
+}
+
 export const DEFAULT_CUSTOM_BASE_URL = DEFAULT_CUSTOM_API_BASE_URL
 
 export const QWEN_REGION_PROVIDER_OPTIONS: Array<{

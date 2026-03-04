@@ -7,8 +7,9 @@ import { VoicePresetPanel } from '../components/VoicePresetPanel'
 import { Toast } from '../components/Toast'
 import { TRANSLATE_MODEL_OPTIONS, TTS_MODEL_OPTIONS } from '../app/utils'
 import {
-  DEFAULT_BASE_URLS,
   DEFAULT_CUSTOM_BASE_URL,
+  DEFAULT_TRANSLATE_BASE_URLS,
+  DEFAULT_TTS_BASE_URLS,
   QWEN_REGION_PROVIDER_OPTIONS,
   TRANSLATE_PROVIDERS,
   TTS_PROVIDERS,
@@ -578,7 +579,7 @@ export function SettingsPage(props: SettingsPageProps) {
                 const currentModelValid = availableModels.includes(settings.translateModelId)
                 setSettings((prev) => {
                   const baseUrlField = getBaseUrlField(newProvider)
-                  const defaultBaseUrl = newProvider !== 'custom' ? DEFAULT_BASE_URLS[newProvider] : ''
+                    const defaultBaseUrl = newProvider !== 'custom' ? DEFAULT_TRANSLATE_BASE_URLS[newProvider] : ''
                   return {
                     ...prev,
                     translateProvider: newProvider,
@@ -629,7 +630,7 @@ export function SettingsPage(props: SettingsPageProps) {
               }
               placeholder={
                 settings.translateProvider !== 'custom'
-                  ? DEFAULT_BASE_URLS[settings.translateProvider]
+                  ? DEFAULT_TRANSLATE_BASE_URLS[settings.translateProvider]
                   : `${DEFAULT_CUSTOM_BASE_URL} (OpenAI-compatible)`
               }
             />
@@ -716,7 +717,7 @@ export function SettingsPage(props: SettingsPageProps) {
                 const currentModelValid = availableModels.includes(settings.ttsModelId)
                 setSettings((prev) => {
                   const baseUrlField = getBaseUrlField(newProvider)
-                  const defaultBaseUrl = DEFAULT_BASE_URLS[newProvider]
+                    const defaultBaseUrl = DEFAULT_TTS_BASE_URLS[newProvider]
                   const filteredVoices = getVoiceProfilesForProvider(
                     newProvider,
                     props.model.voiceProfiles,
@@ -725,7 +726,7 @@ export function SettingsPage(props: SettingsPageProps) {
                   const currentVoiceValid = filteredVoices.some((voice) => voice.id === prev.ttsVoiceId)
                   const resolvedQwenBaseUrl =
                     newProvider === 'qwen'
-                      ? selectedQwenBaseUrl || prev.qwenApiBaseUrl || DEFAULT_BASE_URLS.qwen
+                      ? selectedQwenBaseUrl || prev.qwenApiBaseUrl || DEFAULT_TTS_BASE_URLS.qwen
                       : prev.qwenApiBaseUrl
                   return {
                     ...prev,
@@ -788,8 +789,8 @@ export function SettingsPage(props: SettingsPageProps) {
                     : {}),
                 }))
               }
-              placeholder={DEFAULT_BASE_URLS[currentTtsProvider]}
-            />
+                placeholder={DEFAULT_TTS_BASE_URLS[currentTtsProvider]}
+              />
             {currentTtsProvider === 'qwen' && <small className="hint">{props.t('settings.qwenRegionHint')}</small>}
           </label>
 

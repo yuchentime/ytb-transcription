@@ -216,6 +216,8 @@ function getOpenAICompatibleTextEndpoint(
   provider: Exclude<TranslateProvider, 'minimax'>,
   baseUrl: string,
 ): string {
+  // 如果 URL 已经以 /chat/completions 结尾，直接返回，无需修改
+  // 这允许用户使用完整的自定义端点
   const normalized = normalizeBaseUrl(baseUrl)
   if (normalized.endsWith('/chat/completions')) {
     return normalized
@@ -228,6 +230,7 @@ function getOpenAICompatibleTextEndpoint(
       return `${normalized}/v4/chat/completions`
     }
   }
+  // 检测 URL 是否以版本号结尾（如 /v1, /v2, /v3, /v4 等）
   if (/\/v\d+$/i.test(normalized)) {
     return `${normalized}/chat/completions`
   }
