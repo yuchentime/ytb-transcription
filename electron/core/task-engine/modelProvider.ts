@@ -586,6 +586,24 @@ async function requestOpenAICompatibleText(params: {
   return content
 }
 
+function resolveEffectiveTimeout(modelId: string, providedTimeout?: number): number | undefined {
+  // Reasoning models require longer timeout
+  const REASONING_MODELS = ['deepseek-reasoner']
+  const isReasoningModel = REASONING_MODELS.some(m => modelId.toLowerCase().includes(m))
+  
+  // Use provided timeout if exists, otherwise use model-specific default
+  if (typeof providedTimeout === 'number' && Number.isFinite(providedTimeout) && providedTimeout > 0) {
+    // For reasoning models, extend the timeout if it's too short
+    if (isReasoningModel && providedTimeout < 300_000) {
+      return 300_000  // 5 minutes minimum for reasoning models
+    }
+    return providedTimeout
+  }
+  
+  // Default timeouts based on model type
+  return isReasoningModel ? 300_000 : undefined  // 5 min for reasoning, undefined lets caller decide
+}
+
 export async function translateText(params: {
   settings: AppSettings
   sourceText: string
@@ -599,6 +617,8 @@ export async function translateText(params: {
 }): Promise<string> {
   ensureTranslateSettings(params.settings)
   const provider = params.settings.translateProvider ?? 'minimax'
+  const modelId = params.settings.translateModelId
+  const effectiveTimeout = resolveEffectiveTimeout(modelId, params.timeoutMs)
   const previousText = params.context?.previousText?.trim() ?? ''
   const segmentIndex = params.context?.segmentIndex
   const totalSegments = params.context?.totalSegments
@@ -630,7 +650,7 @@ export async function translateText(params: {
   if (provider === 'minimax') {
     return await requestMiniMaxText({
       settings: params.settings,
-      timeoutMs: params.timeoutMs,
+      timeoutMs: effectiveTimeout,
       messages,
       action: 'translate',
     })
@@ -638,7 +658,7 @@ export async function translateText(params: {
   return await requestOpenAICompatibleText({
     settings: params.settings,
     provider,
-    timeoutMs: params.timeoutMs,
+    timeoutMs: effectiveTimeout,
     messages,
   })
 }

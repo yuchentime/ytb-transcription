@@ -441,6 +441,8 @@ export async function startTaskAction(
       downloadSpeed: prev.running ? prev.downloadSpeed : undefined,
       runtimeComponentStatus: prev.running ? prev.runtimeComponentStatus : {},
       isRuntimeModalVisible: prev.running ? prev.isRuntimeModalVisible : false,
+      // Clear old logs when switching to a newly started active task.
+      logs: prev.running ? prev.logs : [],
       form: {
         ...prev.form,
         youtubeUrl: '',
@@ -548,6 +550,8 @@ export async function retryFailedSegmentsAction(
       running: true,
       error: '',
       recoveryActions: [],
+      // Clear old logs when retrying failed segments.
+      logs: [],
     }))
     pushLog({
       time: new Date().toISOString(),
@@ -584,6 +588,8 @@ export async function resumeTaskFromCheckpointAction(
       running: true,
       error: '',
       recoveryActions: [],
+      // Clear old logs when resuming a failed task from checkpoint.
+      logs: [],
     }))
     pushLog({
       time: new Date().toISOString(),

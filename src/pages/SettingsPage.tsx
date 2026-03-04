@@ -590,7 +590,8 @@ export function SettingsPage(props: SettingsPageProps) {
                 })
               }}
             >
-              {TRANSLATE_PROVIDERS.map((p) => (
+              {/* Kimi 暂时隐藏：连通性有问题 */}
+              {TRANSLATE_PROVIDERS.filter((p) => p.value !== 'kimi').map((p) => (
                 <option key={p.value} value={p.value}>
                   {props.t(p.labelKey)}
                 </option>

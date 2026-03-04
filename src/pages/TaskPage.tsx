@@ -224,25 +224,51 @@ interface CollapsibleSectionProps {
   onToggle: () => void
   children: React.ReactNode
   hasContent: boolean
+  onCopy?: () => Promise<void>
+  copyLabel?: string
+  copyDisabled?: boolean
 }
 
-function CollapsibleSection({ title, isExpanded, onToggle, children, hasContent }: CollapsibleSectionProps) {
+function CollapsibleSection({
+  title,
+  isExpanded,
+  onToggle,
+  children,
+  hasContent,
+  onCopy,
+  copyLabel,
+  copyDisabled = false,
+}: CollapsibleSectionProps) {
   return (
     <div className={`collapsible-section ${hasContent ? 'has-content' : ''}`}>
-      <button
-        className="collapsible-header"
-        onClick={onToggle}
-        disabled={!hasContent}
-        aria-expanded={isExpanded}
-        type="button"
-      >
-        <span className="collapsible-title">{title}</span>
-        {hasContent && (
-          <span className="collapsible-icon">
-            {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
-          </span>
+      <div className="collapsible-header-row">
+        <button
+          className="collapsible-header"
+          onClick={onToggle}
+          disabled={!hasContent}
+          aria-expanded={isExpanded}
+          type="button"
+        >
+          <span className="collapsible-title">{title}</span>
+          {hasContent && (
+            <span className="collapsible-icon">
+              {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+            </span>
+          )}
+        </button>
+        {onCopy && (
+          <button
+            type="button"
+            className="btn small icon-btn logs-copy-btn collapsible-copy-btn"
+            onClick={() => void onCopy()}
+            disabled={copyDisabled}
+            title={copyLabel}
+            aria-label={copyLabel}
+          >
+            <CopyIcon />
+          </button>
         )}
-      </button>
+      </div>
       {isExpanded && hasContent && (
         <div className="collapsible-content">
           {children}
@@ -256,7 +282,9 @@ export function TaskPage(props: TaskPageProps) {
   // State for collapsible sections
   const [isTranscriptExpanded, setIsTranscriptExpanded] = useState(false)
   const [isTranslationExpanded, setIsTranslationExpanded] = useState(false)
-  const [copySuccess, setCopySuccess] = useState(false)
+  const [logsCopySuccess, setLogsCopySuccess] = useState(false)
+  const [transcriptCopySuccess, setTranscriptCopySuccess] = useState(false)
+  const [translationCopySuccess, setTranslationCopySuccess] = useState(false)
   const [isRuntimeReloading, setIsRuntimeReloading] = useState(false)
   const [configToast, setConfigToast] = useState<{
     visible: boolean
@@ -296,7 +324,9 @@ export function TaskPage(props: TaskPageProps) {
 
   const hasTranscript = !!props.model.transcriptContent
   const hasTranslation = !!props.model.translationContent
-  const logsCopyLabel = copySuccess ? props.t('task.copyLogsDone') : props.t('task.copyLogs')
+  const logsCopyLabel = logsCopySuccess ? props.t('task.copyLogsDone') : props.t('task.copyLogs')
+  const transcriptCopyLabel = transcriptCopySuccess ? props.t('task.copyLogsDone') : props.t('task.copyLogs')
+  const translationCopyLabel = translationCopySuccess ? props.t('task.copyLogsDone') : props.t('task.copyLogs')
   const runtimeBlocked = props.model.runtimeBootstrapStatus !== 'ready'
   const runtimeInlineHint =
     props.model.runtimeBootstrapStatus === 'error'
@@ -316,12 +346,7 @@ export function TaskPage(props: TaskPageProps) {
     }
   }
 
-  const handleCopyLogs = async (): Promise<void> => {
-    if (props.model.logs.length === 0) return
-    const content = props.model.logs
-      .map((log) => `[${new Date(log.time).toLocaleTimeString()}] [${log.stage}] ${log.text}`)
-      .join('\n')
-
+  const copyTextToClipboard = async (content: string): Promise<boolean> => {
     try {
       if (window.isSecureContext && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(content)
@@ -337,11 +362,36 @@ export function TaskPage(props: TaskPageProps) {
         document.execCommand('copy')
         document.body.removeChild(textarea)
       }
-      setCopySuccess(true)
-      window.setTimeout(() => setCopySuccess(false), 1500)
+      return true
     } catch {
-      setCopySuccess(false)
+      return false
     }
+  }
+
+  const handleCopyLogs = async (): Promise<void> => {
+    if (props.model.logs.length === 0) return
+    const content = props.model.logs
+      .map((log) => `[${new Date(log.time).toLocaleTimeString()}] [${log.stage}] ${log.text}`)
+      .join('\n')
+    const copied = await copyTextToClipboard(content)
+    setLogsCopySuccess(copied)
+    window.setTimeout(() => setLogsCopySuccess(false), 1500)
+  }
+
+  const handleCopyTranscript = async (): Promise<void> => {
+    const content = (props.model.transcriptContent ?? '').trim()
+    if (!content) return
+    const copied = await copyTextToClipboard(content)
+    setTranscriptCopySuccess(copied)
+    window.setTimeout(() => setTranscriptCopySuccess(false), 1500)
+  }
+
+  const handleCopyTranslation = async (): Promise<void> => {
+    const content = (props.model.translationContent ?? '').trim()
+    if (!content) return
+    const copied = await copyTextToClipboard(content)
+    setTranslationCopySuccess(copied)
+    window.setTimeout(() => setTranslationCopySuccess(false), 1500)
   }
 
   const handleStartTask = (): void => {
@@ -551,6 +601,9 @@ export function TaskPage(props: TaskPageProps) {
           isExpanded={isTranscriptExpanded}
           onToggle={() => setIsTranscriptExpanded(!isTranscriptExpanded)}
           hasContent={hasTranscript}
+          onCopy={handleCopyTranscript}
+          copyLabel={transcriptCopyLabel}
+          copyDisabled={!hasTranscript}
         >
           <div className="result-content">
             {props.model.transcriptContent?.split('\n').map((line, index) => (
@@ -564,6 +617,9 @@ export function TaskPage(props: TaskPageProps) {
           isExpanded={isTranslationExpanded}
           onToggle={() => setIsTranslationExpanded(!isTranslationExpanded)}
           hasContent={hasTranslation}
+          onCopy={handleCopyTranslation}
+          copyLabel={translationCopyLabel}
+          copyDisabled={!hasTranslation}
         >
           <div className="result-content">
             {props.model.translationContent?.split('\n').map((line, index) => (

@@ -39,7 +39,7 @@ export const MLX_MODEL_REPOS: Record<string, string[]> = {
 
 // Translation defaults
 export const DEFAULT_TRANSLATION_CONTEXT_CHARS = 160
-export const DEFAULT_TRANSLATE_REQUEST_TIMEOUT_MS = 120 * 1000
+export const DEFAULT_TRANSLATE_REQUEST_TIMEOUT_MS = 300 * 1000  // 5 minutes for deepseek-reasoner
 export const DEFAULT_TRANSLATE_CONTEXT_WINDOW_TOKENS = 256_000
 export const DEFAULT_TRANSLATE_SPLIT_THRESHOLD_RATIO = 0.7
 export const DEFAULT_TRANSLATE_SPLIT_THRESHOLD_TOKENS = 8_000

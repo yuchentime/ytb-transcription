@@ -991,8 +991,16 @@ input:read-only {
   border-bottom: none;
 }
 
+.collapsible-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 0;
+}
+
 .collapsible-header {
-  width: 100%;
+  width: auto;
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1037,6 +1045,10 @@ input:read-only {
 
 .collapsible-header:hover:not(:disabled) .collapsible-icon {
   color: #000;
+}
+
+.collapsible-copy-btn {
+  flex-shrink: 0;
 }
 
 .collapsible-content {
