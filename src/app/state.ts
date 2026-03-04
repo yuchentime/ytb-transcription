@@ -12,6 +12,7 @@ import { DEFAULT_SETTINGS } from './utils'
 export interface TaskFormState {
   youtubeUrl: string
   targetLanguage: 'zh' | 'en' | 'ja'
+  sourceLanguage: string
   ttsVoiceId: string
 }
 
@@ -112,6 +113,7 @@ export function createInitialTaskState(): TaskState {
     form: {
       youtubeUrl: '',
       targetLanguage: 'zh',
+      sourceLanguage: '',
       ttsVoiceId: '',
     },
     activeTaskId: '',

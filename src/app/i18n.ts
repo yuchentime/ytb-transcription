@@ -27,8 +27,10 @@ const zhMessages = {
   'queue.pausedHint': '队列已暂停，运行中任务会继续，新的 waiting 任务不会出队。',
 
   'task.title': '运行任务',
-  'task.youtubeUrl': '请输入 YouTube 链接',
+  'task.youtubeUrl': 'YouTube 链接',
   'task.youtubeUrlPlaceholder': 'https://www.youtube.com/watch?v=...',
+  'task.sourceLanguage': '源语言',
+  'task.sourceLanguageAuto': '自动检测',
   'task.targetLanguage': '目标语言',
   'task.start': '提交任务',
   'task.cancel': '取消任务',
@@ -231,6 +233,16 @@ const zhMessages = {
 
   'lang.all': '全部',
   'lang.zh': '中文',
+  'lang.en': '英语',
+  'lang.ja': '日语',
+  'lang.ko': '韩语',
+  'lang.fr': '法语',
+  'lang.de': '德语',
+  'lang.es': '西班牙语',
+  'lang.pt': '葡萄牙语',
+  'lang.ru': '俄语',
+  'lang.ar': '阿拉伯语',
+  'lang.hi': '印地语',
   'lang.zhCN': '简体中文',
   'lang.zhTW': '繁体中文',
 
@@ -299,8 +311,10 @@ const enMessages: Messages = {
   'queue.pausedHint': 'Queue is paused. Running tasks will continue, but new tasks will not start.',
 
   'task.title': 'Run Task',
-  'task.youtubeUrl': 'Please Enter YouTube URL',
+  'task.youtubeUrl': 'YouTube URL',
   'task.youtubeUrlPlaceholder': 'https://www.youtube.com/watch?v=...',
+  'task.sourceLanguage': 'Source Language',
+  'task.sourceLanguageAuto': 'Auto Detect',
   'task.targetLanguage': 'Target Language',
   'task.start': 'Submit Task',
   'task.cancel': 'Cancel Task',
@@ -503,6 +517,16 @@ const enMessages: Messages = {
 
   'lang.all': 'All',
   'lang.zh': 'Chinese',
+  'lang.en': 'English',
+  'lang.ja': 'Japanese',
+  'lang.ko': 'Korean',
+  'lang.fr': 'French',
+  'lang.de': 'German',
+  'lang.es': 'Spanish',
+  'lang.pt': 'Portuguese',
+  'lang.ru': 'Russian',
+  'lang.ar': 'Arabic',
+  'lang.hi': 'Hindi',
   'lang.zhCN': 'Simplified Chinese',
   'lang.zhTW': 'Traditional Chinese',
 
@@ -663,9 +687,29 @@ export function translateLanguageLabel(language: string, t: TranslateFn): string
     case 'zh':
       return t('lang.zh')
     case 'en':
-      return 'English'
+      return t('lang.en')
     case 'ja':
-      return '日本語'
+      return t('lang.ja')
+    case 'ko':
+      return t('lang.ko')
+    case 'fr':
+      return t('lang.fr')
+    case 'de':
+      return t('lang.de')
+    case 'es':
+      return t('lang.es')
+    case 'pt':
+      return t('lang.pt')
+    case 'ru':
+      return t('lang.ru')
+    case 'ar':
+      return t('lang.ar')
+    case 'hi':
+      return t('lang.hi')
+    case 'zh-CN':
+      return t('lang.zhCN')
+    case 'zh-TW':
+      return t('lang.zhTW')
     default:
       return language
   }

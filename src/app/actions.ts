@@ -378,6 +378,7 @@ export async function startTaskAction(
       urls: [youtubeUrl],
       sharedConfig: {
         targetLanguage: taskForm.targetLanguage,
+        sourceLanguage: taskForm.sourceLanguage || null,
         whisperModel: runtimeSettings.defaultWhisperModel,
         translateProvider: runtimeSettings.translateProvider,
         ttsProvider: runtimeSettings.ttsProvider,

@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { TaskSegmentRecord, TaskStatus } from '../../electron/core/db/types'
 import type { TaskRuntimeEventPayload } from '../../electron/ipc/channels'
 import type { TranslateFn } from '../app/i18n'
-import { translateTaskStatus } from '../app/i18n'
+import { translateLanguageLabel, translateTaskStatus } from '../app/i18n'
 import { Alert } from '../components/Alert'
 import { RuntimePreparingModal } from '../components/RuntimePreparingModal'
 import { Toast } from '../components/Toast'
@@ -11,6 +11,7 @@ import { Toast } from '../components/Toast'
 interface TaskFormState {
   youtubeUrl: string
   targetLanguage: 'zh' | 'en' | 'ja'
+  sourceLanguage: string
   ttsVoiceId: string
 }
 
@@ -77,6 +78,8 @@ interface TaskPageProps {
   actions: TaskPageActions
   t: TranslateFn
 }
+
+const SOURCE_LANGUAGE_OPTIONS = ['en', 'zh', 'ja', 'ko', 'fr', 'de', 'es', 'pt', 'ru', 'ar', 'hi'] as const
 
 // ChevronDown Icon Component
 function ChevronDownIcon({ className }: { className?: string }) {
@@ -314,7 +317,7 @@ export function TaskPage(props: TaskPageProps) {
         key: prev.key + 1,
       }))
     }
-  }, [props.model.logs])
+  }, [authToast.visible, props.model.logs])
 
   // Runtime modal is only shown when missing runtime resources need download/install.
   const hasMissingRuntimeResources = Object.values(props.model.runtimeComponentStatus).some(
@@ -426,6 +429,24 @@ export function TaskPage(props: TaskPageProps) {
     props.model.processingYoutubeTitle || props.model.processingYoutubeUrl || props.t('common.hyphen')
   const isSubmitDisabled =
     props.model.isStartDisabled && props.model.isTranslateModelConfigured && props.model.isTtsModelConfigured
+  const activeStageIndex = props.model.activeStatus
+    ? props.model.stages.findIndex((stage) => stage === props.model.activeStatus)
+    : -1
+  const stageIndicators = props.model.stages.map((stage, index) => {
+    const progress = Math.min(100, Math.max(0, Math.round(props.model.stageProgress[stage] ?? 0)))
+    const isDone =
+      props.model.activeStatus === 'completed' ||
+      progress >= 100 ||
+      (activeStageIndex !== -1 && index < activeStageIndex)
+    const isActive = !isDone && (index === activeStageIndex || progress > 0)
+
+    return {
+      key: stage,
+      label: translateTaskStatus(stage as TaskStatus, props.t),
+      progress,
+      state: isDone ? 'done' : isActive ? 'active' : 'pending',
+    }
+  })
 
   return (
     <>
@@ -436,26 +457,52 @@ export function TaskPage(props: TaskPageProps) {
         t={props.t}
       />
 
-      <section className={`panel main-panel task-panel ${isTaskActive ? 'task-active' : ''}`}>
-        {!isTaskActive && <h1 className="task-title">{props.t('task.title')}</h1>}
+      <div className="task-page-shell">
+        <section className={`panel main-panel task-panel ${isTaskActive ? 'task-active' : ''}`}>
+          {!isTaskActive && <h1 className="task-title">{props.t('task.title')}</h1>}
 
-        <div className="task-input-section">
-          <label className="youtube-url-label">
-            {props.t('task.youtubeUrl')}
-            <input
-              type="text"
-              className="youtube-url-input"
-              value={props.model.taskForm.youtubeUrl}
-              onChange={(event) =>
-                props.actions.setTaskForm((prev) => ({
-                  ...prev,
-                  youtubeUrl: event.target.value,
-                }))
-              }
-              placeholder={props.t('task.youtubeUrlPlaceholder')}
-            />
-          </label>
-        </div>
+          <div className="task-form-grid">
+            <div className="task-input-section">
+              <label className="youtube-url-label">
+                {props.t('task.youtubeUrl')}
+                <input
+                  type="text"
+                  className="youtube-url-input"
+                  value={props.model.taskForm.youtubeUrl}
+                  onChange={(event) =>
+                    props.actions.setTaskForm((prev) => ({
+                      ...prev,
+                      youtubeUrl: event.target.value,
+                    }))
+                  }
+                  placeholder={props.t('task.youtubeUrlPlaceholder')}
+                />
+              </label>
+            </div>
+
+            <div className="task-source-language-section">
+              <label className="source-language-label">
+                {props.t('task.sourceLanguage')}
+                <select
+                  className="source-language-select"
+                  value={props.model.taskForm.sourceLanguage}
+                  onChange={(event) =>
+                    props.actions.setTaskForm((prev) => ({
+                      ...prev,
+                      sourceLanguage: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">{props.t('task.sourceLanguageAuto')}</option>
+                  {SOURCE_LANGUAGE_OPTIONS.map((language) => (
+                    <option key={language} value={language}>
+                      {translateLanguageLabel(language, props.t)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
 
         {/* {hasAttemptedSubmit && props.model.taskFormErrors.length > 0 && (
           <div className="error task-form-errors">
@@ -465,194 +512,204 @@ export function TaskPage(props: TaskPageProps) {
           </div>
         )} */}
 
-        <div className="task-actions">
-          <div className="task-submit-action">
-            <button
-              className="btn primary btn-submit"
-              disabled={isSubmitDisabled}
-              onClick={handleStartTask}
-            >
-              {props.t('task.start')}
-            </button>
-            {shouldShowTaskError && (
-              <div className="task-error-actions">
-                <p className="error task-submit-error">
-                  <AlertIcon className="task-submit-error-icon" />
-                  <span>{props.t('task.processFailedHint')}</span>
-                </p>
-                {props.actions.onResumeTask && (
+          <div className="task-actions">
+            <div className="task-submit-action">
+              <button
+                className="btn primary btn-submit"
+                disabled={isSubmitDisabled}
+                onClick={handleStartTask}
+              >
+                {props.t('task.start')}
+              </button>
+              {shouldShowTaskError && (
+                <div className="task-error-actions">
+                  <p className="error task-submit-error">
+                    <AlertIcon className="task-submit-error-icon" />
+                    <span>{props.t('task.processFailedHint')}</span>
+                  </p>
+                  {props.actions.onResumeTask && (
+                    <button
+                      type="button"
+                      className="icon-btn task-resume-icon-btn"
+                      onClick={() => void props.actions.onResumeTask?.()}
+                      title={props.t('history.resume')}
+                      aria-label={props.t('history.resume')}
+                    >
+                      <RefreshIcon />
+                    </button>
+                  )}
+                </div>
+              )}
+              {runtimeBlocked && shouldShowRuntimeReload && (
+                <div className="task-runtime-reload">
+                  <p className={`task-runtime-hint ${isRuntimeReloading ? '' : 'runtime-error'}`}>
+                    {isRuntimeReloading ? props.t('task.runtimePreparingInline') : props.t('task.runtimeRetryInline')}
+                  </p>
                   <button
                     type="button"
-                    className="icon-btn task-resume-icon-btn"
-                    onClick={() => void props.actions.onResumeTask?.()}
-                    title={props.t('history.resume')}
-                    aria-label={props.t('history.resume')}
+                    className="task-runtime-reload-btn"
+                    onClick={() => void handleReloadRuntime()}
+                    disabled={isRuntimeReloading}
+                    title={runtimeInlineHint}
                   >
-                    <RefreshIcon />
+                    <LoaderIcon className={`task-runtime-reload-icon ${isRuntimeReloading ? 'loading' : ''}`} />
+                    <span>{isRuntimeReloading ? props.t('task.reloadingRuntime') : props.t('task.reloadRuntime')}</span>
                   </button>
-                )}
-              </div>
+                </div>
+              )}
+              {runtimeBlocked && !shouldShowRuntimeReload && (
+                <p className="task-runtime-hint">{runtimeInlineHint}</p>
+              )}
+            </div>
+            {props.model.taskRunning && (
+              <button
+                className="btn btn-cancel"
+                onClick={() => void props.actions.onCancelTask()}
+              >
+                {props.t('task.cancel')}
+              </button>
             )}
           </div>
-          {props.model.taskRunning && (
-            <button
-              className="btn btn-cancel"
-              onClick={() => void props.actions.onCancelTask()}
-            >
-              {props.t('task.cancel')}
-            </button>
+
+          {/* Only show status bar when task is active */}
+          {isTaskActive && (
+            <div className="status-bar">
+              <div className="status-meta">
+                <span>
+                  {props.t('task.idLabel')}: <strong>{props.model.activeTaskId || props.t('common.hyphen')}</strong>
+                </span>
+                <span>
+                  {props.t('task.statusLabel')}:{' '}
+                  <strong>{translateTaskStatus(props.model.activeStatus, props.t)}</strong>
+                </span>
+                <span className={`processing-task-chip ${props.model.processingYoutubeUrl ? 'active' : ''}`}>
+                  {props.t('task.processingTask')}:{' '}
+                  <strong title={props.model.processingYoutubeUrl || props.t('common.hyphen')}>
+                    {props.model.processingYoutubeUrl || props.t('common.hyphen')}
+                  </strong>
+                </span>
+              </div>
+
+              <div className="task-stage-strip">
+                {stageIndicators.map((stage) => (
+                  <div key={stage.key} className={`task-stage-pill ${stage.state}`}>
+                    <span className="task-stage-dot" />
+                    <span className="task-stage-label">{stage.label}</span>
+                    <span className="task-stage-value">{stage.progress}%</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Hide progress when audio is ready */}
+              {shouldShowProgress && (
+                <div className="progress-wrap">
+                  <span className="progress-current">
+                    {translateTaskStatus(props.model.activeStatus || 'idle', props.t)}
+                    {/* 在下载阶段显示下载速度 */}
+                    {props.model.activeStatus === 'downloading' && props.model.downloadSpeed && (
+                      <span className="download-speed">{props.model.downloadSpeed}</span>
+                    )}
+                  </span>
+                  <div className="progress-track">
+                    <div className="progress-fill" style={{ width: `${props.model.overallProgress}%` }} />
+                  </div>
+                  <span className="progress-percent">{props.model.overallProgress}%</span>
+                </div>
+              )}
+            </div>
           )}
-        </div>
-        {runtimeBlocked && shouldShowRuntimeReload && (
-          <div className="task-runtime-reload">
-            <p className={`task-runtime-hint ${isRuntimeReloading ? '' : 'runtime-error'}`}>
-              {isRuntimeReloading ? props.t('task.runtimePreparingInline') : props.t('task.runtimeRetryInline')}
-            </p>
+
+          {/* Final Output Section - only show when audio is ready */}
+          {shouldShowFinalOutput && (
+            <div className="output-final">
+              <div className="output-final-header">
+                <div className="output-final-title-wrap">
+                  <span className="output-final-title-label">{props.t('history.videoTitle')}:</span>
+                  <p className="output-final-title" title={finalOutputTitle}>
+                    {finalOutputTitle}
+                  </p>
+                </div>
+                <span className="output-final-status">
+                  <CheckIcon />
+                  {props.t('task.completed')}
+                </span>
+              </div>
+              <div className="output-final-content">
+                <div className="tts-player-final">
+                  <audio controls src={props.model.ttsAudioUrl} />
+                  <div className="tts-actions">
+                    <button className="btn primary" onClick={() => void props.actions.onDownloadAudio()}>
+                      {props.t('task.downloadAudio')}
+                    </button>
+                    <button className="btn" onClick={() => void props.actions.onOpenOutputDirectory()}>
+                      {props.t('task.openDirectory')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Collapsible Results Section */}
+        <section className="panel main-panel results-panel task-results-panel">
+          <CollapsibleSection
+            title={props.t('task.transcriptResult')}
+            isExpanded={isTranscriptExpanded}
+            onToggle={() => setIsTranscriptExpanded(!isTranscriptExpanded)}
+            hasContent={hasTranscript}
+            onCopy={handleCopyTranscript}
+            copyLabel={transcriptCopyLabel}
+            copyDisabled={!hasTranscript}
+          >
+            <div className="result-content">
+              {props.model.transcriptContent?.split('\n').map((line, index) => (
+                <p key={index} className="result-line">{line}</p>
+              ))}
+            </div>
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            title={props.t('task.translationResult')}
+            isExpanded={isTranslationExpanded}
+            onToggle={() => setIsTranslationExpanded(!isTranslationExpanded)}
+            hasContent={hasTranslation}
+            onCopy={handleCopyTranslation}
+            copyLabel={translationCopyLabel}
+            copyDisabled={!hasTranslation}
+          >
+            <div className="result-content">
+              {props.model.translationContent?.split('\n').map((line, index) => (
+                <p key={index} className="result-line">{line}</p>
+              ))}
+            </div>
+          </CollapsibleSection>
+        </section>
+
+        <section className="panel main-panel logs-panel">
+          <div className="logs-header">
+            <h2>{props.t('task.logs')}</h2>
             <button
               type="button"
-              className="task-runtime-reload-btn"
-              onClick={() => void handleReloadRuntime()}
-              disabled={isRuntimeReloading}
-              title={runtimeInlineHint}
+              className="btn small icon-btn logs-copy-btn"
+              onClick={() => void handleCopyLogs()}
+              disabled={props.model.logs.length === 0}
+              title={logsCopyLabel}
+              aria-label={logsCopyLabel}
             >
-              <LoaderIcon className={`task-runtime-reload-icon ${isRuntimeReloading ? 'loading' : ''}`} />
-              <span>{isRuntimeReloading ? props.t('task.reloadingRuntime') : props.t('task.reloadRuntime')}</span>
+              <CopyIcon />
             </button>
           </div>
-        )}
-        {runtimeBlocked && !shouldShowRuntimeReload && (
-          <p className="task-runtime-hint">{runtimeInlineHint}</p>
-        )}
-
-        {/* Only show status bar when task is active */}
-        {isTaskActive && (
-          <div className="status-bar">
-            <div className="status-meta">
-              <span>
-                {props.t('task.idLabel')}: <strong>{props.model.activeTaskId || props.t('common.hyphen')}</strong>
-              </span>
-              <span>
-                {props.t('task.statusLabel')}:{' '}
-                <strong>{translateTaskStatus(props.model.activeStatus, props.t)}</strong>
-              </span>
-              <span className={`processing-task-chip ${props.model.processingYoutubeUrl ? 'active' : ''}`}>
-                {props.t('task.processingTask')}:{' '}
-                <strong title={props.model.processingYoutubeUrl || props.t('common.hyphen')}>
-                  {props.model.processingYoutubeUrl || props.t('common.hyphen')}
-                </strong>
-              </span>
-            </div>
-
-            {/* Hide progress when audio is ready */}
-            {shouldShowProgress && (
-              <div className="progress-wrap">
-                <span className="progress-current">
-                  {translateTaskStatus(props.model.activeStatus || 'idle', props.t)}
-                  {/* 在下载阶段显示下载速度 */}
-                  {props.model.activeStatus === 'downloading' && props.model.downloadSpeed && (
-                    <span className="download-speed">{props.model.downloadSpeed}</span>
-                  )}
-                </span>
-                <div className="progress-track">
-                  <div className="progress-fill" style={{ width: `${props.model.overallProgress}%` }} />
-                </div>
-                <span className="progress-percent">{props.model.overallProgress}%</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Final Output Section - only show when audio is ready */}
-        {shouldShowFinalOutput && (
-          <div className="output-final">
-            <div className="output-final-header">
-              <div className="output-final-title-wrap">
-                <span className="output-final-title-label">{props.t('history.videoTitle')}:</span>
-                <p className="output-final-title" title={finalOutputTitle}>
-                  {finalOutputTitle}
-                </p>
-              </div>
-              <span className="output-final-status">
-                <CheckIcon />
-                {props.t('task.completed')}
-              </span>
-            </div>
-            <div className="output-final-content">
-              <div className="tts-player-final">
-                <audio controls src={props.model.ttsAudioUrl} />
-                <div className="tts-actions">
-                  <button className="btn primary" onClick={() => void props.actions.onDownloadAudio()}>
-                    {props.t('task.downloadAudio')}
-                  </button>
-                  <button className="btn" onClick={() => void props.actions.onOpenOutputDirectory()}>
-                    {props.t('task.openDirectory')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Collapsible Results Section */}
-      <section className="panel main-panel results-panel">
-        <CollapsibleSection
-          title={props.t('task.transcriptResult')}
-          isExpanded={isTranscriptExpanded}
-          onToggle={() => setIsTranscriptExpanded(!isTranscriptExpanded)}
-          hasContent={hasTranscript}
-          onCopy={handleCopyTranscript}
-          copyLabel={transcriptCopyLabel}
-          copyDisabled={!hasTranscript}
-        >
-          <div className="result-content">
-            {props.model.transcriptContent?.split('\n').map((line, index) => (
-              <p key={index} className="result-line">{line}</p>
+          <div className="logbox">
+            {props.model.logs.length === 0 && <p className="hint">{props.t('task.noLogs')}</p>}
+            {props.model.logs.map((log) => (
+              <p key={log.id} className={`log ${log.level}`}>
+                [{new Date(log.time).toLocaleTimeString()}] [{log.stage}] {log.text}
+              </p>
             ))}
           </div>
-        </CollapsibleSection>
-
-        <CollapsibleSection
-          title={props.t('task.translationResult')}
-          isExpanded={isTranslationExpanded}
-          onToggle={() => setIsTranslationExpanded(!isTranslationExpanded)}
-          hasContent={hasTranslation}
-          onCopy={handleCopyTranslation}
-          copyLabel={translationCopyLabel}
-          copyDisabled={!hasTranslation}
-        >
-          <div className="result-content">
-            {props.model.translationContent?.split('\n').map((line, index) => (
-              <p key={index} className="result-line">{line}</p>
-            ))}
-          </div>
-        </CollapsibleSection>
-      </section>
-
-      <section className="panel main-panel">
-        <div className="logs-header">
-          <h2>{props.t('task.logs')}</h2>
-          <button
-            type="button"
-            className="btn small icon-btn logs-copy-btn"
-            onClick={() => void handleCopyLogs()}
-            disabled={props.model.logs.length === 0}
-            title={logsCopyLabel}
-            aria-label={logsCopyLabel}
-          >
-            <CopyIcon />
-          </button>
-        </div>
-        <div className="logbox">
-          {props.model.logs.length === 0 && <p className="hint">{props.t('task.noLogs')}</p>}
-          {props.model.logs.map((log) => (
-            <p key={log.id} className={`log ${log.level}`}>
-              [{new Date(log.time).toLocaleTimeString()}] [{log.stage}] {log.text}
-            </p>
-          ))}
-        </div>
-
-      </section>
+        </section>
+      </div>
       <Toast
         key={configToast.key}
         message={configToast.message}
